@@ -1,0 +1,11 @@
+[package]
+name = "niconeon-filter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+niconeon-domain = { path = "../niconeon-domain" }
+regex.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
