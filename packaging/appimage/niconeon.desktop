@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Niconeon
+Comment=NicoNico danmaku desktop player
+Exec=niconeon
+Icon=niconeon
+Categories=AudioVideo;Video;Player;
+Terminal=false

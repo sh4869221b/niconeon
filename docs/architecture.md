@@ -34,3 +34,20 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
 - Fetch errors never stop playback.
 - If network fetch fails and cache exists, cache is used.
 - If neither network nor cache is available, comments are empty and UI is notified.
+
+## CI/CD Responsibilities
+
+- CI (`.github/workflows/ci.yml`)
+  - Trigger: pull requests and pushes to `main`.
+  - Verifies:
+    - Rust core tests (`cargo test` on `core` workspace).
+    - UI release build on Linux (Qt6 + libmpv).
+    - UI release build on Windows (MSYS2 + Qt6 + libmpv).
+- Release (`.github/workflows/release.yml`)
+  - Trigger: `v*` tags and manual dispatch.
+  - Packages:
+    - source zip.
+    - Linux binaries zip (`niconeon-ui`, `niconeon-core`).
+    - Linux AppImage (with wrapper setting `NICONEON_CORE_BIN`).
+    - Windows binaries zip (Qt runtime + `libmpv-2.dll` bundled).
+  - Publishes GitHub Release assets on tag builds and writes `sha256` checksums.

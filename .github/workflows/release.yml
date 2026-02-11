@@ -1,0 +1,258 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version metadata
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            raw="${GITHUB_REF_NAME}"
+          else
+            raw="v0.0.0-dev-$(git rev-parse --short HEAD)"
+          fi
+          version="${raw#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}"
+
+  package-source:
+    name: package-source
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build source zip
+        run: scripts/release/package_source.sh "${{ needs.prepare.outputs.version }}"
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-zip
+          path: dist/niconeon-${{ needs.prepare.outputs.version }}-source.zip
+
+  package-linux:
+    name: package-linux
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libmpv-dev \
+            qt6-base-dev \
+            qt6-base-dev-tools \
+            qt6-declarative-dev \
+            qt6-declarative-dev-tools \
+            zip
+
+      - name: Build core (release)
+        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+
+      - name: Build UI (release)
+        run: |
+          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build app-ui/build-release --parallel
+
+      - name: Package Linux binaries zip
+        run: scripts/release/package_linux.sh "${{ needs.prepare.outputs.version }}"
+
+      - name: Upload Linux binaries artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries-zip
+          path: dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64-binaries.zip
+
+  package-linux-appimage:
+    name: package-linux-appimage
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libmpv-dev \
+            qt6-base-dev \
+            qt6-base-dev-tools \
+            qt6-declarative-dev \
+            qt6-declarative-dev-tools \
+            zip \
+            patchelf \
+            desktop-file-utils
+
+      - name: Build core (release)
+        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+
+      - name: Build UI (release)
+        run: |
+          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build app-ui/build-release --parallel
+
+      - name: Package Linux AppImage
+        run: scripts/release/package_linux_appimage.sh "${{ needs.prepare.outputs.version }}"
+
+      - name: Upload Linux AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage
+
+  package-windows:
+    name: package-windows
+    runs-on: windows-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build core (release, MSVC)
+        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+
+      - name: Setup MSYS2 (Qt6 + mpv)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-declarative
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-libmpv
+            zip
+
+      - name: Build UI (release, MSYS2)
+        shell: msys2 {0}
+        run: |
+          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build app-ui/build-release --parallel
+
+      - name: Package Windows binaries zip
+        shell: msys2 {0}
+        run: scripts/release/package_windows_msys2.sh "${{ needs.prepare.outputs.version }}"
+
+      - name: Upload Windows binaries artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries-zip
+          path: dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip
+
+  publish-release:
+    name: publish-release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - package-source
+      - package-linux
+      - package-linux-appimage
+      - package-windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA256 checksums
+        run: scripts/release/write_checksums.sh "${{ needs.prepare.outputs.version }}"
+
+      - name: Show artifact list
+        run: ls -lh dist
+
+      - name: Publish GitHub release (tag only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/niconeon-${{ needs.prepare.outputs.version }}-source.zip
+            dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64-binaries.zip
+            dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage
+            dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip
+            dist/niconeon-${{ needs.prepare.outputs.version }}-sha256sums.txt
+
+      - name: Upload manual-dispatch bundle
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle-${{ needs.prepare.outputs.version }}
+          path: |
+            dist/niconeon-${{ needs.prepare.outputs.version }}-source.zip
+            dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64-binaries.zip
+            dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage
+            dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip
+            dist/niconeon-${{ needs.prepare.outputs.version }}-sha256sums.txt

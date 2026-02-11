@@ -67,6 +67,28 @@ cmake -S . -B build
 cmake --build build
 ```
 
+## CI
+
+GitHub Actions で以下を実行します。
+
+- `core-test`（Rust core のテスト）
+- `ui-build-linux`（Linux で UI リリースビルド）
+- `ui-build-windows`（Windows/MSYS2 で UI リリースビルド）
+
+`main` への PR と `main` への push で実行され、`main` マージ時は必須チェックとして扱います。
+
+## リリース成果物
+
+`vX.Y.Z` タグを push すると、Release ワークフローが以下を生成・公開します。
+
+- `niconeon-X.Y.Z-source.zip`
+- `niconeon-X.Y.Z-linux-x86_64-binaries.zip`
+- `niconeon-X.Y.Z-linux-x86_64.AppImage`
+- `niconeon-X.Y.Z-windows-x86_64-binaries.zip`
+- `niconeon-X.Y.Z-sha256sums.txt`
+
+手動実行（`workflow_dispatch`）時は GitHub Release は作成せず、同名成果物を workflow artifact として保存します。
+
 ## 制約
 
 - コメント自動取得は、動画ファイル名にニコニコ動画ID（例: `sm9`, `so123456`）が含まれる前提です。
