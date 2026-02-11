@@ -28,7 +28,40 @@ fi
 
 mkdir -p "${out_dir}"
 staging="$(mktemp -d "${TMPDIR:-/tmp}/niconeon-win-XXXXXX")"
-trap 'rm -rf "${staging}"' EXIT
+tool_shim_dir=""
+trap 'rm -rf "${staging}" "${tool_shim_dir}"' EXIT
+
+# MSYS2 Qt packages place helper tools under /mingw64/share/qt6/bin.
+# Ensure windeployqt can find qmlimportscanner from PATH.
+if [[ -d "/mingw64/share/qt6/bin" ]]; then
+  export PATH="/mingw64/share/qt6/bin:${PATH}"
+fi
+
+if [[ ! -f "/mingw64/bin/qmlimportscanner.exe" ]]; then
+  for candidate in \
+    /mingw64/share/qt6/bin/qmlimportscanner.exe \
+    /mingw64/share/qt6/bin/qmlimportscanner-qt6.exe \
+    /mingw64/bin/qmlimportscanner-qt6.exe; do
+    if [[ -f "${candidate}" ]]; then
+      ln -sf "${candidate}" /mingw64/bin/qmlimportscanner.exe 2>/dev/null || true
+      break
+    fi
+  done
+fi
+
+if ! command -v qmlimportscanner.exe >/dev/null 2>&1; then
+  for candidate in \
+    /mingw64/share/qt6/bin/qmlimportscanner.exe \
+    /mingw64/share/qt6/bin/qmlimportscanner-qt6.exe \
+    /mingw64/bin/qmlimportscanner-qt6.exe; do
+    if [[ -f "${candidate}" ]]; then
+      tool_shim_dir="$(mktemp -d "${TMPDIR:-/tmp}/niconeon-tools-XXXXXX")"
+      cp "${candidate}" "${tool_shim_dir}/qmlimportscanner.exe"
+      export PATH="${tool_shim_dir}:${PATH}"
+      break
+    fi
+  done
+fi
 
 mkdir -p "${staging}/${base}"
 cp "${ui_exe}" "${staging}/${base}/niconeon-ui.exe"
@@ -40,7 +73,12 @@ for dll in libmpv-2.dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; 
   fi
 done
 
-"${windeployqt_bin}" --release --ignore-library-errors --qmldir "${repo_root}/app-ui/qml" "${staging}/${base}/niconeon-ui.exe"
+"${windeployqt_bin}" \
+  --release \
+  --ignore-library-errors \
+  --no-translations \
+  --qmldir "${repo_root}/app-ui/qml" \
+  "${staging}/${base}/niconeon-ui.exe"
 
 (
   cd "${staging}"
