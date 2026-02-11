@@ -90,13 +90,41 @@ void DanmakuController::moveDrag(const QString &commentId, qreal x, qreal y) {
     item->y = y;
 }
 
+void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal height) {
+    m_ngZoneX = x;
+    m_ngZoneY = y;
+    m_ngZoneWidth = std::max(0.0, width);
+    m_ngZoneHeight = std::max(0.0, height);
+}
+
 void DanmakuController::dropDrag(const QString &commentId, bool inNgZone) {
     Item *item = findItem(commentId);
     if (!item) {
         return;
     }
 
-    if (inNgZone) {
+    bool resolvedInNgZone = inNgZone;
+    if (!resolvedInNgZone && m_ngZoneWidth > 0 && m_ngZoneHeight > 0) {
+        const qreal itemLeft = item->x;
+        const qreal itemTop = item->y;
+        const qreal itemRight = itemLeft + item->widthEstimate;
+        const qreal itemBottom = itemTop + 42.0;
+
+        const qreal zoneLeft = m_ngZoneX;
+        const qreal zoneTop = m_ngZoneY;
+        const qreal zoneRight = zoneLeft + m_ngZoneWidth;
+        const qreal zoneBottom = zoneTop + m_ngZoneHeight;
+
+        const bool overlap = !(itemRight < zoneLeft || zoneRight < itemLeft || itemBottom < zoneTop || zoneBottom < itemTop);
+        const qreal centerX = itemLeft + item->widthEstimate / 2.0;
+        const qreal centerY = itemTop + 21.0;
+        const bool centerInZone =
+            centerX >= zoneLeft && centerX <= zoneRight && centerY >= zoneTop && centerY <= zoneBottom;
+
+        resolvedInNgZone = overlap || centerInZone;
+    }
+
+    if (resolvedInNgZone) {
         const QString userId = item->userId;
         m_items.erase(std::remove_if(m_items.begin(), m_items.end(), [&](const Item &candidate) {
                           return candidate.commentId == commentId;

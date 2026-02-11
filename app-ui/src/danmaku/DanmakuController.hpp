@@ -26,6 +26,7 @@ public:
     Q_INVOKABLE void moveDrag(const QString &commentId, qreal x, qreal y);
     Q_INVOKABLE void dropDrag(const QString &commentId, bool inNgZone);
     Q_INVOKABLE void cancelDrag(const QString &commentId);
+    Q_INVOKABLE void setNgDropZoneRect(qreal x, qreal y, qreal width, qreal height);
 
     Q_INVOKABLE void applyNgUserFade(const QString &userId);
 
@@ -83,6 +84,10 @@ private:
     bool m_playbackPaused = true;
     double m_playbackRate = 1.0;
     qint64 m_dragVisualElapsedMs = 0;
+    qreal m_ngZoneX = 0;
+    qreal m_ngZoneY = 0;
+    qreal m_ngZoneWidth = 0;
+    qreal m_ngZoneHeight = 0;
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;

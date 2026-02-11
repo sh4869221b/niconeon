@@ -19,27 +19,27 @@ Rectangle {
     }
 
     function computeNgHit(mouse) {
-        if (!overlay || !ngZone) {
+        if (!overlay || !ngZone || !ngZone.visible) {
             return false
         }
 
-        const left = localDragging ? localX : itemData.x
-        const top = localDragging ? localY : itemData.y
-        const right = left + root.width
-        const bottom = top + root.height
+        const topLeftInZone = root.mapToItem(ngZone, 0, 0)
+        const bottomRightInZone = root.mapToItem(ngZone, root.width, root.height)
 
-        const zoneLeft = ngZone.x
-        const zoneTop = ngZone.y
-        const zoneRight = zoneLeft + ngZone.width
-        const zoneBottom = zoneTop + ngZone.height
+        const overlap = !(
+            bottomRightInZone.x < 0
+            || ngZone.width < topLeftInZone.x
+            || bottomRightInZone.y < 0
+            || ngZone.height < topLeftInZone.y
+        )
 
-        const overlap = !(right < zoneLeft || zoneRight < left || bottom < zoneTop || zoneBottom < top)
-
-        let pointerInZone = false
-        if (mouse && overlay) {
-            const p = root.mapToItem(overlay, mouse.x, mouse.y)
-            pointerInZone = p.x >= zoneLeft && p.x <= zoneRight && p.y >= zoneTop && p.y <= zoneBottom
-        }
+        const pointer = mouse
+            ? root.mapToItem(ngZone, mouse.x, mouse.y)
+            : root.mapToItem(ngZone, root.width / 2, root.height / 2)
+        const pointerInZone = pointer.x >= 0
+            && pointer.x <= ngZone.width
+            && pointer.y >= 0
+            && pointer.y <= ngZone.height
 
         return overlap || pointerInZone
     }
@@ -111,8 +111,12 @@ Rectangle {
 
         onPressedChanged: {
             if (!pressed && localDragging) {
-                // Fallback for cases where release is not delivered.
-                finishDrag(null, false)
+                // Fallback only when release/cancel is truly missing.
+                Qt.callLater(function() {
+                    if (localDragging) {
+                        finishDrag(null, false)
+                    }
+                })
             }
         }
     }
