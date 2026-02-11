@@ -1,16 +1,19 @@
 #pragma once
 
+#include "danmaku/DanmakuListModel.hpp"
+
 #include <QObject>
 #include <QTimer>
 #include <QVariantList>
 
 class DanmakuController : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QVariantList items READ items NOTIFY itemsChanged)
+    Q_PROPERTY(QObject *itemModel READ itemModel CONSTANT)
     Q_PROPERTY(bool ngDropZoneVisible READ ngDropZoneVisible NOTIFY ngDropZoneVisibleChanged)
     Q_PROPERTY(bool playbackPaused READ playbackPaused NOTIFY playbackPausedChanged)
     Q_PROPERTY(double playbackRate READ playbackRate NOTIFY playbackRateChanged)
     Q_PROPERTY(qint64 dragVisualElapsedMs READ dragVisualElapsedMs NOTIFY dragVisualElapsedMsChanged)
+    Q_PROPERTY(bool perfLogEnabled READ perfLogEnabled WRITE setPerfLogEnabled NOTIFY perfLogEnabledChanged)
 
 public:
     explicit DanmakuController(QObject *parent = nullptr);
@@ -19,7 +22,8 @@ public:
     Q_INVOKABLE void setLaneMetrics(int fontPx, int laneGap);
     Q_INVOKABLE void setPlaybackPaused(bool paused);
     Q_INVOKABLE void setPlaybackRate(double rate);
-    Q_INVOKABLE void appendFromCore(const QVariantList &comments);
+    Q_INVOKABLE void setPerfLogEnabled(bool enabled);
+    Q_INVOKABLE void appendFromCore(const QVariantList &comments, qint64 playbackPositionMs);
     Q_INVOKABLE void resetForSeek();
 
     Q_INVOKABLE void beginDrag(const QString &commentId);
@@ -30,18 +34,19 @@ public:
 
     Q_INVOKABLE void applyNgUserFade(const QString &userId);
 
-    QVariantList items() const;
+    QObject *itemModel();
     bool ngDropZoneVisible() const;
     bool playbackPaused() const;
     double playbackRate() const;
     qint64 dragVisualElapsedMs() const;
+    bool perfLogEnabled() const;
 
 signals:
-    void itemsChanged();
     void ngDropZoneVisibleChanged();
     void playbackPausedChanged();
     void playbackRateChanged();
     void dragVisualElapsedMsChanged();
+    void perfLogEnabledChanged();
     void ngDropRequested(const QString &userId);
 
 private:
@@ -59,21 +64,23 @@ private:
         bool frozen = false;
         bool dragging = false;
         bool fading = false;
+        bool ngDropHovered = false;
         int fadeRemainingMs = 0;
     };
 
     void onFrame();
-    void rebuildModel();
     int laneCount() const;
     int pickLane(int widthEstimate) const;
     bool laneHasCollision(int lane, const Item &candidate) const;
     void recoverToLane(Item &item);
-    Item *findItem(const QString &commentId);
+    int findItemIndex(const QString &commentId) const;
     bool hasDragging() const;
     void updateNgZoneVisibility();
+    bool isItemInNgZone(const Item &item) const;
+    void maybeWritePerfLog(qint64 nowMs);
 
     QVector<Item> m_items;
-    QVariantList m_itemsModel;
+    DanmakuListModel m_itemModel;
 
     qreal m_viewportWidth = 1280;
     qreal m_viewportHeight = 720;
@@ -88,6 +95,12 @@ private:
     qreal m_ngZoneY = 0;
     qreal m_ngZoneWidth = 0;
     qreal m_ngZoneHeight = 0;
+    bool m_perfLogEnabled = false;
+    qint64 m_perfLogWindowStartMs = 0;
+    int m_perfLogFrameCount = 0;
+    int m_perfLogAppendCount = 0;
+    int m_perfLogGeometryUpdateCount = 0;
+    int m_perfLogRemovedCount = 0;
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;

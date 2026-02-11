@@ -2,20 +2,28 @@ import QtQuick
 
 Rectangle {
     id: root
-    property var itemData
+    required property string commentId
+    required property string userId
+    required property string text
+    required property real posX
+    required property real posY
+    required property real alpha
+    required property int lane
+    required property bool dragging
+    required property int widthEstimate
+    required property real speedPxPerSec
+    required property bool ngDropHovered
     property var controller
     property Item overlay
     property Item ngZone
     property bool localDragging: false
     property real localX: 0
     property real localY: 0
-    property bool ngDropHovered: localDragging && computeNgHit(null)
     property real dragVisualOffsetX: {
         if (localDragging || !controller) {
             return 0
         }
         const elapsedMs = Number(controller.dragVisualElapsedMs || 0)
-        const speedPxPerSec = Number(itemData.speedPxPerSec || 0)
         return elapsedMs * speedPxPerSec / 1000.0
     }
 
@@ -54,27 +62,27 @@ Rectangle {
         localDragging = false
 
         if (canceled) {
-            controller.cancelDrag(itemData.commentId)
+            controller.cancelDrag(commentId)
         } else {
-            controller.dropDrag(itemData.commentId, inNgZone)
+            controller.dropDrag(commentId, inNgZone)
         }
     }
 
-    x: (localDragging ? localX : itemData.x) - dragVisualOffsetX
-    y: localDragging ? localY : itemData.y
-    width: itemData.widthEstimate
+    x: (localDragging ? localX : posX) - dragVisualOffsetX
+    y: localDragging ? localY : posY
+    width: widthEstimate
     height: 42
     radius: 8
     color: "#88000000"
     border.color: ngDropHovered ? "#FFFF4466" : "#AAFFFFFF"
     border.width: ngDropHovered ? 2 : 1
-    opacity: itemData.alpha
+    opacity: alpha
 
     Text {
         anchors.centerIn: parent
         color: "white"
         font.pixelSize: 24
-        text: itemData.text
+        text: root.text
         elide: Text.ElideRight
         width: parent.width - 16
         horizontalAlignment: Text.AlignHCenter
@@ -87,9 +95,9 @@ Rectangle {
         onPressed: {
             if (controller) {
                 localDragging = true
-                localX = itemData.x
-                localY = itemData.y
-                controller.beginDrag(itemData.commentId)
+                localX = posX
+                localY = posY
+                controller.beginDrag(commentId)
             }
         }
 
@@ -100,7 +108,7 @@ Rectangle {
             const p = root.mapToItem(overlay, mouse.x, mouse.y)
             localX = p.x - root.width / 2
             localY = p.y - root.height / 2
-            controller.moveDrag(itemData.commentId, localX, localY)
+            controller.moveDrag(commentId, localX, localY)
         }
 
         onReleased: function(mouse) {

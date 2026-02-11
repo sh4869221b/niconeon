@@ -17,12 +17,11 @@ Item {
     Component.onCompleted: syncNgZoneRect()
 
     Repeater {
-        model: root.controller ? root.controller.items : []
+        model: root.controller ? root.controller.itemModel : null
         delegate: DanmakuItem {
             overlay: root
             controller: root.controller
             ngZone: ngZone
-            itemData: modelData
         }
     }
 

@@ -20,12 +20,23 @@ ApplicationWindow {
     property var speedPresets: [1.0, 1.5, 2.0]
     property bool pendingSeek: false
     property int pendingSeekTargetMs: 0
+    property bool commentsVisible: true
+    property bool perfLogEnabled: false
+    property int perfTickSentCount: 0
+    property int perfTickResultCount: 0
 
     Settings {
         id: speedSettings
         category: "playback"
         property real rate: 1.0
         property string ratePresetsJson: "[1.0,1.5,2.0]"
+    }
+
+    Settings {
+        id: uiSettings
+        category: "ui"
+        property bool commentsVisible: true
+        property bool perfLogEnabled: false
     }
 
     function extractVideoId(path) {
@@ -184,6 +195,47 @@ ApplicationWindow {
         showToast("速度プリセットを削除しました")
     }
 
+    function applyCommentVisibility(visible, notify) {
+        const next = !!visible
+        if (root.commentsVisible === next) {
+            return
+        }
+
+        root.commentsVisible = next
+        uiSettings.commentsVisible = next
+        danmakuController.resetForSeek()
+
+        if (next && root.sessionId !== "") {
+            root.pendingSeek = true
+            root.pendingSeekTargetMs = mpv.positionMs
+            coreClient.playbackTick(root.sessionId, mpv.positionMs, mpv.paused, true)
+            root.perfTickSentCount += 1
+        } else {
+            root.pendingSeek = false
+        }
+
+        if (notify) {
+            showToast(next ? "コメント表示を有効化しました" : "コメント表示を無効化しました")
+        }
+    }
+
+    function applyPerfLogEnabled(enabled, notify) {
+        const next = !!enabled
+        if (root.perfLogEnabled === next) {
+            return
+        }
+
+        root.perfLogEnabled = next
+        uiSettings.perfLogEnabled = next
+        danmakuController.setPerfLogEnabled(next)
+        root.perfTickSentCount = 0
+        root.perfTickResultCount = 0
+
+        if (notify) {
+            showToast(next ? "計測ログを有効化しました" : "計測ログを無効化しました")
+        }
+    }
+
     function showToast(message, actionText) {
         toast.message = message
         toast.actionText = actionText || ""
@@ -224,11 +276,11 @@ ApplicationWindow {
 
     Timer {
         id: playbackTickTimer
-        interval: 33
+        interval: 50
         repeat: true
         running: true
         onTriggered: {
-            if (root.sessionId !== "") {
+            if (root.sessionId !== "" && root.commentsVisible) {
                 let isSeekTick = false
                 if (root.pendingSeek) {
                     isSeekTick = true
@@ -237,7 +289,30 @@ ApplicationWindow {
                     }
                 }
                 coreClient.playbackTick(root.sessionId, mpv.positionMs, mpv.paused, isSeekTick)
+                root.perfTickSentCount += 1
             }
+        }
+    }
+
+    Timer {
+        id: perfLogTimer
+        interval: 2000
+        repeat: true
+        running: true
+        onTriggered: {
+            if (!root.perfLogEnabled) {
+                return
+            }
+            console.log(
+                "[perf-ui] tick_sent=" + root.perfTickSentCount
+                + " tick_result=" + root.perfTickResultCount
+                + " comments_visible=" + (root.commentsVisible ? "1" : "0")
+                + " position_ms=" + mpv.positionMs
+                + " paused=" + (mpv.paused ? "1" : "0")
+                + " speed=" + root.formatRate(mpv.speed)
+            )
+            root.perfTickSentCount = 0
+            root.perfTickResultCount = 0
         }
     }
 
@@ -370,6 +445,16 @@ ApplicationWindow {
             }
 
             Button {
+                text: root.commentsVisible ? "コメント非表示" : "コメント表示"
+                onClicked: root.applyCommentVisibility(!root.commentsVisible, true)
+            }
+
+            Button {
+                text: root.perfLogEnabled ? "計測ログ停止" : "計測ログ開始"
+                onClicked: root.applyPerfLogEnabled(!root.perfLogEnabled, true)
+            }
+
+            Button {
                 text: "フィルタ"
                 onClicked: {
                     coreClient.listFilters()
@@ -400,8 +485,9 @@ ApplicationWindow {
                     root.pendingSeekTargetMs = value
                     danmakuController.resetForSeek()
                     mpv.seek(value)
-                    if (root.sessionId !== "") {
+                    if (root.sessionId !== "" && root.commentsVisible) {
                         coreClient.playbackTick(root.sessionId, value, mpv.paused, true)
+                        root.perfTickSentCount += 1
                     }
                 }
             }
@@ -445,6 +531,7 @@ ApplicationWindow {
                 id: overlay
                 anchors.fill: parent
                 controller: danmakuController
+                visible: root.commentsVisible
             }
 
             onWidthChanged: danmakuController.setViewportSize(width, height)
@@ -472,7 +559,10 @@ ApplicationWindow {
                 root.pendingSeek = false
                 showToast("コメント取得: " + result.comment_source + " / " + result.total_comments + "件")
             } else if (method === "playback_tick") {
-                danmakuController.appendFromCore(result.emit_comments || [])
+                root.perfTickResultCount += 1
+                if (root.commentsVisible) {
+                    danmakuController.appendFromCore(result.emit_comments || [], mpv.positionMs)
+                }
             } else if (method === "add_ng_user") {
                 danmakuController.applyNgUserFade(result.hidden_user_id)
                 if (result.applied) {
@@ -525,10 +615,16 @@ ApplicationWindow {
 
     Component.onCompleted: {
         loadSpeedSettings()
+        root.commentsVisible = uiSettings.commentsVisible
+        root.perfLogEnabled = uiSettings.perfLogEnabled
         coreClient.startDefault()
         danmakuController.setViewportSize(playerArea.width, playerArea.height)
         danmakuController.setLaneMetrics(36, 6)
         danmakuController.setPlaybackPaused(mpv.paused)
         danmakuController.setPlaybackRate(mpv.speed)
+        danmakuController.setPerfLogEnabled(root.perfLogEnabled)
+        if (!root.commentsVisible) {
+            danmakuController.resetForSeek()
+        }
     }
 }

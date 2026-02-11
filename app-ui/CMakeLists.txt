@@ -26,6 +26,7 @@ qt_add_executable(niconeon-ui
   src/LicenseProvider.cpp
   src/mpv/MpvItem.cpp
   src/ipc/CoreClient.cpp
+  src/danmaku/DanmakuListModel.cpp
   src/danmaku/DanmakuController.cpp
 )
 

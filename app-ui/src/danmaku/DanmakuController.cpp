@@ -6,9 +6,18 @@
 #include <cmath>
 #include <limits>
 
+namespace {
+constexpr qreal kLaneTopMargin = 10.0;
+constexpr qreal kSpawnOffset = 12.0;
+constexpr qreal kItemHeight = 42.0;
+constexpr qreal kItemCullThreshold = -20.0;
+constexpr qint64 kMaxLagCompensationMs = 2000;
+}
+
 DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
     m_lastTickMs = QDateTime::currentMSecsSinceEpoch();
-    m_frameTimer.setInterval(16);
+    m_perfLogWindowStartMs = m_lastTickMs;
+    m_frameTimer.setInterval(33);
     connect(&m_frameTimer, &QTimer::timeout, this, &DanmakuController::onFrame);
     m_frameTimer.start();
 }
@@ -40,40 +49,83 @@ void DanmakuController::setPlaybackRate(double rate) {
     emit playbackRateChanged();
 }
 
-void DanmakuController::appendFromCore(const QVariantList &comments) {
-    const bool dragging = hasDragging();
+void DanmakuController::setPerfLogEnabled(bool enabled) {
+    if (m_perfLogEnabled == enabled) {
+        return;
+    }
+
+    m_perfLogEnabled = enabled;
+    m_perfLogWindowStartMs = QDateTime::currentMSecsSinceEpoch();
+    m_perfLogFrameCount = 0;
+    m_perfLogAppendCount = 0;
+    m_perfLogGeometryUpdateCount = 0;
+    m_perfLogRemovedCount = 0;
+    emit perfLogEnabledChanged();
+}
+
+void DanmakuController::appendFromCore(const QVariantList &comments, qint64 playbackPositionMs) {
     for (const QVariant &entry : comments) {
         const QVariantMap map = entry.toMap();
         Item item;
         item.commentId = map.value("comment_id").toString();
         item.userId = map.value("user_id").toString();
         item.text = map.value("text").toString();
+        if (item.commentId.isEmpty()) {
+            continue;
+        }
+
+        const qint64 atMs = map.value("at_ms").toLongLong();
         const int textWidthEstimate = static_cast<int>(item.text.size()) * (m_fontPx / 2 + 4);
         item.widthEstimate = std::max(80, textWidthEstimate);
         item.speedPxPerSec = 120 + (qHash(item.commentId) % 70);
 
         item.lane = pickLane(item.widthEstimate);
         item.originalLane = item.lane;
-        item.x = m_viewportWidth + 12;
-        item.y = item.lane * (m_fontPx + m_laneGap) + 10;
+        item.x = m_viewportWidth + kSpawnOffset;
+        item.y = item.lane * (m_fontPx + m_laneGap) + kLaneTopMargin;
+
+        const qint64 lagMs = std::clamp(playbackPositionMs - atMs, qint64(0), kMaxLagCompensationMs);
+        const qreal lagSec = lagMs / 1000.0;
+        item.x -= (item.speedPxPerSec * m_playbackRate) * lagSec;
+        if (item.x + item.widthEstimate < kItemCullThreshold) {
+            continue;
+        }
 
         m_items.push_back(item);
-    }
-
-    // Rebuilding while dragging recreates delegates and breaks pointer tracking.
-    if (!dragging) {
-        rebuildModel();
+        DanmakuListModel::Row row;
+        row.commentId = item.commentId;
+        row.userId = item.userId;
+        row.text = item.text;
+        row.posX = item.x;
+        row.posY = item.y;
+        row.alpha = item.alpha;
+        row.lane = item.lane;
+        row.dragging = item.dragging;
+        row.widthEstimate = item.widthEstimate;
+        row.speedPxPerSec = item.speedPxPerSec;
+        row.ngDropHovered = item.ngDropHovered;
+        m_itemModel.append(row);
+        if (m_perfLogEnabled) {
+            ++m_perfLogAppendCount;
+        }
     }
 }
 
 void DanmakuController::beginDrag(const QString &commentId) {
-    Item *item = findItem(commentId);
-    if (!item) {
+    const int index = findItemIndex(commentId);
+    if (index < 0) {
         return;
     }
-    item->frozen = true;
-    item->dragging = true;
-    item->originalLane = item->lane;
+    Item &item = m_items[index];
+    if (item.dragging) {
+        return;
+    }
+    item.frozen = true;
+    item.dragging = true;
+    item.originalLane = item.lane;
+    item.ngDropHovered = isItemInNgZone(item);
+    m_itemModel.setDragState(index, true);
+    m_itemModel.setNgDropHovered(index, item.ngDropHovered);
     if (m_dragVisualElapsedMs != 0) {
         m_dragVisualElapsedMs = 0;
         emit dragVisualElapsedMsChanged();
@@ -82,12 +134,22 @@ void DanmakuController::beginDrag(const QString &commentId) {
 }
 
 void DanmakuController::moveDrag(const QString &commentId, qreal x, qreal y) {
-    Item *item = findItem(commentId);
-    if (!item || !item->dragging) {
+    const int index = findItemIndex(commentId);
+    if (index < 0) {
         return;
     }
-    item->x = x;
-    item->y = y;
+    Item &item = m_items[index];
+    if (!item.dragging) {
+        return;
+    }
+    item.x = x;
+    item.y = y;
+    const bool hovered = isItemInNgZone(item);
+    if (hovered != item.ngDropHovered) {
+        item.ngDropHovered = hovered;
+        m_itemModel.setNgDropHovered(index, hovered);
+    }
+    m_itemModel.setGeometry(index, item.x, item.y, item.alpha);
 }
 
 void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal height) {
@@ -95,46 +157,48 @@ void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal h
     m_ngZoneY = y;
     m_ngZoneWidth = std::max(0.0, width);
     m_ngZoneHeight = std::max(0.0, height);
-}
 
-void DanmakuController::dropDrag(const QString &commentId, bool inNgZone) {
-    Item *item = findItem(commentId);
-    if (!item) {
+    if (!hasDragging()) {
         return;
     }
 
-    bool resolvedInNgZone = inNgZone;
-    if (!resolvedInNgZone && m_ngZoneWidth > 0 && m_ngZoneHeight > 0) {
-        const qreal itemLeft = item->x;
-        const qreal itemTop = item->y;
-        const qreal itemRight = itemLeft + item->widthEstimate;
-        const qreal itemBottom = itemTop + 42.0;
-
-        const qreal zoneLeft = m_ngZoneX;
-        const qreal zoneTop = m_ngZoneY;
-        const qreal zoneRight = zoneLeft + m_ngZoneWidth;
-        const qreal zoneBottom = zoneTop + m_ngZoneHeight;
-
-        const bool overlap = !(itemRight < zoneLeft || zoneRight < itemLeft || itemBottom < zoneTop || zoneBottom < itemTop);
-        const qreal centerX = itemLeft + item->widthEstimate / 2.0;
-        const qreal centerY = itemTop + 21.0;
-        const bool centerInZone =
-            centerX >= zoneLeft && centerX <= zoneRight && centerY >= zoneTop && centerY <= zoneBottom;
-
-        resolvedInNgZone = overlap || centerInZone;
+    for (int i = 0; i < m_items.size(); ++i) {
+        Item &item = m_items[i];
+        if (!item.dragging) {
+            continue;
+        }
+        const bool hovered = isItemInNgZone(item);
+        if (hovered == item.ngDropHovered) {
+            continue;
+        }
+        item.ngDropHovered = hovered;
+        m_itemModel.setNgDropHovered(i, hovered);
     }
+}
+
+void DanmakuController::dropDrag(const QString &commentId, bool inNgZone) {
+    const int index = findItemIndex(commentId);
+    if (index < 0) {
+        return;
+    }
+    Item &item = m_items[index];
+
+    const bool resolvedInNgZone = inNgZone || isItemInNgZone(item);
 
     if (resolvedInNgZone) {
-        const QString userId = item->userId;
-        m_items.erase(std::remove_if(m_items.begin(), m_items.end(), [&](const Item &candidate) {
-                          return candidate.commentId == commentId;
-                      }),
-            m_items.end());
+        const QString userId = item.userId;
+        m_items.removeAt(index);
+        m_itemModel.removeAt(index);
         emit ngDropRequested(userId);
     } else {
-        item->dragging = false;
-        item->frozen = false;
-        recoverToLane(*item);
+        item.dragging = false;
+        item.frozen = false;
+        item.ngDropHovered = false;
+        recoverToLane(item);
+        m_itemModel.setDragState(index, false);
+        m_itemModel.setLane(index, item.lane);
+        m_itemModel.setNgDropHovered(index, false);
+        m_itemModel.setGeometry(index, item.x, item.y, item.alpha);
     }
 
     updateNgZoneVisibility();
@@ -142,7 +206,6 @@ void DanmakuController::dropDrag(const QString &commentId, bool inNgZone) {
         m_dragVisualElapsedMs = 0;
         emit dragVisualElapsedMsChanged();
     }
-    rebuildModel();
 }
 
 void DanmakuController::cancelDrag(const QString &commentId) {
@@ -156,7 +219,6 @@ void DanmakuController::applyNgUserFade(const QString &userId) {
             item.fadeRemainingMs = 300;
         }
     }
-    rebuildModel();
 }
 
 void DanmakuController::resetForSeek() {
@@ -164,15 +226,15 @@ void DanmakuController::resetForSeek() {
         m_dragVisualElapsedMs = 0;
         emit dragVisualElapsedMsChanged();
     }
-    if (m_items.isEmpty()) {
-        return;
+    if (!m_items.isEmpty()) {
+        m_items.clear();
+        m_itemModel.clear();
     }
-    m_items.clear();
-    rebuildModel();
+    updateNgZoneVisibility();
 }
 
-QVariantList DanmakuController::items() const {
-    return m_itemsModel;
+QObject *DanmakuController::itemModel() {
+    return &m_itemModel;
 }
 
 bool DanmakuController::ngDropZoneVisible() const {
@@ -191,14 +253,22 @@ qint64 DanmakuController::dragVisualElapsedMs() const {
     return m_dragVisualElapsedMs;
 }
 
+bool DanmakuController::perfLogEnabled() const {
+    return m_perfLogEnabled;
+}
+
 void DanmakuController::onFrame() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const int elapsedMs = static_cast<int>(now - m_lastTickMs);
     m_lastTickMs = now;
 
-    if (elapsedMs <= 0 || m_items.isEmpty()) {
+    if (elapsedMs <= 0) {
         return;
     }
+    if (m_perfLogEnabled) {
+        ++m_perfLogFrameCount;
+    }
+
     const bool dragging = hasDragging();
     if (dragging) {
         if (!m_playbackPaused) {
@@ -213,13 +283,22 @@ void DanmakuController::onFrame() {
         emit dragVisualElapsedMsChanged();
     }
 
-    const qreal elapsedSec = elapsedMs / 1000.0;
-    bool changed = false;
+    if (m_items.isEmpty()) {
+        maybeWritePerfLog(now);
+        return;
+    }
 
-    for (Item &item : m_items) {
+    const qreal elapsedSec = elapsedMs / 1000.0;
+    QVector<int> removeRows;
+    removeRows.reserve(m_items.size());
+    int frameGeometryUpdates = 0;
+
+    for (int i = 0; i < m_items.size(); ++i) {
+        Item &item = m_items[i];
+        bool geometryChanged = false;
         if (!m_playbackPaused && !item.frozen) {
             item.x -= (item.speedPxPerSec * m_playbackRate) * elapsedSec;
-            changed = true;
+            geometryChanged = true;
         }
 
         if (item.fading) {
@@ -229,47 +308,46 @@ void DanmakuController::onFrame() {
             } else {
                 item.alpha = std::clamp(item.fadeRemainingMs / 300.0, 0.0, 1.0);
             }
-            changed = true;
+            geometryChanged = true;
+        }
+
+        if (item.dragging) {
+            const bool hovered = isItemInNgZone(item);
+            if (hovered != item.ngDropHovered) {
+                item.ngDropHovered = hovered;
+                m_itemModel.setNgDropHovered(i, hovered);
+            }
+        }
+
+        if (geometryChanged) {
+            m_itemModel.setGeometry(i, item.x, item.y, item.alpha);
+            ++frameGeometryUpdates;
+        }
+
+        if (!dragging && (item.alpha <= 0.0 || item.x + item.widthEstimate < kItemCullThreshold)) {
+            removeRows.push_back(i);
         }
     }
 
-    if (!dragging) {
-        const int before = m_items.size();
-        m_items.erase(std::remove_if(m_items.begin(), m_items.end(), [&](const Item &item) {
-                          return item.alpha <= 0.0 || item.x + item.widthEstimate < -20;
-                      }),
-            m_items.end());
-
-        if (before != m_items.size()) {
-            changed = true;
+    if (removeRows.isEmpty()) {
+        if (m_perfLogEnabled) {
+            m_perfLogGeometryUpdateCount += frameGeometryUpdates;
+            maybeWritePerfLog(now);
         }
+        return;
     }
 
-    if (changed && !dragging) {
-        rebuildModel();
+    std::sort(removeRows.begin(), removeRows.end(), std::greater<int>());
+    removeRows.erase(std::unique(removeRows.begin(), removeRows.end()), removeRows.end());
+    for (const int row : removeRows) {
+        m_items.removeAt(row);
     }
-}
-
-void DanmakuController::rebuildModel() {
-    QVariantList list;
-    list.reserve(m_items.size());
-    for (const Item &item : m_items) {
-        QVariantMap map;
-        map.insert("commentId", item.commentId);
-        map.insert("userId", item.userId);
-        map.insert("text", item.text);
-        map.insert("x", item.x);
-        map.insert("y", item.y);
-        map.insert("alpha", item.alpha);
-        map.insert("lane", item.lane);
-        map.insert("dragging", item.dragging);
-        map.insert("widthEstimate", item.widthEstimate);
-        map.insert("speedPxPerSec", item.speedPxPerSec);
-        list.push_back(map);
+    m_itemModel.removeRowsDescending(removeRows);
+    if (m_perfLogEnabled) {
+        m_perfLogGeometryUpdateCount += frameGeometryUpdates;
+        m_perfLogRemovedCount += removeRows.size();
     }
-
-    m_itemsModel = list;
-    emit itemsChanged();
+    maybeWritePerfLog(now);
 }
 
 int DanmakuController::laneCount() const {
@@ -323,7 +401,7 @@ bool DanmakuController::laneHasCollision(int lane, const Item &candidate) const 
 }
 
 void DanmakuController::recoverToLane(Item &item) {
-    item.y = item.originalLane * (m_fontPx + m_laneGap) + 10;
+    item.y = item.originalLane * (m_fontPx + m_laneGap) + kLaneTopMargin;
     item.lane = item.originalLane;
 
     if (!laneHasCollision(item.lane, item)) {
@@ -337,7 +415,7 @@ void DanmakuController::recoverToLane(Item &item) {
 
         if (up >= 0) {
             item.lane = up;
-            item.y = up * (m_fontPx + m_laneGap) + 10;
+            item.y = up * (m_fontPx + m_laneGap) + kLaneTopMargin;
             if (!laneHasCollision(item.lane, item)) {
                 return;
             }
@@ -345,7 +423,7 @@ void DanmakuController::recoverToLane(Item &item) {
 
         if (down < lanes) {
             item.lane = down;
-            item.y = down * (m_fontPx + m_laneGap) + 10;
+            item.y = down * (m_fontPx + m_laneGap) + kLaneTopMargin;
             if (!laneHasCollision(item.lane, item)) {
                 return;
             }
@@ -353,13 +431,13 @@ void DanmakuController::recoverToLane(Item &item) {
     }
 }
 
-DanmakuController::Item *DanmakuController::findItem(const QString &commentId) {
-    for (Item &item : m_items) {
-        if (item.commentId == commentId) {
-            return &item;
+int DanmakuController::findItemIndex(const QString &commentId) const {
+    for (int i = 0; i < m_items.size(); ++i) {
+        if (m_items[i].commentId == commentId) {
+            return i;
         }
     }
-    return nullptr;
+    return -1;
 }
 
 bool DanmakuController::hasDragging() const {
@@ -384,4 +462,64 @@ void DanmakuController::updateNgZoneVisibility() {
         m_ngDropZoneVisible = visible;
         emit ngDropZoneVisibleChanged();
     }
+}
+
+bool DanmakuController::isItemInNgZone(const Item &item) const {
+    if (m_ngZoneWidth <= 0 || m_ngZoneHeight <= 0) {
+        return false;
+    }
+
+    const qreal itemLeft = item.x;
+    const qreal itemTop = item.y;
+    const qreal itemRight = itemLeft + item.widthEstimate;
+    const qreal itemBottom = itemTop + kItemHeight;
+
+    const qreal zoneLeft = m_ngZoneX;
+    const qreal zoneTop = m_ngZoneY;
+    const qreal zoneRight = zoneLeft + m_ngZoneWidth;
+    const qreal zoneBottom = zoneTop + m_ngZoneHeight;
+
+    const bool overlap = !(itemRight < zoneLeft || zoneRight < itemLeft || itemBottom < zoneTop || zoneBottom < itemTop);
+    if (overlap) {
+        return true;
+    }
+
+    const qreal centerX = itemLeft + item.widthEstimate / 2.0;
+    const qreal centerY = itemTop + (kItemHeight / 2.0);
+    return centerX >= zoneLeft && centerX <= zoneRight && centerY >= zoneTop && centerY <= zoneBottom;
+}
+
+void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
+    if (!m_perfLogEnabled) {
+        return;
+    }
+
+    if (m_perfLogWindowStartMs <= 0) {
+        m_perfLogWindowStartMs = nowMs;
+        return;
+    }
+
+    const qint64 elapsedMs = nowMs - m_perfLogWindowStartMs;
+    if (elapsedMs < 2000) {
+        return;
+    }
+
+    const double fps = elapsedMs > 0 ? (m_perfLogFrameCount * 1000.0 / elapsedMs) : 0.0;
+    qInfo().noquote()
+        << QString("[perf] window_ms=%1 fps=%2 active=%3 appended=%4 updates=%5 removed=%6 dragging=%7 paused=%8 rate=%9")
+               .arg(elapsedMs)
+               .arg(fps, 0, 'f', 1)
+               .arg(m_items.size())
+               .arg(m_perfLogAppendCount)
+               .arg(m_perfLogGeometryUpdateCount)
+               .arg(m_perfLogRemovedCount)
+               .arg(hasDragging() ? 1 : 0)
+               .arg(m_playbackPaused ? 1 : 0)
+               .arg(m_playbackRate, 0, 'f', 2);
+
+    m_perfLogWindowStartMs = nowMs;
+    m_perfLogFrameCount = 0;
+    m_perfLogAppendCount = 0;
+    m_perfLogGeometryUpdateCount = 0;
+    m_perfLogRemovedCount = 0;
 }

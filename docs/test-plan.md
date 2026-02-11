@@ -23,4 +23,6 @@
 - undo restores last NG user.
 - removing an NG user from filter dialog updates list and future filtering.
 - regex invalid input shows error and is not registered.
+- コメント非表示時は弾幕描画が停止し、再度表示に戻すと現在再生位置から再同期する。
+- 計測ログ有効化時に、2秒ごとにUI計測ログが標準出力へ出力される。
 - About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。

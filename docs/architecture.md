@@ -13,8 +13,10 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
 
 - Host `libmpv` as a QML item.
 - Control playback (play/pause/seek/volume).
-- Send periodic playback ticks (`33ms`) to core.
+- Send periodic playback ticks (`50ms`) to core.
 - Render danmaku overlays and drag/drop interactions.
+- Provide danmaku visibility toggle for low-spec environments.
+- Emit periodic UI/danmaku performance logs when enabled.
 - Show NG drop zone only during drag.
 - Show toast notifications and Undo actions.
 
