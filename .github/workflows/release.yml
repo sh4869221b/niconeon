@@ -228,6 +228,12 @@ jobs:
         shell: msys2 {0}
         run: scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip"
 
+      - name: Verify Windows bundle includes qt.conf
+        shell: msys2 {0}
+        run: |
+          unzip -Z1 "dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip" \
+            | grep -E '/qt\.conf$'
+
       - name: Upload Windows binaries artifact
         uses: actions/upload-artifact@v4
         with:

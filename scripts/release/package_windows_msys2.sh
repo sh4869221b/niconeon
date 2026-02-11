@@ -133,6 +133,15 @@ cp "${gpl_file}" "${staging}/${base}/COPYING"
 cp "${source_code_file}" "${staging}/${base}/SOURCE_CODE.md"
 cp "${notices_file}" "${staging}/${base}/THIRD_PARTY_NOTICES.txt"
 
+# Ensure Qt resolves bundled plugins/QML modules from the app directory.
+cat >"${staging}/${base}/qt.conf" <<'EOF'
+[Paths]
+Prefix = .
+Plugins = .
+QmlImports = qml
+Qml2Imports = qml
+EOF
+
 for dll in libmpv-2.dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do
   if [[ -f "/mingw64/bin/${dll}" ]]; then
     cp "/mingw64/bin/${dll}" "${staging}/${base}/${dll}"
