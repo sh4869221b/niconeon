@@ -1,2 +1,4 @@
 core/target/
 app-ui/build/
+app-ui/build-release/
+dist/
