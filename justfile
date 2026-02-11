@@ -1,0 +1,37 @@
+set windows-shell := ["cmd.exe", "/d", "/c"]
+
+core_bin := if os() == "windows" {
+  "core\\target\\debug\\niconeon-core.exe"
+} else {
+  "core/target/debug/niconeon-core"
+}
+
+ui_bin := if os() == "windows" {
+  "app-ui\\build\\niconeon-ui.exe"
+} else {
+  "app-ui/build/niconeon-ui"
+}
+
+default:
+    @just --list
+
+core-test:
+    cd core && cargo test
+
+core-build:
+    cd core && cargo build -p niconeon-core
+
+ui-configure:
+    cd app-ui && cmake -S . -B build
+
+ui-build:
+    cd app-ui && cmake --build build -j
+
+build: core-build ui-configure ui-build
+
+run: build
+    {{ if os() == "windows" { "set NICONEON_CORE_BIN=core\\target\\debug\\niconeon-core.exe && app-ui\\build\\niconeon-ui.exe" } else { "NICONEON_CORE_BIN=core/target/debug/niconeon-core app-ui/build/niconeon-ui" } }}
+
+clean:
+    cd core && cargo clean
+    cd app-ui && cmake --build build --target clean

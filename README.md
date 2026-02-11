@@ -24,6 +24,25 @@ Niconeon は、ローカル動画を再生しながらニコニココメント�
 - CMake 3.21+
 - Qt 6.5+
 - libmpv
+- just（任意だが推奨）
+
+## タスク実行（推奨）
+
+`just` を使うと、Core/UI を横断するコマンドを共通化できます。
+
+```bash
+# 一覧
+just
+
+# Core テスト
+just core-test
+
+# 全体ビルド（core + ui）
+just build
+
+# 起動（NICONEON_CORE_BIN を自動設定）
+just run
+```
 
 ## Core の起動
 
