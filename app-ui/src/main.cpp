@@ -2,6 +2,8 @@
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QtGlobal>
 
 #include "LicenseProvider.hpp"
@@ -17,6 +19,11 @@ int main(int argc, char *argv[]) {
     QCoreApplication::setOrganizationName(QStringLiteral("sh4869221b"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("github.com"));
     QCoreApplication::setApplicationName(QStringLiteral("Niconeon"));
+
+#if defined(Q_OS_WIN)
+    // QQuickFramebufferObject + libmpv rendering is stable on OpenGL backend.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+#endif
 
     qmlRegisterType<MpvItem>("Niconeon", 1, 0, "MpvItem");
     qmlRegisterType<CoreClient>("Niconeon", 1, 0, "CoreClient");

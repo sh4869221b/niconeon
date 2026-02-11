@@ -1,14 +1,84 @@
 #include "ipc/CoreClient.hpp"
 
 #include <QCoreApplication>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 
+namespace {
+QString processErrorName(QProcess::ProcessError error) {
+    switch (error) {
+    case QProcess::FailedToStart:
+        return QStringLiteral("FailedToStart");
+    case QProcess::Crashed:
+        return QStringLiteral("Crashed");
+    case QProcess::Timedout:
+        return QStringLiteral("Timedout");
+    case QProcess::WriteError:
+        return QStringLiteral("WriteError");
+    case QProcess::ReadError:
+        return QStringLiteral("ReadError");
+    case QProcess::UnknownError:
+    default:
+        return QStringLiteral("UnknownError");
+    }
+}
+} // namespace
+
 CoreClient::CoreClient(QObject *parent) : QObject(parent) {
     connect(&m_process, &QProcess::readyReadStandardOutput, this, &CoreClient::onReadyReadStandardOutput);
+    connect(&m_process, &QProcess::readyReadStandardError, this, &CoreClient::onReadyReadStandardError);
     connect(&m_process, &QProcess::finished, this, &CoreClient::onProcessFinished);
+    connect(&m_process, &QProcess::errorOccurred, this, &CoreClient::onProcessErrorOccurred);
+}
+
+QString CoreClient::executableName(const QString &baseName) {
+#if defined(Q_OS_WIN)
+    if (baseName.endsWith(QStringLiteral(".exe"), Qt::CaseInsensitive)) {
+        return baseName;
+    }
+    return baseName + QStringLiteral(".exe");
+#else
+    return baseName;
+#endif
+}
+
+QString CoreClient::resolveCoreProgram(QStringList *triedCandidates) const {
+    QStringList candidates;
+    auto addCandidate = [&candidates](const QString &candidate) {
+        const QString cleaned = QDir::cleanPath(candidate);
+        if (!cleaned.isEmpty() && !candidates.contains(cleaned)) {
+            candidates.append(cleaned);
+        }
+    };
+
+    const QString envProgram = qEnvironmentVariable("NICONEON_CORE_BIN");
+    if (!envProgram.trimmed().isEmpty()) {
+        addCandidate(envProgram.trimmed());
+    }
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    addCandidate(QDir(appDir).absoluteFilePath(executableName(QStringLiteral("niconeon-core"))));
+    addCandidate(QDir(appDir).absoluteFilePath(
+        QStringLiteral("../") + executableName(QStringLiteral("niconeon-core"))));
+    addCandidate(QDir(appDir).absoluteFilePath(
+        QStringLiteral("../../core/target/debug/") + executableName(QStringLiteral("niconeon-core"))));
+    addCandidate(QDir(appDir).absoluteFilePath(
+        QStringLiteral("../../core/target/release/") + executableName(QStringLiteral("niconeon-core"))));
+
+    if (triedCandidates) {
+        *triedCandidates = candidates;
+    }
+
+    for (const QString &candidate : candidates) {
+        const QFileInfo info(candidate);
+        if (info.exists() && info.isFile()) {
+            return info.absoluteFilePath();
+        }
+    }
+    return QString();
 }
 
 void CoreClient::startDefault() {
@@ -16,12 +86,16 @@ void CoreClient::startDefault() {
         return;
     }
 
-    QString program = qEnvironmentVariable("NICONEON_CORE_BIN");
+    QStringList triedCandidates;
+    const QString program = resolveCoreProgram(&triedCandidates);
     if (program.isEmpty()) {
-        const QString appDir = QCoreApplication::applicationDirPath();
-        program = QDir(appDir).absoluteFilePath("../../core/target/debug/niconeon-core");
+        emit coreCrashed(
+            QStringLiteral("core binary not found. tried: %1").arg(triedCandidates.join(QStringLiteral(", "))));
+        return;
     }
 
+    m_stdoutBuffer.clear();
+    m_stderrBuffer.clear();
     m_process.start(program, {"--stdio"});
     emit runningChanged();
 }
@@ -120,10 +194,45 @@ void CoreClient::onReadyReadStandardOutput() {
     }
 }
 
+void CoreClient::onReadyReadStandardError() {
+    m_stderrBuffer.append(m_process.readAllStandardError());
+
+    while (true) {
+        const int newline = m_stderrBuffer.indexOf('\n');
+        if (newline < 0) {
+            break;
+        }
+
+        const QByteArray line = m_stderrBuffer.left(newline).trimmed();
+        m_stderrBuffer.remove(0, newline + 1);
+        if (line.isEmpty()) {
+            continue;
+        }
+
+        const QString message = QString::fromUtf8(line);
+        qWarning().noquote() << "core stderr:" << message;
+        emit coreCrashed(QStringLiteral("core stderr: %1").arg(message));
+    }
+}
+
 void CoreClient::onProcessFinished(int exitCode, QProcess::ExitStatus status) {
     Q_UNUSED(status)
+
+    const QString tail = QString::fromUtf8(m_stderrBuffer).trimmed();
+    m_stderrBuffer.clear();
+    if (!tail.isEmpty()) {
+        qWarning().noquote() << "core stderr:" << tail;
+        emit coreCrashed(QStringLiteral("core stderr: %1").arg(tail));
+    }
+
     emit runningChanged();
     emit coreCrashed(QStringLiteral("core exited with code %1").arg(exitCode));
+}
+
+void CoreClient::onProcessErrorOccurred(QProcess::ProcessError error) {
+    const QString message = QStringLiteral("core process error (%1): %2")
+                                .arg(processErrorName(error), m_process.errorString());
+    emit coreCrashed(message);
 }
 
 void CoreClient::sendRequest(const QString &method, const QVariantMap &params) {

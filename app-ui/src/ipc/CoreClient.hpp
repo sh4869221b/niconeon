@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 
 class CoreClient : public QObject {
@@ -34,13 +35,18 @@ signals:
 
 private slots:
     void onReadyReadStandardOutput();
+    void onReadyReadStandardError();
     void onProcessFinished(int exitCode, QProcess::ExitStatus status);
+    void onProcessErrorOccurred(QProcess::ProcessError error);
 
 private:
+    static QString executableName(const QString &baseName);
+    QString resolveCoreProgram(QStringList *triedCandidates = nullptr) const;
     void sendRequest(const QString &method, const QVariantMap &params);
 
     QProcess m_process;
     QByteArray m_stdoutBuffer;
+    QByteArray m_stderrBuffer;
     qint64 m_nextRequestId = 1;
     QHash<qint64, QString> m_pendingMethods;
 };
