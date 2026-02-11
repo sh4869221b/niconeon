@@ -14,6 +14,9 @@ int main(int argc, char *argv[]) {
     setlocale(LC_NUMERIC, "C");
 
     QGuiApplication app(argc, argv);
+    QCoreApplication::setOrganizationName(QStringLiteral("sh4869221b"));
+    QCoreApplication::setOrganizationDomain(QStringLiteral("github.com"));
+    QCoreApplication::setApplicationName(QStringLiteral("Niconeon"));
 
     qmlRegisterType<MpvItem>("Niconeon", 1, 0, "MpvItem");
     qmlRegisterType<CoreClient>("Niconeon", 1, 0, "CoreClient");

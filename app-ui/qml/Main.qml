@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
-import Qt.labs.settings
+import QtCore
 import Niconeon
 
 ApplicationWindow {
@@ -232,8 +232,8 @@ ApplicationWindow {
         id: fileDialog
         title: "動画ファイルを選択"
         onAccepted: {
-            const path = selectedFile.toString().replace("file://", "")
-            root.selectedVideoPath = decodeURIComponent(path)
+            const path = selectedFile.toLocalFile()
+            root.selectedVideoPath = path
             pathInput.text = root.selectedVideoPath
         }
     }
