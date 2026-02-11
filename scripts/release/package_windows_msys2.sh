@@ -40,7 +40,7 @@ for dll in libmpv-2.dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; 
   fi
 done
 
-"${windeployqt_bin}" --release --qmldir "${repo_root}/app-ui/qml" "${staging}/${base}/niconeon-ui.exe"
+"${windeployqt_bin}" --release --ignore-library-errors --qmldir "${repo_root}/app-ui/qml" "${staging}/${base}/niconeon-ui.exe"
 
 (
   cd "${staging}"
