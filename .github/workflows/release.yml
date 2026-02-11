@@ -187,7 +187,7 @@ jobs:
             mingw-w64-x86_64-qt6-base
             mingw-w64-x86_64-qt6-declarative
             mingw-w64-x86_64-qt6-tools
-            mingw-w64-x86_64-libmpv
+            mingw-w64-x86_64-mpv
             zip
 
       - name: Build UI (release, MSYS2)
