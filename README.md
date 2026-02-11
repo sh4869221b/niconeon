@@ -23,7 +23,7 @@ Niconeon は、ローカル動画を再生しながらニコニココメント�
 
 - Rust stable
 - CMake 3.21+
-- Qt 6.5+
+- Qt 6.4+
 - libmpv
 - just（任意だが推奨）
 

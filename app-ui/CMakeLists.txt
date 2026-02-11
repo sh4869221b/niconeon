@@ -7,11 +7,11 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Quick Qml)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Quick Qml)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV REQUIRED mpv)
 
-qt_standard_project_setup(REQUIRES 6.5)
+qt_standard_project_setup(REQUIRES 6.4)
 
 qt_add_executable(niconeon-ui
   src/main.cpp
