@@ -40,15 +40,17 @@ require_in_zip() {
 
 require_in_appimage() {
   local image="$1"
+  local image_abs=""
   local workdir=""
   local name=""
   local base=""
 
+  image_abs="$(cd "$(dirname "${image}")" && pwd)/$(basename "${image}")"
   workdir="$(mktemp -d "${TMPDIR:-/tmp}/niconeon-appimage-check-XXXXXX")"
 
   (
     cd "${workdir}"
-    APPIMAGE_EXTRACT_AND_RUN=1 "${image}" --appimage-extract >/dev/null
+    APPIMAGE_EXTRACT_AND_RUN=1 "${image_abs}" --appimage-extract >/dev/null
   )
 
   base="${workdir}/squashfs-root/usr/share/licenses/niconeon"
