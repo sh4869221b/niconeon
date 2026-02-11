@@ -4,6 +4,7 @@
 #include <QQmlApplicationEngine>
 #include <QtGlobal>
 
+#include "LicenseProvider.hpp"
 #include "danmaku/DanmakuController.hpp"
 #include "ipc/CoreClient.hpp"
 #include "mpv/MpvItem.hpp"
@@ -17,6 +18,7 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<MpvItem>("Niconeon", 1, 0, "MpvItem");
     qmlRegisterType<CoreClient>("Niconeon", 1, 0, "CoreClient");
     qmlRegisterType<DanmakuController>("Niconeon", 1, 0, "DanmakuController");
+    qmlRegisterType<LicenseProvider>("Niconeon", 1, 0, "LicenseProvider");
 
     QQmlApplicationEngine engine;
     QObject::connect(

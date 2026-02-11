@@ -13,8 +13,17 @@ pkg_check_modules(MPV REQUIRED mpv)
 
 qt_standard_project_setup(REQUIRES 6.4)
 
+# Opt in to newer QML CMake policies when supported by the installed Qt.
+if(DEFINED QT_KNOWN_POLICY_QTP0001)
+  qt_policy(SET QTP0001 NEW)
+endif()
+if(DEFINED QT_KNOWN_POLICY_QTP0004)
+  qt_policy(SET QTP0004 NEW)
+endif()
+
 qt_add_executable(niconeon-ui
   src/main.cpp
+  src/LicenseProvider.cpp
   src/mpv/MpvItem.cpp
   src/ipc/CoreClient.cpp
   src/danmaku/DanmakuController.cpp
@@ -43,4 +52,26 @@ qt_add_qml_module(niconeon-ui
     qml/components/Toast.qml
     qml/components/FilterDialog.qml
     qml/components/PlaybackSpeedDialog.qml
+    qml/components/AboutDialog.qml
+)
+
+set(app_license_file "${CMAKE_SOURCE_DIR}/../LICENSE")
+set(distribution_license_file "${CMAKE_SOURCE_DIR}/../COPYING")
+set(third_party_notices_file "${CMAKE_SOURCE_DIR}/../THIRD_PARTY_NOTICES.txt")
+set_source_files_properties("${app_license_file}" PROPERTIES
+  QT_RESOURCE_ALIAS "LICENSE"
+)
+set_source_files_properties("${distribution_license_file}" PROPERTIES
+  QT_RESOURCE_ALIAS "COPYING"
+)
+set_source_files_properties("${third_party_notices_file}" PROPERTIES
+  QT_RESOURCE_ALIAS "THIRD_PARTY_NOTICES.txt"
+)
+
+qt_add_resources(niconeon-ui "license_resources"
+  PREFIX "/licenses"
+  FILES
+    "${app_license_file}"
+    "${distribution_license_file}"
+    "${third_party_notices_file}"
 )

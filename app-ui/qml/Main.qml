@@ -269,6 +269,10 @@ ApplicationWindow {
         }
     }
 
+    AboutDialog {
+        id: aboutDialog
+    }
+
     Toast {
         id: toast
         anchors.horizontalCenter: parent.horizontalCenter
@@ -351,6 +355,11 @@ ApplicationWindow {
                     coreClient.listFilters()
                     filterDialog.open()
                 }
+            }
+
+            Button {
+                text: "About"
+                onClicked: aboutDialog.open()
             }
         }
 
