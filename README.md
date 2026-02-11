@@ -12,12 +12,14 @@ Niconeon は、ローカル動画を再生しながらニコニココメント�
 - NG ユーザー即時反映 + Undo（直近1件）
 - 正規表現フィルタの登録/削除
 - SQLite 永続化（NG/正規表現/コメントキャッシュ）
+- About ダイアログでライセンス情報表示（MIT / GPLv3+ / Third-Party Notices）
 
 ## 構成
 
 - `app-ui/` : Qt 6 + QML + libmpv 埋め込み UI
 - `core/` : Rust 製コア（取得、キャッシュ、フィルタ、永続化、JSON-RPC）
 - `docs/` : 設計・プロトコル・テスト計画
+- `docs/licensing.md` : ライセンス方針と再生成手順
 
 ## 開発要件
 
@@ -35,6 +37,9 @@ Niconeon は、ローカル動画を再生しながらニコニココメント�
 # 一覧
 just
 
+# ライセンス通知ファイル再生成
+just licenses
+
 # Core テスト
 just core-test
 
@@ -44,6 +49,8 @@ just build
 # 起動（NICONEON_CORE_BIN を自動設定）
 just run
 ```
+
+`just build` / `just run` は `THIRD_PARTY_NOTICES.txt` を先に自動生成します。
 
 ## Core の起動
 
@@ -93,3 +100,11 @@ GitHub Actions で以下を実行します。
 
 - コメント自動取得は、動画ファイル名にニコニコ動画ID（例: `sm9`, `so123456`）が含まれる前提です。
 - ID 抽出に失敗した場合、動画再生は継続し、コメントは表示されません。
+
+## ライセンス
+
+- 本リポジトリの自作ソースコードは `MIT` ライセンスです（`LICENSE`）。
+- 配布バイナリは `GPL-3.0-or-later` 条件で提供します（`COPYING`）。
+- 対応ソースコードの入手方法は `SOURCE_CODE.md` に記載します。
+- 依存ライセンス情報は `THIRD_PARTY_NOTICES.txt` に集約しています。
+- 配布バイナリには最低限 `LICENSE` / `COPYING` / `SOURCE_CODE.md` / `THIRD_PARTY_NOTICES.txt` を同梱します。

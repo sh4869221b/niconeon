@@ -13,9 +13,17 @@ base="niconeon-${version}-windows-x86_64"
 out_zip="${out_dir}/${base}-binaries.zip"
 ui_exe="${repo_root}/app-ui/build-release/niconeon-ui.exe"
 core_exe="${repo_root}/core/target/release/niconeon-core.exe"
+license_file="${repo_root}/LICENSE"
+gpl_file="${repo_root}/COPYING"
+source_code_file="${repo_root}/SOURCE_CODE.md"
+notices_file="${repo_root}/THIRD_PARTY_NOTICES.txt"
 
 [[ -f "${ui_exe}" ]] || { echo "missing ui exe: ${ui_exe}" >&2; exit 1; }
 [[ -f "${core_exe}" ]] || { echo "missing core exe: ${core_exe}" >&2; exit 1; }
+[[ -f "${license_file}" ]] || { echo "missing license file: ${license_file}" >&2; exit 1; }
+[[ -f "${gpl_file}" ]] || { echo "missing gpl file: ${gpl_file}" >&2; exit 1; }
+[[ -f "${source_code_file}" ]] || { echo "missing source code file: ${source_code_file}" >&2; exit 1; }
+[[ -f "${notices_file}" ]] || { echo "missing notices file: ${notices_file}" >&2; exit 1; }
 
 if command -v windeployqt6.exe >/dev/null 2>&1; then
   windeployqt_bin="$(command -v windeployqt6.exe)"
@@ -30,6 +38,47 @@ mkdir -p "${out_dir}"
 staging="$(mktemp -d "${TMPDIR:-/tmp}/niconeon-win-XXXXXX")"
 tool_shim_dir=""
 trap 'rm -rf "${staging}" "${tool_shim_dir}"' EXIT
+
+collect_mingw_dll_deps() {
+  local root="$1"
+  local -a pending=("${root}")
+  local current=""
+  local dep=""
+  declare -A visited=()
+
+  while [[ ${#pending[@]} -gt 0 ]]; do
+    current="${pending[0]}"
+    pending=("${pending[@]:1}")
+
+    while IFS= read -r dep; do
+      [[ -n "${dep}" ]] || continue
+      [[ -f "${dep}" ]] || continue
+
+      if [[ "${dep}" != /mingw64/bin/*.dll ]]; then
+        continue
+      fi
+
+      if [[ -n "${visited["${dep}"]:-}" ]]; then
+        continue
+      fi
+
+      visited["${dep}"]=1
+      pending+=("${dep}")
+      printf '%s\n' "${dep}"
+    done < <(
+      ldd "${current}" 2>/dev/null | awk '
+        /=>/ {
+          if ($3 ~ /^\/mingw64\/bin\/.*\.dll$/) print $3
+        }
+        /^[[:space:]]*\/mingw64\/bin\/.*\.dll/ {
+          path = $1
+          sub(/^[[:space:]]+/, "", path)
+          if (path ~ /^\/mingw64\/bin\/.*\.dll$/) print path
+        }
+      '
+    )
+  done
+}
 
 # MSYS2 Qt packages place helper tools under /mingw64/share/qt6/bin.
 # Ensure windeployqt can find qmlimportscanner from PATH.
@@ -66,12 +115,22 @@ fi
 mkdir -p "${staging}/${base}"
 cp "${ui_exe}" "${staging}/${base}/niconeon-ui.exe"
 cp "${core_exe}" "${staging}/${base}/niconeon-core.exe"
+cp "${license_file}" "${staging}/${base}/LICENSE"
+cp "${gpl_file}" "${staging}/${base}/COPYING"
+cp "${source_code_file}" "${staging}/${base}/SOURCE_CODE.md"
+cp "${notices_file}" "${staging}/${base}/THIRD_PARTY_NOTICES.txt"
 
 for dll in libmpv-2.dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do
   if [[ -f "/mingw64/bin/${dll}" ]]; then
     cp "/mingw64/bin/${dll}" "${staging}/${base}/${dll}"
   fi
 done
+
+if [[ -f "/mingw64/bin/libmpv-2.dll" ]]; then
+  while IFS= read -r dep; do
+    cp "${dep}" "${staging}/${base}/$(basename "${dep}")"
+  done < <(collect_mingw_dll_deps "/mingw64/bin/libmpv-2.dll")
+fi
 
 "${windeployqt_bin}" \
   --release \

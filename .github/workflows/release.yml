@@ -29,6 +29,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-license
+        run: cargo install --locked cargo-license
+
+      - name: Verify third-party notices are up to date
+        run: |
+          scripts/release/generate_third_party_notices.sh
+          git diff --exit-code -- THIRD_PARTY_NOTICES.txt
+
+      - name: Verify required license metadata files
+        run: |
+          test -f LICENSE
+          test -f COPYING
+          test -f SOURCE_CODE.md
+
       - name: Resolve version metadata
         id: meta
         run: |
@@ -103,6 +120,9 @@ jobs:
       - name: Package Linux binaries zip
         run: scripts/release/package_linux.sh "${{ needs.prepare.outputs.version }}"
 
+      - name: Verify Linux binaries license bundle
+        run: scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64-binaries.zip"
+
       - name: Upload Linux binaries artifact
         uses: actions/upload-artifact@v4
         with:
@@ -153,6 +173,9 @@ jobs:
       - name: Package Linux AppImage
         run: scripts/release/package_linux_appimage.sh "${{ needs.prepare.outputs.version }}"
 
+      - name: Verify Linux AppImage license bundle
+        run: scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage"
+
       - name: Upload Linux AppImage artifact
         uses: actions/upload-artifact@v4
         with:
@@ -188,6 +211,7 @@ jobs:
             mingw-w64-x86_64-qt6-declarative
             mingw-w64-x86_64-qt6-tools
             mingw-w64-x86_64-mpv
+            unzip
             zip
 
       - name: Build UI (release, MSYS2)
@@ -199,6 +223,10 @@ jobs:
       - name: Package Windows binaries zip
         shell: msys2 {0}
         run: scripts/release/package_windows_msys2.sh "${{ needs.prepare.outputs.version }}"
+
+      - name: Verify Windows binaries license bundle
+        shell: msys2 {0}
+        run: scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip"
 
       - name: Upload Windows binaries artifact
         uses: actions/upload-artifact@v4

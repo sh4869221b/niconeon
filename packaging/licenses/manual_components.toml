@@ -1,0 +1,23 @@
+[[component]]
+name = "Qt 6 Runtime"
+license = "LGPL-3.0-only OR GPL-2.0-only OR Commercial"
+source = "https://www.qt.io/licensing/"
+notes = "Deployed with windeployqt/AppImage packaging as dynamic runtime libraries."
+
+[[component]]
+name = "libmpv"
+license = "GPL-2.0-or-later (package dependent)"
+source = "https://github.com/mpv-player/mpv/blob/master/Copyright"
+notes = "Bundled as runtime shared library/DLL from platform packages."
+
+[[component]]
+name = "FFmpeg (via libmpv)"
+license = "LGPL-2.1-or-later OR GPL-2.0-or-later (build dependent)"
+source = "https://ffmpeg.org/legal.html"
+notes = "License obligations depend on the linked FFmpeg configuration in the distributed package."
+
+[[component]]
+name = "MinGW-w64 Runtime Libraries"
+license = "GPL-3.0-with-GCC-exception OR ZPL-2.1 (component dependent)"
+source = "https://www.mingw-w64.org/"
+notes = "Windows package may include libstdc++, libgcc, and winpthread runtime DLLs."

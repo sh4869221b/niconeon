@@ -40,6 +40,7 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
 - CI (`.github/workflows/ci.yml`)
   - Trigger: pull requests and pushes to `main`.
   - Verifies:
+    - License notice generation consistency (`THIRD_PARTY_NOTICES.txt`).
     - Rust core tests (`cargo test` on `core` workspace).
     - UI release build on Linux (Qt6 + libmpv).
     - UI release build on Windows (MSYS2 + Qt6 + libmpv).
@@ -49,5 +50,6 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
     - source zip.
     - Linux binaries zip (`niconeon-ui`, `niconeon-core`).
     - Linux AppImage (with wrapper setting `NICONEON_CORE_BIN`).
-    - Windows binaries zip (Qt runtime + `libmpv-2.dll` bundled).
+    - Windows binaries zip (Qt runtime + `libmpv` and its dependent MinGW DLLs bundled).
+    - `LICENSE`, `COPYING`, `SOURCE_CODE.md`, and `THIRD_PARTY_NOTICES.txt` bundled in distributable binaries.
   - Publishes GitHub Release assets on tag builds and writes `sha256` checksums.

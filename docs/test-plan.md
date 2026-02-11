@@ -23,3 +23,4 @@
 - undo restores last NG user.
 - removing an NG user from filter dialog updates list and future filtering.
 - regex invalid input shows error and is not registered.
+- About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。
