@@ -42,4 +42,5 @@ qt_add_qml_module(niconeon-ui
     qml/components/NgDropZone.qml
     qml/components/Toast.qml
     qml/components/FilterDialog.qml
+    qml/components/PlaybackSpeedDialog.qml
 )

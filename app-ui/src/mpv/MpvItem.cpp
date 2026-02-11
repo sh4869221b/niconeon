@@ -1,6 +1,7 @@
 #include "mpv/MpvItem.hpp"
 
 #include <clocale>
+#include <algorithm>
 
 #include <QDebug>
 #include <QFileInfo>
@@ -188,6 +189,10 @@ double MpvItem::volume() const {
     return m_volume;
 }
 
+double MpvItem::speed() const {
+    return m_speed;
+}
+
 void MpvItem::setVolume(double volume) {
     if (!m_mpv) {
         return;
@@ -196,6 +201,19 @@ void MpvItem::setVolume(double volume) {
     if (mpv_set_property(m_mpv, "volume", MPV_FORMAT_DOUBLE, &volume) >= 0 && m_volume != volume) {
         m_volume = volume;
         emit volumeChanged();
+    }
+}
+
+void MpvItem::setSpeed(double speed) {
+    if (!m_mpv) {
+        return;
+    }
+
+    double normalized = std::clamp(speed, 0.5, 3.0);
+    if (mpv_set_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &normalized) >= 0
+        && !qFuzzyCompare(normalized + 1.0, m_speed + 1.0)) {
+        m_speed = normalized;
+        emit speedChanged();
     }
 }
 
@@ -236,6 +254,14 @@ void MpvItem::pollProperties() {
         if (!qFuzzyCompare(volumeValue + 1.0, m_volume + 1.0)) {
             m_volume = volumeValue;
             emit volumeChanged();
+        }
+    }
+
+    double speedValue = 1.0;
+    if (mpv_get_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &speedValue) >= 0) {
+        if (!qFuzzyCompare(speedValue + 1.0, m_speed + 1.0)) {
+            m_speed = speedValue;
+            emit speedChanged();
         }
     }
 }

@@ -30,6 +30,15 @@ void DanmakuController::setPlaybackPaused(bool paused) {
     emit playbackPausedChanged();
 }
 
+void DanmakuController::setPlaybackRate(double rate) {
+    const double normalized = std::clamp(rate, 0.5, 3.0);
+    if (qFuzzyCompare(m_playbackRate + 1.0, normalized + 1.0)) {
+        return;
+    }
+    m_playbackRate = normalized;
+    emit playbackRateChanged();
+}
+
 void DanmakuController::appendFromCore(const QVariantList &comments) {
     for (const QVariant &entry : comments) {
         const QVariantMap map = entry.toMap();
@@ -130,6 +139,10 @@ bool DanmakuController::playbackPaused() const {
     return m_playbackPaused;
 }
 
+double DanmakuController::playbackRate() const {
+    return m_playbackRate;
+}
+
 void DanmakuController::onFrame() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const int elapsedMs = static_cast<int>(now - m_lastTickMs);
@@ -144,7 +157,7 @@ void DanmakuController::onFrame() {
 
     for (Item &item : m_items) {
         if (!m_playbackPaused && !item.frozen) {
-            item.x -= item.speedPxPerSec * elapsedSec;
+            item.x -= (item.speedPxPerSec * m_playbackRate) * elapsedSec;
             changed = true;
         }
 

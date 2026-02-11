@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import Qt.labs.settings
 import Niconeon
 
 ApplicationWindow {
@@ -16,12 +17,171 @@ ApplicationWindow {
     property string undoToken: ""
     property var regexFilters: []
     property var ngUsers: []
+    property var speedPresets: [1.0, 1.5, 2.0]
     property bool pendingSeek: false
     property int pendingSeekTargetMs: 0
+
+    Settings {
+        id: speedSettings
+        category: "playback"
+        property real rate: 1.0
+        property string ratePresetsJson: "[1.0,1.5,2.0]"
+    }
 
     function extractVideoId(path) {
         const match = path.toLowerCase().match(/(sm|nm|so)\d+/)
         return match ? match[0] : ""
+    }
+
+    function normalizeRate(value) {
+        const parsed = Number(value)
+        if (!isFinite(parsed)) {
+            return NaN
+        }
+        const clamped = Math.max(0.5, Math.min(3.0, parsed))
+        return Math.round(clamped * 100) / 100
+    }
+
+    function rateEquals(a, b) {
+        return Math.abs(a - b) < 0.001
+    }
+
+    function normalizePresetList(values) {
+        const list = Array.isArray(values) ? values : []
+        const normalized = []
+
+        for (let i = 0; i < list.length; i += 1) {
+            const rate = normalizeRate(list[i])
+            if (isNaN(rate)) {
+                continue
+            }
+            let exists = false
+            for (let j = 0; j < normalized.length; j += 1) {
+                if (rateEquals(normalized[j], rate)) {
+                    exists = true
+                    break
+                }
+            }
+            if (!exists) {
+                normalized.push(rate)
+            }
+        }
+
+        normalized.sort(function(a, b) { return a - b })
+        if (normalized.length === 0) {
+            return [1.0, 1.5, 2.0]
+        }
+        return normalized
+    }
+
+    function nearestPreset(rate) {
+        if (!Array.isArray(root.speedPresets) || root.speedPresets.length === 0) {
+            return 1.0
+        }
+
+        const target = normalizeRate(rate)
+        const safeTarget = isNaN(target) ? 1.0 : target
+
+        let best = root.speedPresets[0]
+        let diff = Math.abs(best - safeTarget)
+        for (let i = 1; i < root.speedPresets.length; i += 1) {
+            const candidate = root.speedPresets[i]
+            const candidateDiff = Math.abs(candidate - safeTarget)
+            if (candidateDiff < diff) {
+                best = candidate
+                diff = candidateDiff
+            }
+        }
+        return best
+    }
+
+    function formatRate(rate) {
+        const value = normalizeRate(rate)
+        const safe = isNaN(value) ? 1.0 : value
+        if (Math.abs(safe - Math.round(safe)) < 0.001) {
+            return Math.round(safe).toFixed(1)
+        }
+        if (Math.abs(safe * 10 - Math.round(safe * 10)) < 0.001) {
+            return safe.toFixed(1)
+        }
+        return safe.toFixed(2)
+    }
+
+    function applyPlaybackRate(rate, persist) {
+        const applied = nearestPreset(rate)
+        mpv.speed = applied
+        danmakuController.setPlaybackRate(applied)
+        if (persist) {
+            speedSettings.rate = applied
+        }
+    }
+
+    function cyclePlaybackSpeed() {
+        const current = nearestPreset(mpv.speed)
+        let index = 0
+        for (let i = 0; i < root.speedPresets.length; i += 1) {
+            if (rateEquals(root.speedPresets[i], current)) {
+                index = i
+                break
+            }
+        }
+        const next = root.speedPresets[(index + 1) % root.speedPresets.length]
+        applyPlaybackRate(next, true)
+        showToast("再生速度: " + formatRate(next) + "x")
+    }
+
+    function loadSpeedSettings() {
+        let parsedPresets = [1.0, 1.5, 2.0]
+        try {
+            parsedPresets = JSON.parse(speedSettings.ratePresetsJson)
+        } catch (e) {
+            parsedPresets = [1.0, 1.5, 2.0]
+        }
+
+        root.speedPresets = normalizePresetList(parsedPresets)
+        speedSettings.ratePresetsJson = JSON.stringify(root.speedPresets)
+
+        const restored = nearestPreset(speedSettings.rate)
+        speedSettings.rate = restored
+        applyPlaybackRate(restored, false)
+    }
+
+    function handleAddSpeedPreset(rawValue) {
+        const rate = normalizeRate(rawValue)
+        if (isNaN(rate)) {
+            showToast("0.5〜3.0 の範囲で速度を入力してください")
+            return
+        }
+
+        const merged = normalizePresetList(root.speedPresets.concat([rate]))
+        if (merged.length === root.speedPresets.length) {
+            showToast("同じ速度プリセットは追加できません")
+            return
+        }
+
+        root.speedPresets = merged
+        speedSettings.ratePresetsJson = JSON.stringify(root.speedPresets)
+        showToast("速度プリセットを追加しました")
+    }
+
+    function handleRemoveSpeedPreset(rate) {
+        if (root.speedPresets.length <= 1) {
+            showToast("最低1つの速度プリセットが必要です")
+            return
+        }
+
+        const filtered = []
+        for (let i = 0; i < root.speedPresets.length; i += 1) {
+            if (!rateEquals(root.speedPresets[i], rate)) {
+                filtered.push(root.speedPresets[i])
+            }
+        }
+        root.speedPresets = normalizePresetList(filtered)
+        speedSettings.ratePresetsJson = JSON.stringify(root.speedPresets)
+
+        const adjusted = nearestPreset(mpv.speed)
+        applyPlaybackRate(adjusted, true)
+        showToast("速度プリセットを削除しました")
     }
 
     function showToast(message, actionText) {
@@ -90,6 +250,22 @@ ApplicationWindow {
         }
     }
 
+    PlaybackSpeedDialog {
+        id: playbackSpeedDialog
+        speedPresets: root.speedPresets
+        currentSpeed: mpv.speed
+        onSetSpeedRequested: function(rate) {
+            root.applyPlaybackRate(rate, true)
+            root.showToast("再生速度: " + root.formatRate(rate) + "x")
+        }
+        onAddPresetRequested: function(rawValue) {
+            root.handleAddSpeedPreset(rawValue)
+        }
+        onRemovePresetRequested: function(rate) {
+            root.handleRemoveSpeedPreset(rate)
+        }
+    }
+
     Toast {
         id: toast
         anchors.horizontalCenter: parent.horizontalCenter
@@ -131,7 +307,11 @@ ApplicationWindow {
                     root.selectedVideoPath = pathInput.text
                     const videoId = root.extractVideoId(root.selectedVideoPath)
                     if (videoId === "") {
-                        mpv.openFile(root.selectedVideoPath)
+                        if (!mpv.openFile(root.selectedVideoPath)) {
+                            showToast("動画を開けませんでした")
+                            return
+                        }
+                        root.applyPlaybackRate(speedSettings.rate, false)
                         root.sessionId = ""
                         showToast("動画IDが見つからないためコメント取得をスキップしました")
                         return
@@ -142,6 +322,7 @@ ApplicationWindow {
                         return
                     }
 
+                    root.applyPlaybackRate(speedSettings.rate, false)
                     coreClient.openVideo(root.selectedVideoPath, videoId)
                 }
             }
@@ -149,6 +330,16 @@ ApplicationWindow {
             Button {
                 text: mpv.paused ? "再生" : "一時停止"
                 onClicked: mpv.togglePause()
+            }
+
+            Button {
+                text: root.formatRate(mpv.speed) + "x"
+                onClicked: root.cyclePlaybackSpeed()
+            }
+
+            Button {
+                text: "速度設定"
+                onClicked: playbackSpeedDialog.open()
             }
 
             Button {
@@ -287,12 +478,18 @@ ApplicationWindow {
         function onPausedChanged() {
             danmakuController.setPlaybackPaused(mpv.paused)
         }
+        function onSpeedChanged() {
+            danmakuController.setPlaybackRate(mpv.speed)
+            speedSettings.rate = root.nearestPreset(mpv.speed)
+        }
     }
 
     Component.onCompleted: {
+        loadSpeedSettings()
         coreClient.startDefault()
         danmakuController.setViewportSize(playerArea.width, playerArea.height)
         danmakuController.setLaneMetrics(36, 6)
         danmakuController.setPlaybackPaused(mpv.paused)
+        danmakuController.setPlaybackRate(mpv.speed)
     }
 }
