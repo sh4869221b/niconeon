@@ -191,6 +191,26 @@ ApplicationWindow {
         toastTimer.restart()
     }
 
+    function fileUrlToLocalPath(value) {
+        const raw = decodeURIComponent(String(value))
+        if (!raw.startsWith("file:")) {
+            return raw
+        }
+
+        let path = raw
+        if (raw.startsWith("file://")) {
+            path = raw.substring(7)
+        } else if (raw.startsWith("file:/")) {
+            path = raw.substring(5)
+        }
+
+        if (Qt.platform.os === "windows" && /^\/[A-Za-z]:\//.test(path)) {
+            path = path.substring(1)
+        }
+
+        return path
+    }
+
     CoreClient {
         id: coreClient
     }
@@ -232,7 +252,7 @@ ApplicationWindow {
         id: fileDialog
         title: "動画ファイルを選択"
         onAccepted: {
-            const path = selectedFile.toLocalFile()
+            const path = fileUrlToLocalPath(selectedFile)
             root.selectedVideoPath = path
             pathInput.text = root.selectedVideoPath
         }
