@@ -10,6 +10,7 @@ class DanmakuController : public QObject {
     Q_PROPERTY(bool ngDropZoneVisible READ ngDropZoneVisible NOTIFY ngDropZoneVisibleChanged)
     Q_PROPERTY(bool playbackPaused READ playbackPaused NOTIFY playbackPausedChanged)
     Q_PROPERTY(double playbackRate READ playbackRate NOTIFY playbackRateChanged)
+    Q_PROPERTY(qint64 dragVisualElapsedMs READ dragVisualElapsedMs NOTIFY dragVisualElapsedMsChanged)
 
 public:
     explicit DanmakuController(QObject *parent = nullptr);
@@ -32,12 +33,14 @@ public:
     bool ngDropZoneVisible() const;
     bool playbackPaused() const;
     double playbackRate() const;
+    qint64 dragVisualElapsedMs() const;
 
 signals:
     void itemsChanged();
     void ngDropZoneVisibleChanged();
     void playbackPausedChanged();
     void playbackRateChanged();
+    void dragVisualElapsedMsChanged();
     void ngDropRequested(const QString &userId);
 
 private:
@@ -65,6 +68,7 @@ private:
     bool laneHasCollision(int lane, const Item &candidate) const;
     void recoverToLane(Item &item);
     Item *findItem(const QString &commentId);
+    bool hasDragging() const;
     void updateNgZoneVisibility();
 
     QVector<Item> m_items;
@@ -78,6 +82,7 @@ private:
     bool m_ngDropZoneVisible = false;
     bool m_playbackPaused = true;
     double m_playbackRate = 1.0;
+    qint64 m_dragVisualElapsedMs = 0;
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;

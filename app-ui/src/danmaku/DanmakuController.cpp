@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QVariantMap>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
@@ -40,6 +41,7 @@ void DanmakuController::setPlaybackRate(double rate) {
 }
 
 void DanmakuController::appendFromCore(const QVariantList &comments) {
+    const bool dragging = hasDragging();
     for (const QVariant &entry : comments) {
         const QVariantMap map = entry.toMap();
         Item item;
@@ -57,7 +59,11 @@ void DanmakuController::appendFromCore(const QVariantList &comments) {
 
         m_items.push_back(item);
     }
-    rebuildModel();
+
+    // Rebuilding while dragging recreates delegates and breaks pointer tracking.
+    if (!dragging) {
+        rebuildModel();
+    }
 }
 
 void DanmakuController::beginDrag(const QString &commentId) {
@@ -68,8 +74,11 @@ void DanmakuController::beginDrag(const QString &commentId) {
     item->frozen = true;
     item->dragging = true;
     item->originalLane = item->lane;
+    if (m_dragVisualElapsedMs != 0) {
+        m_dragVisualElapsedMs = 0;
+        emit dragVisualElapsedMsChanged();
+    }
     updateNgZoneVisibility();
-    rebuildModel();
 }
 
 void DanmakuController::moveDrag(const QString &commentId, qreal x, qreal y) {
@@ -79,7 +88,6 @@ void DanmakuController::moveDrag(const QString &commentId, qreal x, qreal y) {
     }
     item->x = x;
     item->y = y;
-    rebuildModel();
 }
 
 void DanmakuController::dropDrag(const QString &commentId, bool inNgZone) {
@@ -102,6 +110,10 @@ void DanmakuController::dropDrag(const QString &commentId, bool inNgZone) {
     }
 
     updateNgZoneVisibility();
+    if (!hasDragging() && m_dragVisualElapsedMs != 0) {
+        m_dragVisualElapsedMs = 0;
+        emit dragVisualElapsedMsChanged();
+    }
     rebuildModel();
 }
 
@@ -120,6 +132,10 @@ void DanmakuController::applyNgUserFade(const QString &userId) {
 }
 
 void DanmakuController::resetForSeek() {
+    if (m_dragVisualElapsedMs != 0) {
+        m_dragVisualElapsedMs = 0;
+        emit dragVisualElapsedMsChanged();
+    }
     if (m_items.isEmpty()) {
         return;
     }
@@ -143,6 +159,10 @@ double DanmakuController::playbackRate() const {
     return m_playbackRate;
 }
 
+qint64 DanmakuController::dragVisualElapsedMs() const {
+    return m_dragVisualElapsedMs;
+}
+
 void DanmakuController::onFrame() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const int elapsedMs = static_cast<int>(now - m_lastTickMs);
@@ -150,6 +170,19 @@ void DanmakuController::onFrame() {
 
     if (elapsedMs <= 0 || m_items.isEmpty()) {
         return;
+    }
+    const bool dragging = hasDragging();
+    if (dragging) {
+        if (!m_playbackPaused) {
+            const qint64 scaledElapsedMs = static_cast<qint64>(std::llround(elapsedMs * m_playbackRate));
+            if (scaledElapsedMs > 0) {
+                m_dragVisualElapsedMs += scaledElapsedMs;
+                emit dragVisualElapsedMsChanged();
+            }
+        }
+    } else if (m_dragVisualElapsedMs != 0) {
+        m_dragVisualElapsedMs = 0;
+        emit dragVisualElapsedMsChanged();
     }
 
     const qreal elapsedSec = elapsedMs / 1000.0;
@@ -172,17 +205,19 @@ void DanmakuController::onFrame() {
         }
     }
 
-    const int before = m_items.size();
-    m_items.erase(std::remove_if(m_items.begin(), m_items.end(), [&](const Item &item) {
-                      return item.alpha <= 0.0 || item.x + item.widthEstimate < -20;
-                  }),
-        m_items.end());
+    if (!dragging) {
+        const int before = m_items.size();
+        m_items.erase(std::remove_if(m_items.begin(), m_items.end(), [&](const Item &item) {
+                          return item.alpha <= 0.0 || item.x + item.widthEstimate < -20;
+                      }),
+            m_items.end());
 
-    if (before != m_items.size()) {
-        changed = true;
+        if (before != m_items.size()) {
+            changed = true;
+        }
     }
 
-    if (changed) {
+    if (changed && !dragging) {
         rebuildModel();
     }
 }
@@ -201,6 +236,7 @@ void DanmakuController::rebuildModel() {
         map.insert("lane", item.lane);
         map.insert("dragging", item.dragging);
         map.insert("widthEstimate", item.widthEstimate);
+        map.insert("speedPxPerSec", item.speedPxPerSec);
         list.push_back(map);
     }
 
@@ -296,6 +332,15 @@ DanmakuController::Item *DanmakuController::findItem(const QString &commentId) {
         }
     }
     return nullptr;
+}
+
+bool DanmakuController::hasDragging() const {
+    for (const Item &item : m_items) {
+        if (item.dragging) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void DanmakuController::updateNgZoneVisibility() {
