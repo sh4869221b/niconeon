@@ -9,6 +9,7 @@ Rectangle {
     property bool localDragging: false
     property real localX: 0
     property real localY: 0
+    property bool ngDropHovered: localDragging && computeNgHit(null)
     property real dragVisualOffsetX: {
         if (localDragging || !controller) {
             return 0
@@ -65,7 +66,8 @@ Rectangle {
     height: 42
     radius: 8
     color: "#88000000"
-    border.color: "#AAFFFFFF"
+    border.color: ngDropHovered ? "#FFFF4466" : "#AAFFFFFF"
+    border.width: ngDropHovered ? 2 : 1
     opacity: itemData.alpha
 
     Text {
