@@ -8,13 +8,16 @@ class DanmakuController : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList items READ items NOTIFY itemsChanged)
     Q_PROPERTY(bool ngDropZoneVisible READ ngDropZoneVisible NOTIFY ngDropZoneVisibleChanged)
+    Q_PROPERTY(bool playbackPaused READ playbackPaused NOTIFY playbackPausedChanged)
 
 public:
     explicit DanmakuController(QObject *parent = nullptr);
 
     Q_INVOKABLE void setViewportSize(qreal width, qreal height);
     Q_INVOKABLE void setLaneMetrics(int fontPx, int laneGap);
+    Q_INVOKABLE void setPlaybackPaused(bool paused);
     Q_INVOKABLE void appendFromCore(const QVariantList &comments);
+    Q_INVOKABLE void resetForSeek();
 
     Q_INVOKABLE void beginDrag(const QString &commentId);
     Q_INVOKABLE void moveDrag(const QString &commentId, qreal x, qreal y);
@@ -25,10 +28,12 @@ public:
 
     QVariantList items() const;
     bool ngDropZoneVisible() const;
+    bool playbackPaused() const;
 
 signals:
     void itemsChanged();
     void ngDropZoneVisibleChanged();
+    void playbackPausedChanged();
     void ngDropRequested(const QString &userId);
 
 private:
@@ -67,6 +72,7 @@ private:
     int m_laneGap = 6;
 
     bool m_ngDropZoneVisible = false;
+    bool m_playbackPaused = true;
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;

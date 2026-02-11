@@ -16,6 +16,8 @@ ApplicationWindow {
     property string undoToken: ""
     property var regexFilters: []
     property var ngUsers: []
+    property bool pendingSeek: false
+    property int pendingSeekTargetMs: 0
 
     function extractVideoId(path) {
         const match = path.toLowerCase().match(/(sm|nm|so)\d+/)
@@ -47,7 +49,14 @@ ApplicationWindow {
         running: true
         onTriggered: {
             if (root.sessionId !== "") {
-                coreClient.playbackTick(root.sessionId, mpv.positionMs, mpv.paused, false)
+                let isSeekTick = false
+                if (root.pendingSeek) {
+                    isSeekTick = true
+                    if (Math.abs(mpv.positionMs - root.pendingSeekTargetMs) < 250) {
+                        root.pendingSeek = false
+                    }
+                }
+                coreClient.playbackTick(root.sessionId, mpv.positionMs, mpv.paused, isSeekTick)
             }
         }
     }
@@ -164,6 +173,9 @@ ApplicationWindow {
                 to: Math.max(1, mpv.durationMs)
                 value: pressed ? value : mpv.positionMs
                 onMoved: {
+                    root.pendingSeek = true
+                    root.pendingSeekTargetMs = value
+                    danmakuController.resetForSeek()
                     mpv.seek(value)
                     if (root.sessionId !== "") {
                         coreClient.playbackTick(root.sessionId, value, mpv.paused, true)
@@ -234,6 +246,7 @@ ApplicationWindow {
 
             if (method === "open_video") {
                 root.sessionId = result.session_id
+                root.pendingSeek = false
                 showToast("コメント取得: " + result.comment_source + " / " + result.total_comments + "件")
             } else if (method === "playback_tick") {
                 danmakuController.appendFromCore(result.emit_comments || [])
@@ -269,9 +282,17 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: mpv
+        function onPausedChanged() {
+            danmakuController.setPlaybackPaused(mpv.paused)
+        }
+    }
+
     Component.onCompleted: {
         coreClient.startDefault()
         danmakuController.setViewportSize(playerArea.width, playerArea.height)
         danmakuController.setLaneMetrics(36, 6)
+        danmakuController.setPlaybackPaused(mpv.paused)
     }
 }

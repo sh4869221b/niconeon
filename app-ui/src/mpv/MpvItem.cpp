@@ -80,7 +80,8 @@ public:
         mpfbo.h = fbo->height();
         mpfbo.internal_format = 0;
 
-        int flipY = 1;
+        // QQuickFramebufferObject already handles the expected texture orientation.
+        int flipY = 0;
         mpv_render_param renderParams[] = {
             {MPV_RENDER_PARAM_OPENGL_FBO, &mpfbo},
             {MPV_RENDER_PARAM_FLIP_Y, &flipY},

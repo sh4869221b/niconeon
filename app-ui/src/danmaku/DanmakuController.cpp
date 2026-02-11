@@ -22,6 +22,14 @@ void DanmakuController::setLaneMetrics(int fontPx, int laneGap) {
     m_laneGap = std::max(laneGap, 0);
 }
 
+void DanmakuController::setPlaybackPaused(bool paused) {
+    if (m_playbackPaused == paused) {
+        return;
+    }
+    m_playbackPaused = paused;
+    emit playbackPausedChanged();
+}
+
 void DanmakuController::appendFromCore(const QVariantList &comments) {
     for (const QVariant &entry : comments) {
         const QVariantMap map = entry.toMap();
@@ -102,12 +110,24 @@ void DanmakuController::applyNgUserFade(const QString &userId) {
     rebuildModel();
 }
 
+void DanmakuController::resetForSeek() {
+    if (m_items.isEmpty()) {
+        return;
+    }
+    m_items.clear();
+    rebuildModel();
+}
+
 QVariantList DanmakuController::items() const {
     return m_itemsModel;
 }
 
 bool DanmakuController::ngDropZoneVisible() const {
     return m_ngDropZoneVisible;
+}
+
+bool DanmakuController::playbackPaused() const {
+    return m_playbackPaused;
 }
 
 void DanmakuController::onFrame() {
@@ -123,7 +143,7 @@ void DanmakuController::onFrame() {
     bool changed = false;
 
     for (Item &item : m_items) {
-        if (!item.frozen) {
+        if (!m_playbackPaused && !item.frozen) {
             item.x -= item.speedPxPerSec * elapsedSec;
             changed = true;
         }
