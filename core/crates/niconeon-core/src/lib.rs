@@ -6,7 +6,8 @@ use niconeon_filter::{FilterEngine, FilterError};
 use niconeon_protocol::{
     AddNgUserParams, AddNgUserResult, AddRegexFilterParams, AddRegexFilterResult, JsonRpcRequest,
     JsonRpcResponse, ListFiltersResult, OpenVideoParams, OpenVideoResult, PingResult,
-    PlaybackTickParams, PlaybackTickResult, RemoveRegexFilterParams, RemoveRegexFilterResult,
+    PlaybackTickParams, PlaybackTickResult, RemoveNgUserParams, RemoveNgUserResult,
+    RemoveRegexFilterParams, RemoveRegexFilterResult,
     UndoLastNgParams, UndoLastNgResult,
 };
 use niconeon_store::Store;
@@ -66,6 +67,7 @@ impl<F: CommentFetcher> AppCore<F> {
             "open_video" => self.open_video(req.params).and_then(to_json_value),
             "playback_tick" => self.playback_tick(req.params).and_then(to_json_value),
             "add_ng_user" => self.add_ng_user(req.params).and_then(to_json_value),
+            "remove_ng_user" => self.remove_ng_user(req.params).and_then(to_json_value),
             "undo_last_ng" => self.undo_last_ng(req.params).and_then(to_json_value),
             "add_regex_filter" => self.add_regex_filter(req.params).and_then(to_json_value),
             "remove_regex_filter" => self.remove_regex_filter(req.params).and_then(to_json_value),
@@ -194,6 +196,32 @@ impl<F: CommentFetcher> AppCore<F> {
             applied,
             undo_token,
             hidden_user_id: params.user_id,
+        })
+    }
+
+    fn remove_ng_user(&mut self, params: serde_json::Value) -> Result<RemoveNgUserResult> {
+        let params: RemoveNgUserParams = parse_params(params)?;
+
+        let removed_db = self
+            .store
+            .remove_ng_user(&params.user_id)
+            .context("delete ng user")?;
+        let removed_mem = self.filter_engine.remove_ng_user(&params.user_id);
+
+        if removed_db || removed_mem {
+            if self
+                .last_undo
+                .as_ref()
+                .map(|undo| undo.user_id == params.user_id)
+                .unwrap_or(false)
+            {
+                self.last_undo = None;
+            }
+        }
+
+        Ok(RemoveNgUserResult {
+            removed: removed_db || removed_mem,
+            user_id: params.user_id,
         })
     }
 
@@ -480,5 +508,52 @@ mod tests {
         };
         let res = app.handle_request(req);
         assert!(res.error.is_some());
+    }
+
+    #[test]
+    fn remove_ng_user_updates_filter_list() {
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(Vec::new())),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+
+        let add = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(1),
+            method: "add_ng_user".to_string(),
+            params: json!({ "user_id": "u1" }),
+        };
+        let _ = app.handle_request(add);
+
+        let remove = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(2),
+            method: "remove_ng_user".to_string(),
+            params: json!({ "user_id": "u1" }),
+        };
+        let remove_res = app.handle_request(remove);
+        let removed = remove_res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("removed"))
+            .and_then(|v| v.as_bool())
+            .expect("removed");
+        assert!(removed);
+
+        let list = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(3),
+            method: "list_filters".to_string(),
+            params: json!({}),
+        };
+        let list_res = app.handle_request(list);
+        let ng_users = list_res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("ng_users"))
+            .and_then(|v| v.as_array())
+            .expect("ng users");
+        assert!(ng_users.is_empty());
     }
 }

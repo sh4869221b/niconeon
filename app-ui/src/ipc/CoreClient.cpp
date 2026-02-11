@@ -57,6 +57,10 @@ void CoreClient::addNgUser(const QString &userId) {
     sendRequest("add_ng_user", {{"user_id", userId}});
 }
 
+void CoreClient::removeNgUser(const QString &userId) {
+    sendRequest("remove_ng_user", {{"user_id", userId}});
+}
+
 void CoreClient::undoLastNg(const QString &undoToken) {
     sendRequest("undo_last_ng", {{"undo_token", undoToken}});
 }

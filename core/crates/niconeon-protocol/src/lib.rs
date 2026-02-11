@@ -89,6 +89,17 @@ pub struct AddNgUserResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveNgUserParams {
+    pub user_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveNgUserResult {
+    pub removed: bool,
+    pub user_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UndoLastNgParams {
     pub undo_token: String,
 }

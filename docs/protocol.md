@@ -34,6 +34,13 @@ Each line is one JSON-RPC 2.0 message.
   - `undo_token: string`
   - `hidden_user_id: string`
 
+### `remove_ng_user`
+- params:
+  - `user_id: string`
+- result:
+  - `removed: boolean`
+  - `user_id: string`
+
 ### `undo_last_ng`
 - params:
   - `undo_token: string`

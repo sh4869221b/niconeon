@@ -15,6 +15,7 @@ Dialog {
 
     signal addRequested(string pattern)
     signal removeRequested(int filterId)
+    signal removeNgUserRequested(string userId)
 
     ColumnLayout {
         anchors.fill: parent
@@ -24,12 +25,26 @@ Dialog {
 
         ListView {
             Layout.fillWidth: true
-            Layout.preferredHeight: 80
+            Layout.preferredHeight: 120
             model: root.ngUsers
             clip: true
-            delegate: Label {
-                text: "- " + modelData
-                color: "#333"
+
+            delegate: RowLayout {
+                required property var modelData
+                width: ListView.view.width
+                spacing: 8
+
+                Label {
+                    Layout.fillWidth: true
+                    text: modelData
+                    color: "#333"
+                    elide: Text.ElideRight
+                }
+
+                Button {
+                    text: "削除"
+                    onClicked: root.removeNgUserRequested(modelData)
+                }
             }
         }
 

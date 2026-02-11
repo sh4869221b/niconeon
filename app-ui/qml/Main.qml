@@ -245,6 +245,9 @@ ApplicationWindow {
         onAddRequested: function(pattern) {
             coreClient.addRegexFilter(pattern)
         }
+        onRemoveNgUserRequested: function(userId) {
+            coreClient.removeNgUser(userId)
+        }
         onRemoveRequested: function(filterId) {
             coreClient.removeRegexFilter(filterId)
         }
@@ -459,6 +462,13 @@ ApplicationWindow {
                 coreClient.listFilters()
             } else if (method === "add_regex_filter") {
                 showToast("正規表現フィルタを追加しました")
+                coreClient.listFilters()
+            } else if (method === "remove_ng_user") {
+                if (result.removed) {
+                    showToast("NGユーザーを削除しました")
+                } else {
+                    showToast("指定ユーザーはNG登録されていません")
+                }
                 coreClient.listFilters()
             } else if (method === "remove_regex_filter") {
                 coreClient.listFilters()

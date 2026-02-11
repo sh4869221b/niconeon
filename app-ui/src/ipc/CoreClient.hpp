@@ -19,6 +19,7 @@ public:
     Q_INVOKABLE void openVideo(const QString &videoPath, const QString &videoId);
     Q_INVOKABLE void playbackTick(const QString &sessionId, qint64 positionMs, bool paused, bool isSeek);
     Q_INVOKABLE void addNgUser(const QString &userId);
+    Q_INVOKABLE void removeNgUser(const QString &userId);
     Q_INVOKABLE void undoLastNg(const QString &undoToken);
     Q_INVOKABLE void addRegexFilter(const QString &pattern);
     Q_INVOKABLE void removeRegexFilter(qint64 filterId);
