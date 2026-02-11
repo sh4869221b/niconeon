@@ -34,13 +34,13 @@ mkdir -p "${staging}/${base}"
 cp "${ui_exe}" "${staging}/${base}/niconeon-ui.exe"
 cp "${core_exe}" "${staging}/${base}/niconeon-core.exe"
 
-"${windeployqt_bin}" --release --qmldir "${repo_root}/app-ui/qml" "${staging}/${base}/niconeon-ui.exe"
-
 for dll in libmpv-2.dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do
   if [[ -f "/mingw64/bin/${dll}" ]]; then
     cp "/mingw64/bin/${dll}" "${staging}/${base}/${dll}"
   fi
 done
+
+"${windeployqt_bin}" --release --qmldir "${repo_root}/app-ui/qml" "${staging}/${base}/niconeon-ui.exe"
 
 (
   cd "${staging}"
