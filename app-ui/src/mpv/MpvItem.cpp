@@ -4,11 +4,13 @@
 #include <algorithm>
 
 #include <QDebug>
+#include <QDir>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
 #include <QQuickWindow>
+#include <QUrl>
 
 extern "C" {
 #include <mpv/client.h>
@@ -142,7 +144,32 @@ bool MpvItem::openFile(const QString &path) {
         return false;
     }
 
-    const QByteArray fullPath = QFileInfo(path).absoluteFilePath().toUtf8();
+    QString normalizedPath = path.trimmed();
+
+    if (normalizedPath.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
+        const QUrl url(normalizedPath);
+        if (url.isLocalFile()) {
+            normalizedPath = url.toLocalFile();
+        }
+    }
+
+#if defined(Q_OS_WIN)
+    if (normalizedPath.size() >= 3
+        && normalizedPath.front() == QChar('/')
+        && normalizedPath.at(1).isLetter()
+        && normalizedPath.at(2) == QChar(':')) {
+        normalizedPath.remove(0, 1);
+    }
+#endif
+
+    normalizedPath = QDir::cleanPath(normalizedPath);
+    const QFileInfo fileInfo(normalizedPath);
+    if (!fileInfo.exists() || !fileInfo.isFile()) {
+        qWarning() << "video file does not exist:" << normalizedPath;
+        return false;
+    }
+
+    const QByteArray fullPath = fileInfo.absoluteFilePath().toUtf8();
     const char *cmd[] = {"loadfile", fullPath.constData(), "replace", nullptr};
     const int status = mpv_command(m_mpv, cmd);
     return status >= 0;
