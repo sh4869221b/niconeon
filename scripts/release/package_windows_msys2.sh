@@ -80,6 +80,19 @@ collect_mingw_dll_deps() {
   done
 }
 
+copy_mingw_dep_tree() {
+  local root="$1"
+  local output_dir="$2"
+  local dep=""
+
+  [[ -f "${root}" ]] || return 0
+
+  while IFS= read -r dep; do
+    [[ -n "${dep}" ]] || continue
+    cp -n "${dep}" "${output_dir}/$(basename "${dep}")"
+  done < <(collect_mingw_dll_deps "${root}")
+}
+
 # MSYS2 Qt packages place helper tools under /mingw64/share/qt6/bin.
 # Ensure windeployqt can find qmlimportscanner from PATH.
 if [[ -d "/mingw64/share/qt6/bin" ]]; then
@@ -126,11 +139,18 @@ for dll in libmpv-2.dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; 
   fi
 done
 
-if [[ -f "/mingw64/bin/libmpv-2.dll" ]]; then
-  while IFS= read -r dep; do
-    cp "${dep}" "${staging}/${base}/$(basename "${dep}")"
-  done < <(collect_mingw_dll_deps "/mingw64/bin/libmpv-2.dll")
-fi
+# Some Qt builds depend on these DLL families and users hit runtime errors
+# when they are omitted (e.g. libmd4c/libdouble-conversion/ICU).
+for pattern in libmd4c.dll libdouble-conversion.dll libicu*.dll; do
+  for candidate in /mingw64/bin/${pattern}; do
+    if [[ -f "${candidate}" ]]; then
+      cp -n "${candidate}" "${staging}/${base}/$(basename "${candidate}")"
+    fi
+  done
+done
+
+copy_mingw_dep_tree "${ui_exe}" "${staging}/${base}"
+copy_mingw_dep_tree "/mingw64/bin/libmpv-2.dll" "${staging}/${base}"
 
 "${windeployqt_bin}" \
   --release \
@@ -138,6 +158,12 @@ fi
   --no-translations \
   --qmldir "${repo_root}/app-ui/qml" \
   "${staging}/${base}/niconeon-ui.exe"
+
+# Ensure transitive runtime dependencies for all packaged binaries/plugins
+# are present in the top-level app directory.
+while IFS= read -r -d '' binary; do
+  copy_mingw_dep_tree "${binary}" "${staging}/${base}"
+done < <(find "${staging}/${base}" -type f \( -iname "*.exe" -o -iname "*.dll" \) -print0)
 
 (
   cd "${staging}"
