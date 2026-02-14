@@ -6,9 +6,25 @@ Dialog {
     id: root
     modal: true
     title: "再生速度設定"
-    standardButtons: Dialog.Close
     width: 440
     height: 440
+    palette {
+        window: "#1F2430"
+        windowText: "#F3F6FF"
+        base: "#141B28"
+        text: "#F3F6FF"
+        button: "#2E3950"
+        buttonText: "#F3F6FF"
+        placeholderText: "#9AA6BF"
+        highlight: "#5A7FCF"
+        highlightedText: "#FFFFFF"
+    }
+    background: Rectangle {
+        radius: 10
+        color: "#1F2430"
+        border.color: "#3F4D67"
+        border.width: 1
+    }
 
     property var speedPresets: [1.0, 1.5, 2.0]
     property double currentSpeed: 1.0
@@ -42,7 +58,7 @@ Dialog {
 
         Label {
             text: "プリセットを選択して適用"
-            color: "#555"
+            color: root.palette.placeholderText
         }
 
         ListView {
@@ -61,12 +77,12 @@ Dialog {
                     text: root.formatRate(modelData) + "x"
                 }
 
-                Button {
+                AppButton {
                     text: "適用"
                     onClicked: root.setSpeedRequested(Number(modelData))
                 }
 
-                Button {
+                AppButton {
                     text: "削除"
                     enabled: root.speedPresets.length > 1
                     onClicked: root.removePresetRequested(Number(modelData))
@@ -86,12 +102,22 @@ Dialog {
                 placeholderText: "例: 1.75"
             }
 
-            Button {
+            AppButton {
                 text: "追加"
                 onClicked: {
                     root.addPresetRequested(addPresetInput.text)
                     addPresetInput.text = ""
                 }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignRight
+
+            AppButton {
+                text: "閉じる"
+                onClicked: root.close()
             }
         }
     }

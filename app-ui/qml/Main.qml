@@ -11,6 +11,17 @@ ApplicationWindow {
     height: 800
     visible: true
     title: "Niconeon"
+    palette {
+        window: "#1F2430"
+        windowText: "#F3F6FF"
+        base: "#141B28"
+        text: "#F3F6FF"
+        button: "#2E3950"
+        buttonText: "#F3F6FF"
+        placeholderText: "#9AA6BF"
+        highlight: "#5A7FCF"
+        highlightedText: "#FFFFFF"
+    }
 
     property string selectedVideoPath: ""
     property string sessionId: ""
@@ -394,7 +405,7 @@ ApplicationWindow {
             Layout.margins: 8
             spacing: 8
 
-            Button {
+            AppButton {
                 text: "動画を開く"
                 onClicked: fileDialog.open()
             }
@@ -406,7 +417,7 @@ ApplicationWindow {
                 text: root.selectedVideoPath
             }
 
-            Button {
+            AppButton {
                 text: "再生開始"
                 onClicked: {
                     root.selectedVideoPath = pathInput.text
@@ -432,32 +443,32 @@ ApplicationWindow {
                 }
             }
 
-            Button {
+            AppButton {
                 text: mpv.paused ? "再生" : "一時停止"
                 onClicked: mpv.togglePause()
             }
 
-            Button {
+            AppButton {
                 text: root.formatRate(mpv.speed) + "x"
                 onClicked: root.cyclePlaybackSpeed()
             }
 
-            Button {
+            AppButton {
                 text: "速度設定"
                 onClicked: playbackSpeedDialog.open()
             }
 
-            Button {
+            AppButton {
                 text: root.commentsVisible ? "コメント非表示" : "コメント表示"
                 onClicked: root.applyCommentVisibility(!root.commentsVisible, true)
             }
 
-            Button {
+            AppButton {
                 text: root.perfLogEnabled ? "計測ログ停止" : "計測ログ開始"
                 onClicked: root.applyPerfLogEnabled(!root.perfLogEnabled, true)
             }
 
-            Button {
+            AppButton {
                 text: "フィルタ"
                 onClicked: {
                     coreClient.listFilters()
@@ -465,7 +476,7 @@ ApplicationWindow {
                 }
             }
 
-            Button {
+            AppButton {
                 text: "About"
                 onClicked: aboutDialog.open()
             }

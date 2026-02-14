@@ -26,7 +26,7 @@ Rectangle {
             wrapMode: Text.Wrap
         }
 
-        Button {
+        AppButton {
             visible: root.actionText !== ""
             text: root.actionText
             onClicked: root.actionTriggered()

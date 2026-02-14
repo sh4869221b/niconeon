@@ -6,9 +6,25 @@ Dialog {
     id: root
     modal: true
     title: "フィルタ設定"
-    standardButtons: Dialog.Close
     width: 560
     height: 460
+    palette {
+        window: "#1F2430"
+        windowText: "#F3F6FF"
+        base: "#141B28"
+        text: "#F3F6FF"
+        button: "#2E3950"
+        buttonText: "#F3F6FF"
+        placeholderText: "#9AA6BF"
+        highlight: "#5A7FCF"
+        highlightedText: "#FFFFFF"
+    }
+    background: Rectangle {
+        radius: 10
+        color: "#1F2430"
+        border.color: "#3F4D67"
+        border.width: 1
+    }
 
     property var regexFilters: []
     property var ngUsers: []
@@ -37,11 +53,11 @@ Dialog {
                 Label {
                     Layout.fillWidth: true
                     text: modelData
-                    color: "#333"
+                    color: root.palette.windowText
                     elide: Text.ElideRight
                 }
 
-                Button {
+                AppButton {
                     text: "削除"
                     onClicked: root.removeNgUserRequested(modelData)
                 }
@@ -60,7 +76,7 @@ Dialog {
                 placeholderText: "例: (草|www)+"
             }
 
-            Button {
+            AppButton {
                 text: "追加"
                 onClicked: {
                     if (regexInput.text.trim() === "") {
@@ -89,10 +105,25 @@ Dialog {
                     elide: Text.ElideRight
                 }
 
-                Button {
+                AppButton {
                     text: "削除"
                     onClicked: root.removeRequested(modelData.filter_id)
                 }
+            }
+        }
+
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 4
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignRight
+
+            AppButton {
+                text: "閉じる"
+                onClicked: root.close()
             }
         }
     }

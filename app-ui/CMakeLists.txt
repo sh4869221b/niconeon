@@ -47,6 +47,7 @@ qt_add_qml_module(niconeon-ui
   QML_FILES
     qml/Main.qml
     qml/components/VideoPlayer.qml
+    qml/components/AppButton.qml
     qml/components/DanmakuOverlay.qml
     qml/components/DanmakuItem.qml
     qml/components/NgDropZone.qml

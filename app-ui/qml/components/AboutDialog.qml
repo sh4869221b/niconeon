@@ -7,9 +7,25 @@ Dialog {
     id: root
     modal: true
     title: "About / ライセンス"
-    standardButtons: Dialog.Close
     width: 760
     height: 560
+    palette {
+        window: "#1F2430"
+        windowText: "#F3F6FF"
+        base: "#141B28"
+        text: "#F3F6FF"
+        button: "#2E3950"
+        buttonText: "#F3F6FF"
+        placeholderText: "#9AA6BF"
+        highlight: "#5A7FCF"
+        highlightedText: "#FFFFFF"
+    }
+    background: Rectangle {
+        radius: 10
+        color: "#1F2430"
+        border.color: "#3F4D67"
+        border.width: 1
+    }
 
     property string appLicenseText: ""
     property string distributionLicenseText: ""
@@ -54,7 +70,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             text: "Source: MIT / Distribution: GPLv3+ / Third-Party Notices"
-            color: "#555"
+            color: root.palette.placeholderText
         }
 
         TabBar {
@@ -99,6 +115,16 @@ Dialog {
                     wrapMode: TextArea.WrapAnywhere
                     text: root.thirdPartyNoticesText
                 }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignRight
+
+            AppButton {
+                text: "閉じる"
+                onClicked: root.close()
             }
         }
     }
