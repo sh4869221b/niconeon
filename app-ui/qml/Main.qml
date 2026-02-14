@@ -36,7 +36,6 @@ ApplicationWindow {
     property bool glyphWarmupEnabled: true
     property int perfTickSentCount: 0
     property int perfTickResultCount: 0
-    property string danmakuBackend: (typeof niconeonDanmakuBackend !== "undefined" && niconeonDanmakuBackend === "legacy") ? "legacy" : "scenegraph"
 
     Settings {
         id: speedSettings
@@ -222,7 +221,7 @@ ApplicationWindow {
         if (next && root.sessionId !== "") {
             root.pendingSeek = true
             root.pendingSeekTargetMs = mpv.positionMs
-            coreClient.playbackTick(root.sessionId, mpv.positionMs, mpv.paused, true)
+            coreClient.enqueuePlaybackTick(root.sessionId, mpv.positionMs, mpv.paused, true)
             root.perfTickSentCount += 1
         } else {
             root.pendingSeek = false
@@ -348,7 +347,7 @@ ApplicationWindow {
                         root.pendingSeek = false
                     }
                 }
-                coreClient.playbackTick(root.sessionId, mpv.positionMs, mpv.paused, isSeekTick)
+                coreClient.enqueuePlaybackTick(root.sessionId, mpv.positionMs, mpv.paused, isSeekTick)
                 root.perfTickSentCount += 1
             }
         }
@@ -539,7 +538,7 @@ ApplicationWindow {
                     danmakuController.resetForSeek()
                     mpv.seek(value)
                     if (root.sessionId !== "" && root.commentsVisible) {
-                        coreClient.playbackTick(root.sessionId, value, mpv.paused, true)
+                        coreClient.enqueuePlaybackTick(root.sessionId, value, mpv.paused, true)
                         root.perfTickSentCount += 1
                     }
                 }
@@ -584,7 +583,6 @@ ApplicationWindow {
                 id: overlay
                 anchors.fill: parent
                 controller: danmakuController
-                backend: root.danmakuBackend
                 visible: root.commentsVisible
             }
 
@@ -613,8 +611,9 @@ ApplicationWindow {
                 root.pendingSeek = false
                 danmakuController.resetGlyphSession()
                 showToast("コメント取得: " + result.comment_source + " / " + result.total_comments + "件")
-            } else if (method === "playback_tick") {
-                root.perfTickResultCount += 1
+            } else if (method === "playback_tick_batch") {
+                const processedTicks = Number(result.processed_ticks || 0)
+                root.perfTickResultCount += processedTicks > 0 ? processedTicks : 1
                 if (root.commentsVisible) {
                     danmakuController.appendFromCore(result.emit_comments || [], mpv.positionMs)
                 }
@@ -680,7 +679,6 @@ ApplicationWindow {
         danmakuController.setPlaybackRate(mpv.speed)
         danmakuController.setPerfLogEnabled(root.perfLogEnabled)
         danmakuController.setGlyphWarmupEnabled(root.glyphWarmupEnabled)
-        console.log("[danmaku-backend] backend=" + root.danmakuBackend)
         if (!root.commentsVisible) {
             danmakuController.resetForSeek()
         }

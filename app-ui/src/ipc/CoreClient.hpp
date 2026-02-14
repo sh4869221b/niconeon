@@ -3,9 +3,11 @@
 #include <QHash>
 #include <QObject>
 #include <QProcess>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
+#include <QVector>
 
 class CoreClient : public QObject {
     Q_OBJECT
@@ -18,7 +20,7 @@ public:
     Q_INVOKABLE void stop();
 
     Q_INVOKABLE void openVideo(const QString &videoPath, const QString &videoId);
-    Q_INVOKABLE void playbackTick(const QString &sessionId, qint64 positionMs, bool paused, bool isSeek);
+    Q_INVOKABLE void enqueuePlaybackTick(const QString &sessionId, qint64 positionMs, bool paused, bool isSeek);
     Q_INVOKABLE void addNgUser(const QString &userId);
     Q_INVOKABLE void removeNgUser(const QString &userId);
     Q_INVOKABLE void undoLastNg(const QString &undoToken);
@@ -40,13 +42,24 @@ private slots:
     void onProcessErrorOccurred(QProcess::ProcessError error);
 
 private:
+    struct PendingPlaybackTick {
+        qint64 positionMs = 0;
+        bool paused = false;
+        bool isSeek = false;
+    };
+
     static QString executableName(const QString &baseName);
     QString resolveCoreProgram(QStringList *triedCandidates = nullptr) const;
-    void sendRequest(const QString &method, const QVariantMap &params);
+    qint64 sendRequest(const QString &method, const QVariantMap &params);
+    void flushPlaybackTickBatch();
 
     QProcess m_process;
     QByteArray m_stdoutBuffer;
     QByteArray m_stderrBuffer;
     qint64 m_nextRequestId = 1;
     QHash<qint64, QString> m_pendingMethods;
+    QString m_pendingTickSessionId;
+    QVector<PendingPlaybackTick> m_pendingTicks;
+    bool m_playbackTickBatchInFlight = false;
+    QSet<qint64> m_inFlightPlaybackTickRequestIds;
 };

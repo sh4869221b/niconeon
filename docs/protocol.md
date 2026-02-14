@@ -17,14 +17,14 @@ Each line is one JSON-RPC 2.0 message.
   - `comment_source: "cache" | "network" | "none"`
   - `total_comments: number`
 
-### `playback_tick`
+### `playback_tick_batch`
 - params:
   - `session_id: string`
-  - `position_ms: number`
-  - `paused: boolean`
-  - `is_seek: boolean`
+  - `ticks: PlaybackTickSample[]`
 - result:
   - `emit_comments: CommentEvent[]`
+  - `processed_ticks: number`
+  - `last_position_ms: number`
 
 ### `add_ng_user`
 - params:
@@ -80,5 +80,11 @@ RegexFilter {
   "filter_id": 1,
   "pattern": "foo.*bar",
   "created_at": "2026-02-11T00:00:00Z"
+}
+
+PlaybackTickSample {
+  "position_ms": 1234,
+  "paused": false,
+  "is_seek": false
 }
 ```

@@ -6,9 +6,9 @@ use niconeon_filter::{FilterEngine, FilterError};
 use niconeon_protocol::{
     AddNgUserParams, AddNgUserResult, AddRegexFilterParams, AddRegexFilterResult, JsonRpcRequest,
     JsonRpcResponse, ListFiltersResult, OpenVideoParams, OpenVideoResult, PingResult,
-    PlaybackTickParams, PlaybackTickResult, RemoveNgUserParams, RemoveNgUserResult,
-    RemoveRegexFilterParams, RemoveRegexFilterResult,
-    UndoLastNgParams, UndoLastNgResult,
+    PlaybackTickBatchParams, PlaybackTickBatchResult, PlaybackTickSample, RemoveNgUserParams,
+    RemoveNgUserResult, RemoveRegexFilterParams, RemoveRegexFilterResult, UndoLastNgParams,
+    UndoLastNgResult,
 };
 use niconeon_store::Store;
 use uuid::Uuid;
@@ -48,8 +48,8 @@ impl<F: CommentFetcher> AppCore<F> {
     pub fn new(store: Store, fetcher: F) -> Result<Self> {
         let ng_users = store.list_ng_users().context("load ng users")?;
         let regex_filters = store.list_regex_filters().context("load regex filters")?;
-        let filter_engine =
-            FilterEngine::new(ng_users, regex_filters).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let filter_engine = FilterEngine::new(ng_users, regex_filters)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         Ok(Self {
             store,
@@ -65,7 +65,7 @@ impl<F: CommentFetcher> AppCore<F> {
         let result: Result<serde_json::Value> = match req.method.as_str() {
             "ping" => self.ping().and_then(to_json_value),
             "open_video" => self.open_video(req.params).and_then(to_json_value),
-            "playback_tick" => self.playback_tick(req.params).and_then(to_json_value),
+            "playback_tick_batch" => self.playback_tick_batch(req.params).and_then(to_json_value),
             "add_ng_user" => self.add_ng_user(req.params).and_then(to_json_value),
             "remove_ng_user" => self.remove_ng_user(req.params).and_then(to_json_value),
             "undo_last_ng" => self.undo_last_ng(req.params).and_then(to_json_value),
@@ -73,7 +73,11 @@ impl<F: CommentFetcher> AppCore<F> {
             "remove_regex_filter" => self.remove_regex_filter(req.params).and_then(to_json_value),
             "list_filters" => self.list_filters().and_then(to_json_value),
             _ => {
-                return JsonRpcResponse::failure(id, -32601, format!("method not found: {}", req.method));
+                return JsonRpcResponse::failure(
+                    id,
+                    -32601,
+                    format!("method not found: {}", req.method),
+                );
             }
         };
 
@@ -102,7 +106,11 @@ impl<F: CommentFetcher> AppCore<F> {
             }
             Err(err) => {
                 eprintln!("comment fetch failed for {}: {err:#}", params.video_id);
-                match self.store.load_comment_cache(&params.video_id).context("load cache")? {
+                match self
+                    .store
+                    .load_comment_cache(&params.video_id)
+                    .context("load cache")?
+                {
                     Some(cached) => (cached, CommentSource::Cache),
                     None => (Vec::new(), CommentSource::None),
                 }
@@ -133,30 +141,47 @@ impl<F: CommentFetcher> AppCore<F> {
         })
     }
 
-    fn playback_tick(&mut self, params: serde_json::Value) -> Result<PlaybackTickResult> {
-        let params: PlaybackTickParams = parse_params(params)?;
+    fn playback_tick_batch(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<PlaybackTickBatchResult> {
+        let params: PlaybackTickBatchParams = parse_params(params)?;
         let session = self
             .sessions
             .get_mut(&params.session_id)
             .with_context(|| format!("unknown session: {}", params.session_id))?;
 
-        if params.is_seek || params.position_ms < session.last_position_ms {
-            session.cursor = cursor_for_position(&session.comments, params.position_ms);
-            session.last_position_ms = params.position_ms;
-            return Ok(PlaybackTickResult {
-                emit_comments: Vec::new(),
-            });
+        let mut emit_comments = Vec::new();
+        let filter_engine = &self.filter_engine;
+        for tick in &params.ticks {
+            emit_comments.extend(Self::apply_playback_tick(session, tick, filter_engine));
         }
 
-        if params.paused {
-            session.last_position_ms = params.position_ms;
-            return Ok(PlaybackTickResult {
-                emit_comments: Vec::new(),
-            });
+        Ok(PlaybackTickBatchResult {
+            emit_comments,
+            processed_ticks: params.ticks.len(),
+            last_position_ms: session.last_position_ms,
+        })
+    }
+
+    fn apply_playback_tick(
+        session: &mut Session,
+        tick: &PlaybackTickSample,
+        filter_engine: &FilterEngine,
+    ) -> Vec<CommentEvent> {
+        if tick.is_seek || tick.position_ms < session.last_position_ms {
+            session.cursor = cursor_for_position(&session.comments, tick.position_ms);
+            session.last_position_ms = tick.position_ms;
+            return Vec::new();
+        }
+
+        if tick.paused {
+            session.last_position_ms = tick.position_ms;
+            return Vec::new();
         }
 
         let from_ms = session.last_position_ms;
-        let to_ms = params.position_ms;
+        let to_ms = tick.position_ms;
 
         let mut emit_comments = Vec::new();
         while session.cursor < session.comments.len() {
@@ -165,21 +190,24 @@ impl<F: CommentFetcher> AppCore<F> {
                 break;
             }
 
-            if c.at_ms > from_ms && !self.filter_engine.should_hide(c) {
+            if c.at_ms > from_ms && !filter_engine.should_hide(c) {
                 emit_comments.push(c.clone());
             }
             session.cursor += 1;
         }
 
         session.last_position_ms = to_ms;
-        Ok(PlaybackTickResult { emit_comments })
+        emit_comments
     }
 
     fn add_ng_user(&mut self, params: serde_json::Value) -> Result<AddNgUserResult> {
         let params: AddNgUserParams = parse_params(params)?;
 
         let applied = self.filter_engine.add_ng_user(&params.user_id);
-        let _ = self.store.add_ng_user(&params.user_id).context("save ng user")?;
+        let _ = self
+            .store
+            .add_ng_user(&params.user_id)
+            .context("save ng user")?;
 
         let undo_token = if applied {
             let token = Uuid::new_v4().to_string();
@@ -244,7 +272,10 @@ impl<F: CommentFetcher> AppCore<F> {
 
         let user_id = last.user_id.clone();
         self.filter_engine.remove_ng_user(&user_id);
-        let _ = self.store.remove_ng_user(&user_id).context("remove ng user")?;
+        let _ = self
+            .store
+            .remove_ng_user(&user_id)
+            .context("remove ng user")?;
         self.last_undo = None;
 
         Ok(UndoLastNgResult {
@@ -274,7 +305,10 @@ impl<F: CommentFetcher> AppCore<F> {
         })
     }
 
-    fn remove_regex_filter(&mut self, params: serde_json::Value) -> Result<RemoveRegexFilterResult> {
+    fn remove_regex_filter(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<RemoveRegexFilterResult> {
         let params: RemoveRegexFilterParams = parse_params(params)?;
         let removed_db = self
             .store
@@ -313,7 +347,9 @@ mod tests {
 
     use anyhow::Result;
     use niconeon_domain::CommentEvent;
-    use niconeon_protocol::{JsonRpcRequest, OpenVideoParams, PlaybackTickParams};
+    use niconeon_protocol::{
+        JsonRpcRequest, OpenVideoParams, PlaybackTickBatchParams, PlaybackTickSample,
+    };
     use niconeon_store::Store;
     use serde_json::json;
 
@@ -380,12 +416,14 @@ mod tests {
         let tick = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: json!(2),
-            method: "playback_tick".to_string(),
-            params: serde_json::to_value(PlaybackTickParams {
+            method: "playback_tick_batch".to_string(),
+            params: serde_json::to_value(PlaybackTickBatchParams {
                 session_id,
-                position_ms: 150,
-                paused: false,
-                is_seek: false,
+                ticks: vec![PlaybackTickSample {
+                    position_ms: 150,
+                    paused: false,
+                    is_seek: false,
+                }],
             })
             .expect("tick params"),
         };
@@ -397,9 +435,26 @@ mod tests {
             .and_then(|v| v.get("emit_comments"))
             .and_then(|v| v.as_array())
             .expect("emit comments");
+        let processed_ticks = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("processed_ticks"))
+            .and_then(|v| v.as_u64())
+            .expect("processed ticks");
+        let last_position_ms = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("last_position_ms"))
+            .and_then(|v| v.as_i64())
+            .expect("last position");
 
         assert_eq!(emitted.len(), 1);
-        assert_eq!(emitted[0].get("comment_id").and_then(|v| v.as_str()), Some("a"));
+        assert_eq!(processed_ticks, 1);
+        assert_eq!(last_position_ms, 150);
+        assert_eq!(
+            emitted[0].get("comment_id").and_then(|v| v.as_str()),
+            Some("a")
+        );
     }
 
     #[test]
@@ -508,6 +563,26 @@ mod tests {
         };
         let res = app.handle_request(req);
         assert!(res.error.is_some());
+    }
+
+    #[test]
+    fn legacy_playback_tick_method_is_not_supported() {
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(Vec::new())),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(1),
+            method: "playback_tick".to_string(),
+            params: json!({}),
+        };
+        let res = app.handle_request(req);
+        assert!(res.error.is_some());
+        let message = res.error.as_ref().map(|e| e.message.as_str()).unwrap_or("");
+        assert!(message.contains("method not found"));
     }
 
     #[test]

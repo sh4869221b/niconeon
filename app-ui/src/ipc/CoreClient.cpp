@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <utility>
 
 namespace {
 QString processErrorName(QProcess::ProcessError error) {
@@ -85,6 +86,10 @@ void CoreClient::startDefault() {
     if (m_process.state() != QProcess::NotRunning) {
         return;
     }
+    m_pendingTickSessionId.clear();
+    m_pendingTicks.clear();
+    m_playbackTickBatchInFlight = false;
+    m_inFlightPlaybackTickRequestIds.clear();
 
     QStringList triedCandidates;
     const QString program = resolveCoreProgram(&triedCandidates);
@@ -104,6 +109,10 @@ void CoreClient::stop() {
     if (m_process.state() == QProcess::NotRunning) {
         return;
     }
+    m_pendingTickSessionId.clear();
+    m_pendingTicks.clear();
+    m_playbackTickBatchInFlight = false;
+    m_inFlightPlaybackTickRequestIds.clear();
     m_process.terminate();
     if (!m_process.waitForFinished(1000)) {
         m_process.kill();
@@ -112,19 +121,36 @@ void CoreClient::stop() {
 }
 
 void CoreClient::openVideo(const QString &videoPath, const QString &videoId) {
+    m_pendingTickSessionId.clear();
+    m_pendingTicks.clear();
+    m_playbackTickBatchInFlight = false;
+    m_inFlightPlaybackTickRequestIds.clear();
     sendRequest("open_video", {
                                  {"video_path", videoPath},
                                  {"video_id", videoId},
                              });
 }
 
-void CoreClient::playbackTick(const QString &sessionId, qint64 positionMs, bool paused, bool isSeek) {
-    sendRequest("playback_tick", {
-                                    {"session_id", sessionId},
-                                    {"position_ms", positionMs},
-                                    {"paused", paused},
-                                    {"is_seek", isSeek},
-                                });
+void CoreClient::enqueuePlaybackTick(const QString &sessionId, qint64 positionMs, bool paused, bool isSeek) {
+    if (sessionId.trimmed().isEmpty()) {
+        return;
+    }
+    if (m_process.state() == QProcess::NotRunning) {
+        emit responseReceived("playback_tick_batch", QVariant(), QStringLiteral("core is not running"));
+        return;
+    }
+
+    if (!m_pendingTickSessionId.isEmpty() && m_pendingTickSessionId != sessionId) {
+        m_pendingTicks.clear();
+    }
+    m_pendingTickSessionId = sessionId;
+    m_pendingTicks.push_back(PendingPlaybackTick {
+        positionMs,
+        paused,
+        isSeek,
+    });
+
+    flushPlaybackTickBatch();
 }
 
 void CoreClient::addNgUser(const QString &userId) {
@@ -190,6 +216,12 @@ void CoreClient::onReadyReadStandardOutput() {
             error = obj.value("error").toVariant();
         }
 
+        if (method == QStringLiteral("playback_tick_batch")
+            && m_inFlightPlaybackTickRequestIds.remove(id) > 0) {
+            m_playbackTickBatchInFlight = false;
+            flushPlaybackTickBatch();
+        }
+
         emit responseReceived(method, result, error);
     }
 }
@@ -226,19 +258,27 @@ void CoreClient::onProcessFinished(int exitCode, QProcess::ExitStatus status) {
     }
 
     emit runningChanged();
+    m_pendingTickSessionId.clear();
+    m_pendingTicks.clear();
+    m_playbackTickBatchInFlight = false;
+    m_inFlightPlaybackTickRequestIds.clear();
     emit coreCrashed(QStringLiteral("core exited with code %1").arg(exitCode));
 }
 
 void CoreClient::onProcessErrorOccurred(QProcess::ProcessError error) {
     const QString message = QStringLiteral("core process error (%1): %2")
                                 .arg(processErrorName(error), m_process.errorString());
+    m_pendingTickSessionId.clear();
+    m_pendingTicks.clear();
+    m_playbackTickBatchInFlight = false;
+    m_inFlightPlaybackTickRequestIds.clear();
     emit coreCrashed(message);
 }
 
-void CoreClient::sendRequest(const QString &method, const QVariantMap &params) {
+qint64 CoreClient::sendRequest(const QString &method, const QVariantMap &params) {
     if (m_process.state() == QProcess::NotRunning) {
         emit responseReceived(method, QVariant(), QStringLiteral("core is not running"));
-        return;
+        return -1;
     }
 
     const qint64 id = m_nextRequestId++;
@@ -252,4 +292,40 @@ void CoreClient::sendRequest(const QString &method, const QVariantMap &params) {
 
     const QByteArray line = QJsonDocument(payload).toJson(QJsonDocument::Compact) + "\n";
     m_process.write(line);
+    return id;
+}
+
+void CoreClient::flushPlaybackTickBatch() {
+    if (m_playbackTickBatchInFlight || m_pendingTicks.isEmpty() || m_pendingTickSessionId.isEmpty()) {
+        return;
+    }
+    if (m_process.state() == QProcess::NotRunning) {
+        m_pendingTicks.clear();
+        return;
+    }
+
+    QVariantList ticks;
+    ticks.reserve(m_pendingTicks.size());
+    for (const PendingPlaybackTick &tick : std::as_const(m_pendingTicks)) {
+        ticks.push_back(QVariantMap {
+            {"position_ms", tick.positionMs},
+            {"paused", tick.paused},
+            {"is_seek", tick.isSeek},
+        });
+    }
+
+    const QString sessionId = m_pendingTickSessionId;
+    m_pendingTicks.clear();
+    const qint64 requestId = sendRequest(
+        "playback_tick_batch",
+        {
+            {"session_id", sessionId},
+            {"ticks", ticks},
+        });
+    if (requestId < 0) {
+        m_playbackTickBatchInFlight = false;
+        return;
+    }
+    m_playbackTickBatchInFlight = true;
+    m_inFlightPlaybackTickRequestIds.insert(requestId);
 }

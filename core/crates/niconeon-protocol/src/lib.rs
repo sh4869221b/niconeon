@@ -64,16 +64,23 @@ pub struct OpenVideoResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaybackTickParams {
-    pub session_id: String,
+pub struct PlaybackTickSample {
     pub position_ms: i64,
     pub paused: bool,
     pub is_seek: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaybackTickResult {
+pub struct PlaybackTickBatchParams {
+    pub session_id: String,
+    pub ticks: Vec<PlaybackTickSample>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaybackTickBatchResult {
     pub emit_comments: Vec<CommentEvent>,
+    pub processed_ticks: usize,
+    pub last_position_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
