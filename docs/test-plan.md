@@ -33,4 +33,6 @@
 - 高密度再生で `rows_free` が増えたあと、条件を満たすと `compacted=1` が出力される。
 - 高密度再生で `lane_forced_count` が増えても、シーク後の再同期とドロップ復帰（同一レーン優先）が壊れない。
 - `QSG_RENDERER_DEBUG=render` および `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` のプロファイルでログ取得できる。
+- #7 回帰確認として、同一動画・同一区間で `fps` / `p95_ms` / `p99_ms` が悪化しない（目安: 5%以内）ことを確認する。
+- #7 回帰確認として、Qt Creator QML Profiler で `DanmakuItem` の per-frame hot path（Binding/JS）が増加していないことを確認する。
 - About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。

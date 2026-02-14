@@ -22,6 +22,13 @@ public:
         bool active = true;
     };
 
+    struct GeometryUpdate {
+        int row = -1;
+        qreal posX = 0;
+        qreal posY = 0;
+        qreal alpha = 1.0;
+    };
+
     enum Role {
         CommentIdRole = Qt::UserRole + 1,
         UserIdRole,
@@ -49,6 +56,7 @@ public:
     void resetRows(const QVector<Row> &rows);
 
     void setGeometry(int row, qreal posX, qreal posY, qreal alpha);
+    void setGeometryBatch(const QVector<GeometryUpdate> &updates);
     void setDragState(int row, bool dragging);
     void setLane(int row, int lane);
     void setNgDropHovered(int row, bool hovered);

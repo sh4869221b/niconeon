@@ -1,6 +1,7 @@
 #include "danmaku/DanmakuListModel.hpp"
 
 #include <QtGlobal>
+#include <algorithm>
 
 namespace {
 bool nearlyEqual(qreal lhs, qreal rhs) {
@@ -145,6 +146,77 @@ void DanmakuListModel::setGeometry(int row, qreal posX, qreal posY, qreal alpha)
 
     const QModelIndex modelIndex = index(row, 0);
     emit dataChanged(modelIndex, modelIndex, changedRoles);
+}
+
+void DanmakuListModel::setGeometryBatch(const QVector<GeometryUpdate> &updates) {
+    if (updates.isEmpty()) {
+        return;
+    }
+
+    QVector<GeometryUpdate> sorted = updates;
+    std::sort(sorted.begin(), sorted.end(), [](const GeometryUpdate &lhs, const GeometryUpdate &rhs) {
+        return lhs.row < rhs.row;
+    });
+
+    QVector<int> changedRows;
+    changedRows.reserve(sorted.size());
+
+    for (int i = 0; i < sorted.size(); ++i) {
+        const GeometryUpdate &update = sorted[i];
+        if (update.row < 0 || update.row >= m_rows.size()) {
+            continue;
+        }
+
+        // If the same row appears multiple times in one frame, apply only the last update.
+        if (i + 1 < sorted.size() && sorted[i + 1].row == update.row) {
+            continue;
+        }
+
+        Row &target = m_rows[update.row];
+        bool changed = false;
+        if (!nearlyEqual(target.posX, update.posX)) {
+            target.posX = update.posX;
+            changed = true;
+        }
+        if (!nearlyEqual(target.posY, update.posY)) {
+            target.posY = update.posY;
+            changed = true;
+        }
+        if (!nearlyEqual(target.alpha, update.alpha)) {
+            target.alpha = update.alpha;
+            changed = true;
+        }
+
+        if (changed) {
+            changedRows.push_back(update.row);
+        }
+    }
+
+    if (changedRows.isEmpty()) {
+        return;
+    }
+
+    int rangeStart = changedRows.first();
+    int rangeEnd = rangeStart;
+    for (int i = 1; i < changedRows.size(); ++i) {
+        const int row = changedRows[i];
+        if (row == rangeEnd + 1) {
+            rangeEnd = row;
+            continue;
+        }
+
+        emit dataChanged(
+            index(rangeStart, 0),
+            index(rangeEnd, 0),
+            {PosXRole, PosYRole, AlphaRole});
+        rangeStart = row;
+        rangeEnd = row;
+    }
+
+    emit dataChanged(
+        index(rangeStart, 0),
+        index(rangeEnd, 0),
+        {PosXRole, PosYRole, AlphaRole});
 }
 
 void DanmakuListModel::setDragState(int row, bool dragging) {

@@ -108,6 +108,18 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
   - ドロップ復帰時の同一レーン優先が維持されること
   - 高密度時でも明らかな不自然偏り（特定レーン集中）がないこと
 
+## Issue #7 Comparison Focus
+
+- 同一動画・同一区間で、以下を #7 前後で比較する:
+  - `[perf-danmaku]` の `updates`（同等以下であること）
+  - `fps` / `p95_ms` / `p99_ms`（悪化しないこと）
+- Qt Creator QML Profiler が利用できる場合:
+  - `DanmakuItem` の毎フレーム評価バインディングが減っていること
+  - ドラッグ中・シーク後でも hot path が過度に増えないこと
+- 目視回帰:
+  - NGドロップ判定、ゾーン外ドロップ復帰、Undo が従来通り動作すること
+  - 1件ドラッグ中に他コメントが流れ続けること
+
 ## Expected Log Prefixes
 
 - `[perf-ui] ...`

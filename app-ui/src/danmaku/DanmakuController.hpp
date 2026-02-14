@@ -13,7 +13,6 @@ class DanmakuController : public QObject {
     Q_PROPERTY(bool ngDropZoneVisible READ ngDropZoneVisible NOTIFY ngDropZoneVisibleChanged)
     Q_PROPERTY(bool playbackPaused READ playbackPaused NOTIFY playbackPausedChanged)
     Q_PROPERTY(double playbackRate READ playbackRate NOTIFY playbackRateChanged)
-    Q_PROPERTY(qint64 dragVisualElapsedMs READ dragVisualElapsedMs NOTIFY dragVisualElapsedMsChanged)
     Q_PROPERTY(bool perfLogEnabled READ perfLogEnabled WRITE setPerfLogEnabled NOTIFY perfLogEnabledChanged)
 
 public:
@@ -39,14 +38,12 @@ public:
     bool ngDropZoneVisible() const;
     bool playbackPaused() const;
     double playbackRate() const;
-    qint64 dragVisualElapsedMs() const;
     bool perfLogEnabled() const;
 
 signals:
     void ngDropZoneVisibleChanged();
     void playbackPausedChanged();
     void playbackRateChanged();
-    void dragVisualElapsedMsChanged();
     void perfLogEnabledChanged();
     void ngDropRequested(const QString &userId);
 
@@ -109,7 +106,6 @@ private:
     bool m_ngDropZoneVisible = false;
     bool m_playbackPaused = true;
     double m_playbackRate = 1.0;
-    qint64 m_dragVisualElapsedMs = 0;
     qreal m_ngZoneX = 0;
     qreal m_ngZoneY = 0;
     qreal m_ngZoneWidth = 0;

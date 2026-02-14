@@ -11,65 +11,27 @@ Rectangle {
     required property int lane
     required property bool dragging
     required property int widthEstimate
-    required property real speedPxPerSec
     required property bool ngDropHovered
     required property bool active
     property var controller
     property Item overlay
-    property Item ngZone
     property bool localDragging: false
     property real localX: 0
     property real localY: 0
-    property real dragVisualOffsetX: {
-        if (localDragging || !controller) {
-            return 0
-        }
-        const elapsedMs = Number(controller.dragVisualElapsedMs || 0)
-        return elapsedMs * speedPxPerSec / 1000.0
-    }
-
-    function computeNgHit(mouse) {
-        if (!overlay || !ngZone || !ngZone.visible) {
-            return false
-        }
-
-        const topLeftInZone = root.mapToItem(ngZone, 0, 0)
-        const bottomRightInZone = root.mapToItem(ngZone, root.width, root.height)
-
-        const overlap = !(
-            bottomRightInZone.x < 0
-            || ngZone.width < topLeftInZone.x
-            || bottomRightInZone.y < 0
-            || ngZone.height < topLeftInZone.y
-        )
-
-        const pointer = mouse
-            ? root.mapToItem(ngZone, mouse.x, mouse.y)
-            : root.mapToItem(ngZone, root.width / 2, root.height / 2)
-        const pointerInZone = pointer.x >= 0
-            && pointer.x <= ngZone.width
-            && pointer.y >= 0
-            && pointer.y <= ngZone.height
-
-        return overlap || pointerInZone
-    }
-
-    function finishDrag(mouse, canceled) {
+    function finishDrag(canceled) {
         if (!controller || !localDragging) {
             return
         }
-
-        const inNgZone = !canceled && computeNgHit(mouse)
         localDragging = false
 
         if (canceled) {
             controller.cancelDrag(commentId)
         } else {
-            controller.dropDrag(commentId, inNgZone)
+            controller.dropDrag(commentId, false)
         }
     }
 
-    x: (localDragging ? localX : posX) - dragVisualOffsetX
+    x: localDragging ? localX : posX
     y: localDragging ? localY : posY
     visible: active
     enabled: active
@@ -114,12 +76,12 @@ Rectangle {
             controller.moveDrag(commentId, localX, localY)
         }
 
-        onReleased: function(mouse) {
-            finishDrag(mouse, false)
+        onReleased: {
+            finishDrag(false)
         }
 
         onCanceled: {
-            finishDrag(null, true)
+            finishDrag(true)
         }
 
         onPressedChanged: {
@@ -127,7 +89,7 @@ Rectangle {
                 // Fallback only when release/cancel is truly missing.
                 Qt.callLater(function() {
                     if (localDragging) {
-                        finishDrag(null, false)
+                        finishDrag(false)
                     }
                 })
             }

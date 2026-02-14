@@ -143,10 +143,6 @@ void DanmakuController::beginDrag(const QString &commentId) {
     item.ngDropHovered = isItemInNgZone(item);
     m_itemModel.setDragState(index, true);
     m_itemModel.setNgDropHovered(index, item.ngDropHovered);
-    if (m_dragVisualElapsedMs != 0) {
-        m_dragVisualElapsedMs = 0;
-        emit dragVisualElapsedMsChanged();
-    }
     updateNgZoneVisibility();
 }
 
@@ -221,10 +217,6 @@ void DanmakuController::dropDrag(const QString &commentId, bool inNgZone) {
     }
 
     updateNgZoneVisibility();
-    if (!hasDragging() && m_dragVisualElapsedMs != 0) {
-        m_dragVisualElapsedMs = 0;
-        emit dragVisualElapsedMsChanged();
-    }
 }
 
 void DanmakuController::cancelDrag(const QString &commentId) {
@@ -241,10 +233,6 @@ void DanmakuController::applyNgUserFade(const QString &userId) {
 }
 
 void DanmakuController::resetForSeek() {
-    if (m_dragVisualElapsedMs != 0) {
-        m_dragVisualElapsedMs = 0;
-        emit dragVisualElapsedMsChanged();
-    }
     QVector<int> activeRows;
     activeRows.reserve(m_items.size());
     for (int i = 0; i < m_items.size(); ++i) {
@@ -274,10 +262,6 @@ double DanmakuController::playbackRate() const {
     return m_playbackRate;
 }
 
-qint64 DanmakuController::dragVisualElapsedMs() const {
-    return m_dragVisualElapsedMs;
-}
-
 bool DanmakuController::perfLogEnabled() const {
     return m_perfLogEnabled;
 }
@@ -295,20 +279,6 @@ void DanmakuController::onFrame() {
         m_perfFrameSamplesMs.push_back(elapsedMs);
     }
 
-    const bool dragging = hasDragging();
-    if (dragging) {
-        if (!m_playbackPaused) {
-            const qint64 scaledElapsedMs = static_cast<qint64>(std::llround(elapsedMs * m_playbackRate));
-            if (scaledElapsedMs > 0) {
-                m_dragVisualElapsedMs += scaledElapsedMs;
-                emit dragVisualElapsedMsChanged();
-            }
-        }
-    } else if (m_dragVisualElapsedMs != 0) {
-        m_dragVisualElapsedMs = 0;
-        emit dragVisualElapsedMsChanged();
-    }
-
     if (activeItemCount() == 0) {
         maybeWritePerfLog(now);
         return;
@@ -317,6 +287,8 @@ void DanmakuController::onFrame() {
     const qreal elapsedSec = elapsedMs / 1000.0;
     QVector<int> removeRows;
     removeRows.reserve(m_items.size());
+    QVector<DanmakuListModel::GeometryUpdate> geometryUpdates;
+    geometryUpdates.reserve(m_items.size());
     int frameGeometryUpdates = 0;
 
     for (int i = 0; i < m_items.size(); ++i) {
@@ -350,7 +322,7 @@ void DanmakuController::onFrame() {
         }
 
         if (geometryChanged) {
-            m_itemModel.setGeometry(i, item.x, item.y, item.alpha);
+            geometryUpdates.push_back({i, item.x, item.y, item.alpha});
             ++frameGeometryUpdates;
         }
 
@@ -364,6 +336,9 @@ void DanmakuController::onFrame() {
 
     if (m_perfLogEnabled) {
         m_perfLogGeometryUpdateCount += frameGeometryUpdates;
+    }
+    if (!geometryUpdates.isEmpty()) {
+        m_itemModel.setGeometryBatch(geometryUpdates);
     }
     if (!removeRows.isEmpty()) {
         releaseRowsDescending(removeRows);

@@ -21,7 +21,6 @@ Item {
         delegate: DanmakuItem {
             overlay: root
             controller: root.controller
-            ngZone: ngZone
         }
     }
 
