@@ -25,6 +25,7 @@ Issue `#4` の目的は、同一条件で再現可能なログを取り、ボト
 - UI: `tick_sent`, `tick_result`, `tick_backlog`
 - Danmaku: `fps`, `avg_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`, `updates`, `removed`
 - Pool状態: `rows_total`, `rows_active`, `rows_free`, `compacted`
+- Lane状態: `lane_pick_count`, `lane_ready_count`, `lane_forced_count`, `lane_wait_ms_avg`, `lane_wait_ms_max`
 - Scene Graph: batch/upload 関連ログ
 - Glyph: glyph time ログのスパイク有無
 
@@ -96,6 +97,16 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
   - `p95_ms` / `p99_ms`（フレーム時間スパイクが改善しているか）
   - `rows_active` と `rows_free`（画面外返却が機能しているか）
 - 高密度区間で `compacted=1` が出ることを確認し、compaction後にドラッグ/NG操作の回帰がないことを確認する。
+
+## Issue #6 Comparison Focus
+
+- 同一動画・同一区間で、以下を #6 前後で比較する:
+  - `lane_pick_count` に対する `lane_forced_count` の割合
+  - `lane_wait_ms_avg` / `lane_wait_ms_max`
+  - `p95_ms` / `p99_ms`
+- 目視回帰:
+  - ドロップ復帰時の同一レーン優先が維持されること
+  - 高密度時でも明らかな不自然偏り（特定レーン集中）がないこと
 
 ## Expected Log Prefixes
 

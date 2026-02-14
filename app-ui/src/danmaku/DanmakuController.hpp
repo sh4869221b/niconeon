@@ -51,6 +51,11 @@ signals:
     void ngDropRequested(const QString &userId);
 
 private:
+    struct LaneState {
+        qint64 nextAvailableAtMs = 0;
+        int lastAssignedRow = -1;
+    };
+
     struct Item {
         QString commentId;
         QString userId;
@@ -72,9 +77,12 @@ private:
 
     void onFrame();
     int laneCount() const;
-    int pickLane(int widthEstimate) const;
+    int pickLane(qint64 nowMs);
     bool laneHasCollision(int lane, const Item &candidate) const;
     void recoverToLane(Item &item);
+    void ensureLaneStateSize();
+    void resetLaneStates();
+    qint64 estimateLaneCooldownMs(const Item &item) const;
     int findItemIndex(const QString &commentId) const;
     int acquireRow();
     void releaseRow(int row);
@@ -88,6 +96,7 @@ private:
     DanmakuListModel::Row makeRow(const Item &item) const;
 
     QVector<Item> m_items;
+    QVector<LaneState> m_laneStates;
     QVector<int> m_freeRows;
     DanmakuListModel m_itemModel;
 
@@ -95,6 +104,7 @@ private:
     qreal m_viewportHeight = 720;
     int m_fontPx = 36;
     int m_laneGap = 6;
+    int m_laneCursor = 0;
 
     bool m_ngDropZoneVisible = false;
     bool m_playbackPaused = true;
@@ -111,6 +121,11 @@ private:
     int m_perfLogAppendCount = 0;
     int m_perfLogGeometryUpdateCount = 0;
     int m_perfLogRemovedCount = 0;
+    int m_perfLanePickCount = 0;
+    int m_perfLaneReadyCount = 0;
+    int m_perfLaneForcedCount = 0;
+    qint64 m_perfLaneWaitTotalMs = 0;
+    qint64 m_perfLaneWaitMaxMs = 0;
     bool m_perfCompactedSinceLastLog = false;
 
     QTimer m_frameTimer;

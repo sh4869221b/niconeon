@@ -29,6 +29,8 @@
 - 画面外に出た弾幕（左外/縦外/フェード完了）は次フレームで表示から外れ、更新対象に残らない。
 - 1件ドラッグ中でも、他弾幕は通常どおり移動し、画面外弾幕は継続して除去される。
 - `[perf-danmaku]` に `rows_total`/`rows_active`/`rows_free`/`compacted` が出力される。
+- `[perf-danmaku]` に `lane_pick_count`/`lane_ready_count`/`lane_forced_count`/`lane_wait_ms_avg`/`lane_wait_ms_max` が出力される。
 - 高密度再生で `rows_free` が増えたあと、条件を満たすと `compacted=1` が出力される。
+- 高密度再生で `lane_forced_count` が増えても、シーク後の再同期とドロップ復帰（同一レーン優先）が壊れない。
 - `QSG_RENDERER_DEBUG=render` および `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` のプロファイルでログ取得できる。
 - About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。

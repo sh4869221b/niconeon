@@ -4,7 +4,6 @@
 #include <QVariantMap>
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <numeric>
 #include <utility>
 
@@ -14,6 +13,7 @@ constexpr qreal kSpawnOffset = 12.0;
 constexpr qreal kItemHeight = 42.0;
 constexpr qreal kItemCullThreshold = -20.0;
 constexpr qint64 kMaxLagCompensationMs = 2000;
+constexpr qreal kLaneSpawnGapPx = 20.0;
 constexpr int kFreeRowsSoftLimit = 512;
 constexpr double kCompactTriggerRatio = 0.5;
 }
@@ -24,16 +24,20 @@ DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
     m_frameTimer.setInterval(33);
     connect(&m_frameTimer, &QTimer::timeout, this, &DanmakuController::onFrame);
     m_frameTimer.start();
+    ensureLaneStateSize();
+    resetLaneStates();
 }
 
 void DanmakuController::setViewportSize(qreal width, qreal height) {
     m_viewportWidth = width;
     m_viewportHeight = height;
+    ensureLaneStateSize();
 }
 
 void DanmakuController::setLaneMetrics(int fontPx, int laneGap) {
     m_fontPx = std::max(fontPx, 12);
     m_laneGap = std::max(laneGap, 0);
+    ensureLaneStateSize();
 }
 
 void DanmakuController::setPlaybackPaused(bool paused) {
@@ -65,11 +69,18 @@ void DanmakuController::setPerfLogEnabled(bool enabled) {
     m_perfLogAppendCount = 0;
     m_perfLogGeometryUpdateCount = 0;
     m_perfLogRemovedCount = 0;
+    m_perfLanePickCount = 0;
+    m_perfLaneReadyCount = 0;
+    m_perfLaneForcedCount = 0;
+    m_perfLaneWaitTotalMs = 0;
+    m_perfLaneWaitMaxMs = 0;
     m_perfCompactedSinceLastLog = false;
     emit perfLogEnabledChanged();
 }
 
 void DanmakuController::appendFromCore(const QVariantList &comments, qint64 playbackPositionMs) {
+    ensureLaneStateSize();
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     for (const QVariant &entry : comments) {
         const QVariantMap map = entry.toMap();
         Item item;
@@ -86,7 +97,7 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
         item.speedPxPerSec = 120 + (qHash(item.commentId) % 70);
         item.active = true;
 
-        item.lane = pickLane(item.widthEstimate);
+        item.lane = pickLane(nowMs);
         item.originalLane = item.lane;
         item.x = m_viewportWidth + kSpawnOffset;
         item.y = item.lane * (m_fontPx + m_laneGap) + kLaneTopMargin;
@@ -100,6 +111,10 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
 
         const int row = acquireRow();
         m_items[row] = item;
+        LaneState &laneState = m_laneStates[item.lane];
+        laneState.nextAvailableAtMs = std::max(laneState.nextAvailableAtMs, nowMs) + estimateLaneCooldownMs(item);
+        laneState.lastAssignedRow = row;
+
         const DanmakuListModel::Row modelRow = makeRow(item);
         if (row < m_itemModel.rowCount()) {
             m_itemModel.overwriteRow(row, modelRow);
@@ -239,6 +254,7 @@ void DanmakuController::resetForSeek() {
     }
     releaseRowsDescending(activeRows);
     maybeCompactRows();
+    resetLaneStates();
     updateNgZoneVisibility();
 }
 
@@ -367,28 +383,83 @@ int DanmakuController::laneCount() const {
     return std::max(1, static_cast<int>(m_viewportHeight / laneHeight));
 }
 
-int DanmakuController::pickLane(int widthEstimate) const {
+void DanmakuController::ensureLaneStateSize() {
     const int lanes = laneCount();
-    int bestLane = 0;
-    qreal bestTail = std::numeric_limits<qreal>::max();
+    if (m_laneStates.size() == lanes) {
+        return;
+    }
 
-    for (int lane = 0; lane < lanes; ++lane) {
-        qreal tail = -1e9;
-        for (const Item &item : m_items) {
-            if (!item.active || item.lane != lane || item.dragging) {
-                continue;
-            }
-            tail = std::max(tail, item.x + item.widthEstimate + 20.0);
+    m_laneStates.resize(lanes);
+    if (lanes <= 0) {
+        m_laneCursor = 0;
+    } else if (m_laneCursor >= lanes || m_laneCursor < 0) {
+        m_laneCursor = m_laneCursor % lanes;
+        if (m_laneCursor < 0) {
+            m_laneCursor += lanes;
         }
+    }
+}
 
-        if (tail < bestTail) {
-            bestTail = tail;
-            bestLane = lane;
+void DanmakuController::resetLaneStates() {
+    ensureLaneStateSize();
+    for (LaneState &state : m_laneStates) {
+        state.nextAvailableAtMs = 0;
+        state.lastAssignedRow = -1;
+    }
+    m_laneCursor = 0;
+}
+
+qint64 DanmakuController::estimateLaneCooldownMs(const Item &item) const {
+    const qreal effectiveSpeed = std::max<qreal>(1.0, item.speedPxPerSec * m_playbackRate);
+    const qreal travelMs = ((item.widthEstimate + kLaneSpawnGapPx) * 1000.0) / effectiveSpeed;
+    return std::max<qint64>(1, static_cast<qint64>(std::llround(travelMs)));
+}
+
+int DanmakuController::pickLane(qint64 nowMs) {
+    ensureLaneStateSize();
+    const int lanes = m_laneStates.size();
+    if (lanes <= 0) {
+        return 0;
+    }
+
+    const int start = (m_laneCursor >= 0) ? (m_laneCursor % lanes) : 0;
+    int chosenReady = -1;
+    for (int offset = 0; offset < lanes; ++offset) {
+        const int lane = (start + offset) % lanes;
+        if (m_laneStates[lane].nextAvailableAtMs <= nowMs) {
+            chosenReady = lane;
+            break;
         }
     }
 
-    Q_UNUSED(widthEstimate)
-    return bestLane;
+    if (chosenReady >= 0) {
+        m_laneCursor = (chosenReady + 1) % lanes;
+        if (m_perfLogEnabled) {
+            ++m_perfLanePickCount;
+            ++m_perfLaneReadyCount;
+        }
+        return chosenReady;
+    }
+
+    int chosenForced = start;
+    qint64 bestAt = m_laneStates[chosenForced].nextAvailableAtMs;
+    for (int offset = 1; offset < lanes; ++offset) {
+        const int lane = (start + offset) % lanes;
+        if (m_laneStates[lane].nextAvailableAtMs < bestAt) {
+            bestAt = m_laneStates[lane].nextAvailableAtMs;
+            chosenForced = lane;
+        }
+    }
+
+    const qint64 waitMs = std::max<qint64>(0, bestAt - nowMs);
+    m_laneCursor = (chosenForced + 1) % lanes;
+    if (m_perfLogEnabled) {
+        ++m_perfLanePickCount;
+        ++m_perfLaneForcedCount;
+        m_perfLaneWaitTotalMs += waitMs;
+        m_perfLaneWaitMaxMs = std::max(m_perfLaneWaitMaxMs, waitMs);
+    }
+    return chosenForced;
 }
 
 bool DanmakuController::laneHasCollision(int lane, const Item &candidate) const {
@@ -533,6 +604,9 @@ void DanmakuController::maybeCompactRows() {
     m_items = std::move(compactItems);
     m_itemModel.resetRows(compactRows);
     m_freeRows.clear();
+    for (LaneState &state : m_laneStates) {
+        state.lastAssignedRow = -1;
+    }
     m_perfCompactedSinceLastLog = true;
 }
 
@@ -650,8 +724,11 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
     const int rowsTotal = m_items.size();
     const int rowsFree = m_freeRows.size();
     const int rowsActive = activeItemCount();
+    const double laneWaitAvgMs = m_perfLanePickCount > 0
+        ? (static_cast<double>(m_perfLaneWaitTotalMs) / m_perfLanePickCount)
+        : 0.0;
     qInfo().noquote()
-        << QString("[perf-danmaku] window_ms=%1 frame_count=%2 fps=%3 avg_ms=%4 p50_ms=%5 p95_ms=%6 p99_ms=%7 max_ms=%8 rows_total=%9 rows_active=%10 rows_free=%11 compacted=%12 appended=%13 updates=%14 removed=%15 dragging=%16 paused=%17 rate=%18")
+        << QString("[perf-danmaku] window_ms=%1 frame_count=%2 fps=%3 avg_ms=%4 p50_ms=%5 p95_ms=%6 p99_ms=%7 max_ms=%8 rows_total=%9 rows_active=%10 rows_free=%11 compacted=%12 appended=%13 updates=%14 removed=%15 lane_pick_count=%16 lane_ready_count=%17 lane_forced_count=%18 lane_wait_ms_avg=%19 lane_wait_ms_max=%20 dragging=%21 paused=%22 rate=%23")
                .arg(elapsedMs)
                .arg(m_perfLogFrameCount)
                .arg(fps, 0, 'f', 1)
@@ -667,6 +744,11 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
                .arg(m_perfLogAppendCount)
                .arg(m_perfLogGeometryUpdateCount)
                .arg(m_perfLogRemovedCount)
+               .arg(m_perfLanePickCount)
+               .arg(m_perfLaneReadyCount)
+               .arg(m_perfLaneForcedCount)
+               .arg(laneWaitAvgMs, 0, 'f', 2)
+               .arg(m_perfLaneWaitMaxMs)
                .arg(hasDragging() ? 1 : 0)
                .arg(m_playbackPaused ? 1 : 0)
                .arg(m_playbackRate, 0, 'f', 2);
@@ -677,5 +759,10 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
     m_perfLogAppendCount = 0;
     m_perfLogGeometryUpdateCount = 0;
     m_perfLogRemovedCount = 0;
+    m_perfLanePickCount = 0;
+    m_perfLaneReadyCount = 0;
+    m_perfLaneForcedCount = 0;
+    m_perfLaneWaitTotalMs = 0;
+    m_perfLaneWaitMaxMs = 0;
     m_perfCompactedSinceLastLog = false;
 }
