@@ -33,7 +33,6 @@ ApplicationWindow {
     property int pendingSeekTargetMs: 0
     property bool commentsVisible: true
     property bool perfLogEnabled: false
-    property bool glyphWarmupEnabled: true
     property string perfProfile: "low_spec"
     property int targetFps: 30
     property int maxEmitPerTick: 48
@@ -61,7 +60,6 @@ ApplicationWindow {
         category: "ui"
         property bool commentsVisible: true
         property bool perfLogEnabled: false
-        property bool glyphWarmupEnabled: true
         property string perfProfile: "low_spec"
         property int targetFps: 30
         property int maxEmitPerTick: 48
@@ -267,21 +265,6 @@ ApplicationWindow {
 
         if (notify) {
             showToast(next ? "計測ログを有効化しました" : "計測ログを無効化しました")
-        }
-    }
-
-    function applyGlyphWarmupEnabled(enabled, notify) {
-        const next = !!enabled
-        if (root.glyphWarmupEnabled === next) {
-            return
-        }
-
-        root.glyphWarmupEnabled = next
-        uiSettings.glyphWarmupEnabled = next
-        danmakuController.setGlyphWarmupEnabled(next)
-
-        if (notify) {
-            showToast(next ? "Glyph warmup を有効化しました" : "Glyph warmup を無効化しました")
         }
     }
 
@@ -618,11 +601,6 @@ ApplicationWindow {
             }
 
             AppButton {
-                text: root.glyphWarmupEnabled ? "Glyph warmup ON" : "Glyph warmup OFF"
-                onClicked: root.applyGlyphWarmupEnabled(!root.glyphWarmupEnabled, true)
-            }
-
-            AppButton {
                 text: "Profile: " + root.perfProfile
                 onClicked: root.cycleRuntimeProfile()
             }
@@ -831,7 +809,6 @@ ApplicationWindow {
         loadSpeedSettings()
         root.commentsVisible = uiSettings.commentsVisible
         root.perfLogEnabled = uiSettings.perfLogEnabled
-        root.glyphWarmupEnabled = uiSettings.glyphWarmupEnabled
         root.perfProfile = root.sanitizePerfProfile(uiSettings.perfProfile)
         root.targetFps = Math.max(10, Math.min(120, Number(uiSettings.targetFps || 30)))
         root.maxEmitPerTick = Math.max(0, Math.min(2000, Number(uiSettings.maxEmitPerTick || 48)))
@@ -843,7 +820,7 @@ ApplicationWindow {
         danmakuController.setPlaybackRate(mpv.speed)
         danmakuController.setTargetFps(root.targetFps)
         danmakuController.setPerfLogEnabled(root.perfLogEnabled)
-        danmakuController.setGlyphWarmupEnabled(root.glyphWarmupEnabled)
+        danmakuController.setGlyphWarmupEnabled(true)
         coreClient.setRuntimeProfile(
             root.perfProfile,
             root.targetFps,

@@ -172,14 +172,13 @@ NICONEON_SYNTHETIC_USER_SPAN=200
 
 ## Issue #8 Comparison Focus
 
-- 同一動画・同一区間で、`Glyph warmup OFF` と `Glyph warmup ON` を比較する。
-- 2回以上採取し、以下を比較する:
+- Glyph warmup は常時ON前提で、同一動画・同一区間を2回以上採取して以下を比較する:
   - `[perf-danmaku]` の `p95_ms` / `p99_ms`
   - `[perf-glyph]` の `new_cp_total` / `new_cp_non_ascii`
   - `[perf-glyph]` の `warmup_sent_cp` / `warmup_batches` / `warmup_pending_cp`
 - `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` のログと `[perf-glyph]` を同時確認し、スパイク窓（高p99）の再現条件を記録する。
 - 受け入れ判定:
-  - `ON` で `p99_ms` が悪化しないこと
+  - 常時ONで `p99_ms` が著しく悪化しないこと
   - 文字化けや欠落がないこと
   - `warmup_enabled=1` で `warmup_sent_cp > 0` が観測できること
 
