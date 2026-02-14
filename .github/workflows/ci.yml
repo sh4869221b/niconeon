@@ -97,21 +97,39 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
+          cache: true
           update: true
           install: >-
-            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-ccache
             mingw-w64-x86_64-qt6-base
             mingw-w64-x86_64-qt6-declarative
             mingw-w64-x86_64-qt6-tools
             mingw-w64-x86_64-mpv
 
+      - name: Cache ccache (Windows UI)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\\.ccache
+          key: ccache-windows-ui-${{ runner.os }}-${{ hashFiles('app-ui/CMakeLists.txt', 'app-ui/src/**', 'app-ui/qml/**') }}
+          restore-keys: |
+            ccache-windows-ui-${{ runner.os }}-
+
       - name: Configure UI (Windows)
         shell: msys2 {0}
-        run: cmake -S app-ui -B app-ui/build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: |
+          export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
+          ccache -z || true
+          cmake -S app-ui -B app-ui/build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build UI (Windows)
         shell: msys2 {0}
-        run: cmake --build app-ui/build-ci --parallel
+        run: |
+          export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
+          cmake --build app-ui/build-ci --parallel
+          ccache -s || true

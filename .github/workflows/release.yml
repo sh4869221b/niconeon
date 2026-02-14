@@ -194,19 +194,32 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
       - name: Build core (release, MSVC)
-        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+        shell: pwsh
+        run: |
+          $start = Get-Date
+          echo "::notice title=timing::package-windows core build started $($start.ToUniversalTime().ToString('o'))"
+          cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+          $elapsed = [int]((Get-Date) - $start).TotalSeconds
+          echo "::notice title=timing::package-windows core build finished (${elapsed}s)"
 
       - name: Setup MSYS2 (Qt6 + mpv)
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
+          cache: true
           update: true
           install: >-
-            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-ccache
             mingw-w64-x86_64-qt6-base
             mingw-w64-x86_64-qt6-declarative
             mingw-w64-x86_64-qt6-tools
@@ -214,15 +227,41 @@ jobs:
             unzip
             zip
 
+      - name: Cache ccache (Windows release)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\\.ccache
+          key: ccache-windows-release-${{ runner.os }}-${{ hashFiles('app-ui/CMakeLists.txt', 'app-ui/src/**', 'app-ui/qml/**') }}
+          restore-keys: |
+            ccache-windows-release-${{ runner.os }}-
+
+      - name: Show MSYS2 package versions
+        shell: msys2 {0}
+        run: pacman -Q | grep -E '^mingw-w64-x86_64-(gcc|cmake|ninja|pkgconf|ccache|qt6-base|qt6-declarative|qt6-tools|mpv)( |$)' || true
+
       - name: Build UI (release, MSYS2)
         shell: msys2 {0}
         run: |
-          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          start_epoch="$(date +%s)"
+          echo "::notice title=timing::package-windows ui build started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
+          ccache -z || true
+          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build app-ui/build-release --parallel
+          ccache -s || true
+          end_epoch="$(date +%s)"
+          echo "::notice title=timing::package-windows ui build finished ($((end_epoch - start_epoch))s)"
 
       - name: Package Windows binaries zip
         shell: msys2 {0}
-        run: scripts/release/package_windows_msys2.sh "${{ needs.prepare.outputs.version }}"
+        run: |
+          start_epoch="$(date +%s)"
+          echo "::notice title=timing::package-windows packaging started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          scripts/release/package_windows_msys2.sh "${{ needs.prepare.outputs.version }}"
+          end_epoch="$(date +%s)"
+          echo "::notice title=timing::package-windows packaging finished ($((end_epoch - start_epoch))s)"
 
       - name: Verify Windows binaries license bundle
         shell: msys2 {0}

@@ -40,15 +40,19 @@ tool_shim_dir=""
 trap 'rm -rf "${staging}" "${tool_shim_dir}"' EXIT
 
 collect_mingw_dll_deps() {
-  local root="$1"
-  local -a pending=("${root}")
+  local output_file="$1"
+  shift
+  local -a pending=("$@")
   local current=""
   local dep=""
   declare -A visited=()
 
+  : > "${output_file}"
+
   while [[ ${#pending[@]} -gt 0 ]]; do
     current="${pending[0]}"
     pending=("${pending[@]:1}")
+    [[ -f "${current}" ]] || continue
 
     while IFS= read -r dep; do
       [[ -n "${dep}" ]] || continue
@@ -64,7 +68,7 @@ collect_mingw_dll_deps() {
 
       visited["${dep}"]=1
       pending+=("${dep}")
-      printf '%s\n' "${dep}"
+      printf '%s\n' "${dep}" >> "${output_file}"
     done < <(
       ldd "${current}" 2>/dev/null | awk '
         /=>/ {
@@ -81,16 +85,16 @@ collect_mingw_dll_deps() {
 }
 
 copy_mingw_dep_tree() {
-  local root="$1"
+  local dep_file="$1"
   local output_dir="$2"
   local dep=""
 
-  [[ -f "${root}" ]] || return 0
+  [[ -f "${dep_file}" ]] || return 0
 
   while IFS= read -r dep; do
     [[ -n "${dep}" ]] || continue
     cp -n "${dep}" "${output_dir}/$(basename "${dep}")"
-  done < <(collect_mingw_dll_deps "${root}")
+  done < "${dep_file}"
 }
 
 # MSYS2 Qt packages place helper tools under /mingw64/share/qt6/bin.
@@ -158,9 +162,6 @@ for pattern in libmd4c.dll libdouble-conversion.dll libicu*.dll; do
   done
 done
 
-copy_mingw_dep_tree "${ui_exe}" "${staging}/${base}"
-copy_mingw_dep_tree "/mingw64/bin/libmpv-2.dll" "${staging}/${base}"
-
 "${windeployqt_bin}" \
   --release \
   --ignore-library-errors \
@@ -170,13 +171,23 @@ copy_mingw_dep_tree "/mingw64/bin/libmpv-2.dll" "${staging}/${base}"
 
 # Ensure transitive runtime dependencies for all packaged binaries/plugins
 # are present in the top-level app directory.
+dep_list_file="${staging}/mingw-deps.txt"
+dep_roots=("${staging}/${base}/niconeon-ui.exe")
+if [[ -f "/mingw64/bin/libmpv-2.dll" ]]; then
+  dep_roots+=("/mingw64/bin/libmpv-2.dll")
+fi
 while IFS= read -r -d '' binary; do
-  copy_mingw_dep_tree "${binary}" "${staging}/${base}"
+  dep_roots+=("${binary}")
 done < <(find "${staging}/${base}" -type f \( -iname "*.exe" -o -iname "*.dll" \) -print0)
+collect_mingw_dll_deps "${dep_list_file}" "${dep_roots[@]}"
+copy_mingw_dep_tree "${dep_list_file}" "${staging}/${base}"
+
+echo "staging size before zip:"
+du -sh "${staging}/${base}" || true
 
 (
   cd "${staging}"
-  zip -r "${out_zip}" "${base}" >/dev/null
+  zip -r -1 "${out_zip}" "${base}" >/dev/null
 )
 
 echo "created: ${out_zip}"
