@@ -28,6 +28,8 @@ qt_add_executable(niconeon-ui
   src/ipc/CoreClient.cpp
   src/danmaku/DanmakuListModel.cpp
   src/danmaku/DanmakuController.cpp
+  src/danmaku/DanmakuSimdUpdater.cpp
+  src/danmaku/DanmakuUpdateWorker.cpp
   src/danmaku/DanmakuSpatialGrid.cpp
   src/danmaku/DanmakuSceneItem.cpp
 )

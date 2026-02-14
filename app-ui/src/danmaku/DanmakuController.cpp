@@ -1,5 +1,8 @@
 #include "danmaku/DanmakuController.hpp"
 
+#include "danmaku/DanmakuSimdUpdater.hpp"
+#include "danmaku/DanmakuUpdateWorker.hpp"
+
 #include <QDateTime>
 #include <QMutexLocker>
 #include <QPointF>
@@ -24,6 +27,7 @@ constexpr int kGlyphWarmupBatchChars = 24;
 constexpr int kGlyphWarmupQueueMax = 2048;
 constexpr qreal kSpatialCellWidthPx = 192.0;
 constexpr qreal kDragPickSlopPx = 4.0;
+constexpr qint64 kWorkerElapsedCapMs = 200;
 constexpr const char *kGlyphWarmupSeed =
     "0123456789"
     "abcdefghijklmnopqrstuvwxyz"
@@ -58,14 +62,58 @@ bool isTrackableGlyphCodepoint(char32_t codepoint) {
 DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
     m_lastTickMs = QDateTime::currentMSecsSinceEpoch();
     m_perfLogWindowStartMs = m_lastTickMs;
+    const QString workerMode = qEnvironmentVariable("NICONEON_DANMAKU_WORKER").trimmed().toLower();
+    if (workerMode == QStringLiteral("off") || workerMode == QStringLiteral("0") || workerMode == QStringLiteral("false")) {
+        m_workerEnabled = false;
+    }
+    const DanmakuSimdMode requestedSimdMode = DanmakuSimdUpdater::parseMode(qEnvironmentVariable("NICONEON_SIMD_MODE"));
+    const DanmakuSimdMode resolvedSimdMode = DanmakuSimdUpdater::resolveMode(requestedSimdMode);
+    m_simdModeName = DanmakuSimdUpdater::modeName(resolvedSimdMode);
+
     m_frameTimer.setInterval(33);
     connect(&m_frameTimer, &QTimer::timeout, this, &DanmakuController::onFrame);
     m_frameTimer.start();
+
+    if (m_workerEnabled) {
+        m_updateWorker = new DanmakuUpdateWorker();
+        m_updateWorker->setSimdMode(resolvedSimdMode);
+        m_updateWorker->moveToThread(&m_updateThread);
+        connect(&m_updateThread, &QThread::finished, m_updateWorker, &QObject::deleteLater);
+        connect(
+            m_updateWorker,
+            &DanmakuUpdateWorker::frameProcessed,
+            this,
+            [this](
+                qint64 seq,
+                const QVector<int> &rows,
+                const QVector<qreal> &x,
+                const QVector<qreal> &y,
+                const QVector<qreal> &alpha,
+                const QVector<int> &fadeRemainingMs,
+                const QVector<quint8> &flags,
+                const QVector<int> &changedRows,
+                const QVector<int> &removeRows) {
+                handleWorkerFrame(seq, rows, x, y, alpha, fadeRemainingMs, flags, changedRows, removeRows);
+            },
+            Qt::QueuedConnection);
+        m_updateThread.start();
+    }
+
     ensureLaneStateSize();
     resetLaneStates();
     resetGlyphSession();
     rebuildSpatialIndex();
     rebuildRenderSnapshot();
+    qInfo().noquote() << QString("[danmaku-simd] mode=%1").arg(m_simdModeName);
+    qInfo().noquote() << QString("[danmaku-worker] enabled=%1").arg(m_workerEnabled ? 1 : 0);
+}
+
+DanmakuController::~DanmakuController() {
+    m_workerBusy = false;
+    if (m_updateThread.isRunning()) {
+        m_updateThread.quit();
+        m_updateThread.wait();
+    }
 }
 
 void DanmakuController::setViewportSize(qreal width, qreal height) {
@@ -89,6 +137,7 @@ void DanmakuController::setPlaybackPaused(bool paused) {
         return;
     }
     m_playbackPaused = paused;
+    invalidateWorkerGeneration();
     emit playbackPausedChanged();
 }
 
@@ -98,6 +147,7 @@ void DanmakuController::setPlaybackRate(double rate) {
         return;
     }
     m_playbackRate = normalized;
+    invalidateWorkerGeneration();
     emit playbackRateChanged();
 }
 
@@ -151,6 +201,7 @@ void DanmakuController::setGlyphWarmupEnabled(bool enabled) {
 }
 
 void DanmakuController::appendFromCore(const QVariantList &comments, qint64 playbackPositionMs) {
+    invalidateWorkerGeneration();
     ensureLaneStateSize();
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     bool appendedAny = false;
@@ -228,6 +279,7 @@ void DanmakuController::moveDrag(const QString &commentId, qreal x, qreal y) {
 }
 
 void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal height) {
+    invalidateWorkerGeneration();
     m_ngZoneX = x;
     m_ngZoneY = y;
     m_ngZoneWidth = std::max(0.0, width);
@@ -325,6 +377,7 @@ bool DanmakuController::beginDragInternal(int index, qreal pointerX, qreal point
     m_itemModel.setDragState(index, true);
     m_itemModel.setNgDropHovered(index, item.ngDropHovered);
     updateNgZoneVisibility();
+    invalidateWorkerGeneration();
     markSpatialDirty();
     rebuildSpatialIndex();
     rebuildRenderSnapshot();
@@ -355,6 +408,7 @@ void DanmakuController::moveDragInternal(int index, qreal pointerX, qreal pointe
         item.ngDropHovered = hovered;
         m_itemModel.setNgDropHovered(index, hovered);
     }
+    invalidateWorkerGeneration();
     m_itemModel.setGeometry(index, item.x, item.y, item.alpha);
     markSpatialDirty();
     rebuildSpatialIndex();
@@ -373,6 +427,7 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
     }
 
     const bool resolvedInNgZone = inNgZone || isItemInNgZone(item);
+    invalidateWorkerGeneration();
     m_activeDragRow = -1;
     m_activeDragOffsetX = 0.0;
     m_activeDragOffsetY = 0.0;
@@ -400,6 +455,7 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
 }
 
 void DanmakuController::applyNgUserFade(const QString &userId) {
+    invalidateWorkerGeneration();
     bool changed = false;
     for (Item &item : m_items) {
         if (item.active && item.userId == userId) {
@@ -415,6 +471,7 @@ void DanmakuController::applyNgUserFade(const QString &userId) {
 }
 
 void DanmakuController::resetForSeek() {
+    invalidateWorkerGeneration();
     QVector<int> activeRows;
     activeRows.reserve(m_items.size());
     for (int i = 0; i < m_items.size(); ++i) {
@@ -499,6 +556,24 @@ void DanmakuController::onFrame() {
         return;
     }
 
+    if (m_workerEnabled && m_updateWorker) {
+        m_workerAccumulatedElapsedMs += elapsedMs;
+        if (m_workerBusy) {
+            maybeWritePerfLog(now);
+            return;
+        }
+
+        const int workerElapsedMs = std::clamp(m_workerAccumulatedElapsedMs, 1, static_cast<int>(kWorkerElapsedCapMs));
+        m_workerAccumulatedElapsedMs = 0;
+        scheduleWorkerFrame(workerElapsedMs, now);
+        maybeWritePerfLog(now);
+        return;
+    }
+
+    runFrameSingleThread(elapsedMs, now);
+}
+
+void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
     const qreal elapsedSec = elapsedMs / 1000.0;
     QVector<int> removeRows;
     removeRows.reserve(m_items.size());
@@ -578,7 +653,7 @@ void DanmakuController::onFrame() {
         rebuildRenderSnapshot();
         emit renderSnapshotChanged();
     }
-    maybeWritePerfLog(now);
+    maybeWritePerfLog(nowMs);
 }
 
 int DanmakuController::laneCount() const {
@@ -1027,6 +1102,161 @@ void DanmakuController::clearGlyphWarmupText() {
     }
     m_glyphWarmupText.clear();
     emit glyphWarmupTextChanged();
+}
+
+void DanmakuController::buildSoAState(DanmakuSoAState &state) const {
+    state.clear();
+    state.reserve(activeItemCount());
+    for (int row = 0; row < m_items.size(); ++row) {
+        const Item &item = m_items[row];
+        if (!item.active) {
+            continue;
+        }
+        quint8 flags = 0;
+        if (item.frozen) {
+            flags |= DanmakuSoAFlagFrozen;
+        }
+        if (item.dragging) {
+            flags |= DanmakuSoAFlagDragging;
+        }
+        if (item.fading) {
+            flags |= DanmakuSoAFlagFading;
+        }
+
+        state.rows.push_back(row);
+        state.x.push_back(item.x);
+        state.y.push_back(item.y);
+        state.speed.push_back(item.speedPxPerSec);
+        state.alpha.push_back(item.alpha);
+        state.widthEstimate.push_back(item.widthEstimate);
+        state.fadeRemainingMs.push_back(item.fadeRemainingMs);
+        state.flags.push_back(flags);
+    }
+}
+
+void DanmakuController::scheduleWorkerFrame(int elapsedMs, qint64 nowMs) {
+    Q_UNUSED(nowMs)
+
+    if (!m_updateWorker || m_workerBusy) {
+        return;
+    }
+
+    buildSoAState(m_workerSoAState);
+    if (m_workerSoAState.size() <= 0) {
+        return;
+    }
+
+    m_workerBusy = true;
+    const qint64 seq = ++m_workerSeq;
+    QMetaObject::invokeMethod(
+        m_updateWorker,
+        "processFrame",
+        Qt::QueuedConnection,
+        Q_ARG(qint64, seq),
+        Q_ARG(bool, m_playbackPaused),
+        Q_ARG(qreal, static_cast<qreal>(m_playbackRate)),
+        Q_ARG(int, elapsedMs),
+        Q_ARG(qreal, m_viewportHeight),
+        Q_ARG(qreal, kItemCullThreshold),
+        Q_ARG(qreal, kItemHeight),
+        Q_ARG(QVector<int>, m_workerSoAState.rows),
+        Q_ARG(QVector<qreal>, m_workerSoAState.x),
+        Q_ARG(QVector<qreal>, m_workerSoAState.y),
+        Q_ARG(QVector<qreal>, m_workerSoAState.speed),
+        Q_ARG(QVector<qreal>, m_workerSoAState.alpha),
+        Q_ARG(QVector<int>, m_workerSoAState.widthEstimate),
+        Q_ARG(QVector<int>, m_workerSoAState.fadeRemainingMs),
+        Q_ARG(QVector<quint8>, m_workerSoAState.flags));
+}
+
+void DanmakuController::handleWorkerFrame(
+    qint64 seq,
+    const QVector<int> &rows,
+    const QVector<qreal> &x,
+    const QVector<qreal> &y,
+    const QVector<qreal> &alpha,
+    const QVector<int> &fadeRemainingMs,
+    const QVector<quint8> &flags,
+    const QVector<int> &changedRows,
+    const QVector<int> &removeRows) {
+    m_workerBusy = false;
+    if (seq != m_workerSeq) {
+        return;
+    }
+
+    const int count = rows.size();
+    if (count <= 0) {
+        return;
+    }
+    if (x.size() != count || y.size() != count || alpha.size() != count || fadeRemainingMs.size() != count || flags.size() != count) {
+        return;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        const int row = rows[i];
+        if (row < 0 || row >= m_items.size()) {
+            continue;
+        }
+        Item &item = m_items[row];
+        if (!item.active) {
+            continue;
+        }
+        item.x = x[i];
+        item.y = y[i];
+        item.alpha = alpha[i];
+        item.fadeRemainingMs = fadeRemainingMs[i];
+        item.frozen = (flags[i] & DanmakuSoAFlagFrozen) != 0;
+        item.dragging = (flags[i] & DanmakuSoAFlagDragging) != 0;
+        item.fading = (flags[i] & DanmakuSoAFlagFading) != 0;
+    }
+
+    QVector<DanmakuListModel::GeometryUpdate> geometryUpdates;
+    geometryUpdates.reserve(changedRows.size());
+    for (const int row : changedRows) {
+        if (row < 0 || row >= m_items.size()) {
+            continue;
+        }
+        const Item &item = m_items[row];
+        if (!item.active) {
+            continue;
+        }
+        geometryUpdates.push_back({row, item.x, item.y, item.alpha});
+    }
+
+    if (m_perfLogEnabled) {
+        m_perfLogGeometryUpdateCount += geometryUpdates.size();
+    }
+    if (!geometryUpdates.isEmpty()) {
+        m_itemModel.setGeometryBatch(geometryUpdates);
+    }
+
+    if (!removeRows.isEmpty()) {
+        releaseRowsDescending(removeRows);
+        if (m_perfLogEnabled) {
+            m_perfLogRemovedCount += removeRows.size();
+        }
+    }
+
+    const int totalBeforeCompact = m_items.size();
+    const int freeBeforeCompact = m_freeRows.size();
+    maybeCompactRows();
+    const bool compacted = (m_items.size() != totalBeforeCompact || m_freeRows.size() != freeBeforeCompact);
+
+    if (!geometryUpdates.isEmpty() || !removeRows.isEmpty() || compacted) {
+        markSpatialDirty();
+        rebuildSpatialIndex();
+        rebuildRenderSnapshot();
+        emit renderSnapshotChanged();
+    }
+}
+
+void DanmakuController::invalidateWorkerGeneration() {
+    if (!m_workerEnabled) {
+        return;
+    }
+    if (m_workerBusy) {
+        ++m_workerSeq;
+    }
 }
 
 void DanmakuController::markSpatialDirty() {

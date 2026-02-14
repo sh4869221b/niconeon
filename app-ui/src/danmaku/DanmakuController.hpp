@@ -1,6 +1,7 @@
 #pragma once
 
 #include "danmaku/DanmakuListModel.hpp"
+#include "danmaku/DanmakuSoAState.hpp"
 #include "danmaku/DanmakuSpatialGrid.hpp"
 
 #include <QObject>
@@ -8,9 +9,12 @@
 #include <QQueue>
 #include <QSet>
 #include <QString>
+#include <QThread>
 #include <QTimer>
 #include <QVariantList>
 #include <QVector>
+
+class DanmakuUpdateWorker;
 
 class DanmakuController : public QObject {
     Q_OBJECT
@@ -34,6 +38,7 @@ public:
     };
 
     explicit DanmakuController(QObject *parent = nullptr);
+    ~DanmakuController() override;
 
     Q_INVOKABLE void setViewportSize(qreal width, qreal height);
     Q_INVOKABLE void setLaneMetrics(int fontPx, int laneGap);
@@ -125,10 +130,24 @@ private:
     void dispatchGlyphWarmupIfDue(qint64 nowMs);
     void clearGlyphWarmupText();
     void maybeWritePerfLog(qint64 nowMs);
+    void runFrameSingleThread(int elapsedMs, qint64 nowMs);
     void markSpatialDirty();
     void rebuildSpatialIndex();
     void ensureSpatialIndex();
     void rebuildRenderSnapshot();
+    void buildSoAState(DanmakuSoAState &state) const;
+    void scheduleWorkerFrame(int elapsedMs, qint64 nowMs);
+    void handleWorkerFrame(
+        qint64 seq,
+        const QVector<int> &rows,
+        const QVector<qreal> &x,
+        const QVector<qreal> &y,
+        const QVector<qreal> &alpha,
+        const QVector<int> &fadeRemainingMs,
+        const QVector<quint8> &flags,
+        const QVector<int> &changedRows,
+        const QVector<int> &removeRows);
+    void invalidateWorkerGeneration();
     bool beginDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void moveDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void dropDragInternal(int index, bool inNgZone);
@@ -184,6 +203,14 @@ private:
     qreal m_activeDragOffsetY = 0;
     mutable QMutex m_renderSnapshotMutex;
     QVector<RenderItem> m_renderSnapshot;
+    DanmakuSoAState m_workerSoAState;
+    bool m_workerEnabled = true;
+    bool m_workerBusy = false;
+    qint64 m_workerSeq = 0;
+    int m_workerAccumulatedElapsedMs = 0;
+    DanmakuUpdateWorker *m_updateWorker = nullptr;
+    QThread m_updateThread;
+    QString m_simdModeName = QStringLiteral("auto");
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;
