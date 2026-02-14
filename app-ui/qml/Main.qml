@@ -254,6 +254,37 @@ ApplicationWindow {
         toastTimer.restart()
     }
 
+    function startPlaybackFromPath(path) {
+        const candidatePath = String(path || "").trim()
+        if (candidatePath === "") {
+            showToast("動画ファイルを選択してください")
+            return
+        }
+
+        root.selectedVideoPath = candidatePath
+        pathInput.text = root.selectedVideoPath
+
+        const videoId = root.extractVideoId(root.selectedVideoPath)
+        if (videoId === "") {
+            if (!mpv.openFile(root.selectedVideoPath)) {
+                showToast("動画を開けませんでした")
+                return
+            }
+            root.applyPlaybackRate(speedSettings.rate, false)
+            root.sessionId = ""
+            showToast("動画IDが見つからないためコメント取得をスキップしました")
+            return
+        }
+
+        if (!mpv.openFile(root.selectedVideoPath)) {
+            showToast("動画を開けませんでした")
+            return
+        }
+
+        root.applyPlaybackRate(speedSettings.rate, false)
+        coreClient.openVideo(root.selectedVideoPath, videoId)
+    }
+
     function fileUrlToLocalPath(value) {
         const raw = decodeURIComponent(String(value))
         if (!raw.startsWith("file:")) {
@@ -342,8 +373,7 @@ ApplicationWindow {
         title: "動画ファイルを選択"
         onAccepted: {
             const path = fileUrlToLocalPath(selectedFile)
-            root.selectedVideoPath = path
-            pathInput.text = root.selectedVideoPath
+            root.startPlaybackFromPath(path)
         }
     }
 
@@ -410,39 +440,6 @@ ApplicationWindow {
                 onClicked: fileDialog.open()
             }
 
-            TextField {
-                id: pathInput
-                Layout.fillWidth: true
-                placeholderText: "ファイル名に sm/nm/so ID を含めてください"
-                text: root.selectedVideoPath
-            }
-
-            AppButton {
-                text: "再生開始"
-                onClicked: {
-                    root.selectedVideoPath = pathInput.text
-                    const videoId = root.extractVideoId(root.selectedVideoPath)
-                    if (videoId === "") {
-                        if (!mpv.openFile(root.selectedVideoPath)) {
-                            showToast("動画を開けませんでした")
-                            return
-                        }
-                        root.applyPlaybackRate(speedSettings.rate, false)
-                        root.sessionId = ""
-                        showToast("動画IDが見つからないためコメント取得をスキップしました")
-                        return
-                    }
-
-                    if (!mpv.openFile(root.selectedVideoPath)) {
-                        showToast("動画を開けませんでした")
-                        return
-                    }
-
-                    root.applyPlaybackRate(speedSettings.rate, false)
-                    coreClient.openVideo(root.selectedVideoPath, videoId)
-                }
-            }
-
             AppButton {
                 text: mpv.paused ? "再生" : "一時停止"
                 onClicked: mpv.togglePause()
@@ -479,6 +476,25 @@ ApplicationWindow {
             AppButton {
                 text: "About"
                 onClicked: aboutDialog.open()
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            spacing: 8
+
+            Label {
+                text: "ファイル"
+            }
+
+            TextField {
+                id: pathInput
+                Layout.fillWidth: true
+                placeholderText: "ファイル名に sm/nm/so ID を含めてください"
+                text: root.selectedVideoPath
+                onAccepted: root.startPlaybackFromPath(text)
             }
         }
 
