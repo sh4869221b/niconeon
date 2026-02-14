@@ -31,7 +31,7 @@ qt_add_executable(niconeon-ui
   src/danmaku/DanmakuSimdUpdater.cpp
   src/danmaku/DanmakuUpdateWorker.cpp
   src/danmaku/DanmakuSpatialGrid.cpp
-  src/danmaku/DanmakuSceneItem.cpp
+  src/danmaku/DanmakuRenderNodeItem.cpp
 )
 
 target_include_directories(niconeon-ui PRIVATE
@@ -53,7 +53,6 @@ qt_add_qml_module(niconeon-ui
     qml/components/VideoPlayer.qml
     qml/components/AppButton.qml
     qml/components/DanmakuOverlay.qml
-    qml/components/DanmakuItem.qml
     qml/components/NgDropZone.qml
     qml/components/Toast.qml
     qml/components/FilterDialog.qml

@@ -5,9 +5,7 @@ import Niconeon
 Item {
     id: root
     property var controller
-    property string backend: "scenegraph"
     property bool sceneDragging: false
-    readonly property bool useLegacyBackend: backend === "legacy"
 
     function syncNgZoneRect() {
         if (!root.controller) {
@@ -48,15 +46,14 @@ Item {
         z: -1
     }
 
-    DanmakuSceneItem {
+    DanmakuRenderNodeItem {
         anchors.fill: parent
-        visible: !root.useLegacyBackend
         controller: root.controller
     }
 
     MouseArea {
         anchors.fill: parent
-        enabled: !root.useLegacyBackend && !!root.controller
+        enabled: !!root.controller
         hoverEnabled: true
         preventStealing: true
 
@@ -92,21 +89,6 @@ Item {
                         finishSceneDrag(false)
                     }
                 })
-            }
-        }
-    }
-
-    Loader {
-        anchors.fill: parent
-        active: root.useLegacyBackend
-        sourceComponent: Item {
-            anchors.fill: parent
-            Repeater {
-                model: root.controller ? root.controller.itemModel : null
-                delegate: DanmakuItem {
-                    overlay: root
-                    controller: root.controller
-                }
             }
         }
     }

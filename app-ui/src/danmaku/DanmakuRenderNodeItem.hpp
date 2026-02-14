@@ -7,12 +7,12 @@
 
 class QSGNode;
 
-class DanmakuSceneItem : public QQuickItem {
+class DanmakuRenderNodeItem : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(DanmakuController *controller READ controller WRITE setController NOTIFY controllerChanged)
 
 public:
-    explicit DanmakuSceneItem(QQuickItem *parent = nullptr);
+    explicit DanmakuRenderNodeItem(QQuickItem *parent = nullptr);
 
     DanmakuController *controller() const;
     void setController(DanmakuController *controller);

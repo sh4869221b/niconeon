@@ -2,14 +2,13 @@
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
-#include <QQmlContext>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QtGlobal>
 
 #include "LicenseProvider.hpp"
 #include "danmaku/DanmakuController.hpp"
-#include "danmaku/DanmakuSceneItem.hpp"
+#include "danmaku/DanmakuRenderNodeItem.hpp"
 #include "ipc/CoreClient.hpp"
 #include "mpv/MpvItem.hpp"
 
@@ -30,16 +29,10 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<MpvItem>("Niconeon", 1, 0, "MpvItem");
     qmlRegisterType<CoreClient>("Niconeon", 1, 0, "CoreClient");
     qmlRegisterType<DanmakuController>("Niconeon", 1, 0, "DanmakuController");
-    qmlRegisterType<DanmakuSceneItem>("Niconeon", 1, 0, "DanmakuSceneItem");
+    qmlRegisterType<DanmakuRenderNodeItem>("Niconeon", 1, 0, "DanmakuRenderNodeItem");
     qmlRegisterType<LicenseProvider>("Niconeon", 1, 0, "LicenseProvider");
 
     QQmlApplicationEngine engine;
-    QString danmakuBackend = qEnvironmentVariable("NICONEON_DANMAKU_BACKEND").trimmed().toLower();
-    if (danmakuBackend != QStringLiteral("legacy") && danmakuBackend != QStringLiteral("scenegraph")) {
-        danmakuBackend = QStringLiteral("scenegraph");
-    }
-    engine.rootContext()->setContextProperty(QStringLiteral("niconeonDanmakuBackend"), danmakuBackend);
-
     QObject::connect(
         &engine,
         &QQmlApplicationEngine::objectCreationFailed,
