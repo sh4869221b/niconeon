@@ -17,6 +17,11 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
 - Render danmaku overlays and drag/drop interactions.
   - Default backend: Scene Graph aggregate renderer (`DanmakuSceneItem`).
   - Fallback backend: legacy QML delegates (`NICONEON_DANMAKU_BACKEND=legacy`).
+  - Simulation update path:
+    - Default: worker-thread simulation (`NICONEON_DANMAKU_WORKER=on`).
+    - Fallback: single-thread simulation (`NICONEON_DANMAKU_WORKER=off`).
+  - SIMD mode for position update:
+    - `NICONEON_SIMD_MODE=auto|avx2|scalar` (default: `auto`).
 - Provide danmaku visibility toggle for low-spec environments.
 - Emit periodic UI/danmaku performance logs when enabled.
 - Show NG drop zone only during drag.

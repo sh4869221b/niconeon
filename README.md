@@ -120,6 +120,20 @@ GitHub Actions で以下を実行します。
 NICONEON_DANMAKU_BACKEND=legacy just run
 ```
 
+## 弾幕更新モード（R2）
+
+- `NICONEON_DANMAKU_WORKER`:
+  - 既定 `on`（ワーカースレッド更新）
+  - `off` で単スレッド更新へフォールバック
+- `NICONEON_SIMD_MODE`:
+  - 既定 `auto`（AVX2 対応CPUで `avx2`、それ以外は `scalar`）
+  - 明示指定: `avx2` / `scalar`
+
+```bash
+# 例: 安全系（単スレッド + scalar）
+NICONEON_DANMAKU_WORKER=off NICONEON_SIMD_MODE=scalar just run
+```
+
 ## ライセンス
 
 - 本リポジトリの自作ソースコードは `MIT` ライセンスです（`LICENSE`）。

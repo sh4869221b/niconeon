@@ -43,3 +43,7 @@
 - 既定の `scenegraph` バックエンドで、コメント表示・ドラッグ・NGドロップ・Undo が機能する。
 - `NICONEON_DANMAKU_BACKEND=legacy` でも同等の操作が機能し、回避手段として使える。
 - 高密度区間でドラッグ開始時のヒットテストが安定し、意図しないコメント選択が増えない。
+- `NICONEON_DANMAKU_WORKER=on`（既定）で再生・シーク・ドラッグ・NG の回帰がない。
+- `NICONEON_DANMAKU_WORKER=off` へ切替後も同等機能が成立し、クラッシュしない。
+- `NICONEON_SIMD_MODE=auto/scalar/avx2` で起動し、`[danmaku-simd]` ログが期待モードを示す。
+- `NICONEON_SIMD_MODE=avx2` と `scalar` で表示破綻（位置飛び/消去漏れ）がない。

@@ -91,6 +91,26 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 ./app-ui/build/niconeon-ui 2>&1 | tee perf-legacy.log
 ```
 
+### 6) worker off + scalar (fallback baseline)
+
+```bash
+LC_NUMERIC=C \
+NICONEON_DANMAKU_WORKER=off \
+NICONEON_SIMD_MODE=scalar \
+NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
+./app-ui/build/niconeon-ui 2>&1 | tee perf-worker-off-scalar.log
+```
+
+### 7) worker on + avx2 (R2 fast path)
+
+```bash
+LC_NUMERIC=C \
+NICONEON_DANMAKU_WORKER=on \
+NICONEON_SIMD_MODE=avx2 \
+NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
+./app-ui/build/niconeon-ui 2>&1 | tee perf-worker-on-avx2.log
+```
+
 ## Operation Procedure
 
 1. アプリを起動して対象動画を開く。
@@ -158,6 +178,32 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 - 高密度区間でドラッグ開始の取りやすさ（ヒットテスト）を確認する。
 - `drop` での復帰（同一レーン優先）と NG ドロップ判定が維持されることを確認する。
 - 連続ドラッグ時に誤判定（掴めない/別コメントを掴む）が増えていないことを確認する。
+
+## Issue #12 Comparison Focus
+
+- SoA 更新経路導入後、同一動画・同一区間で `p95_ms` / `p99_ms` を比較する。
+- `rows_active` が高い区間で `updates` と `tick_backlog` の悪化がないことを確認する。
+- 機能回帰（ドラッグ/NG/シーク同期）がないことを優先判定にする。
+
+## Issue #13 Comparison Focus
+
+- `NICONEON_SIMD_MODE=scalar` と `NICONEON_SIMD_MODE=avx2` を同条件で比較する。
+- 比較対象:
+  - `[perf-danmaku]` の `p95_ms` / `p99_ms`
+  - `[perf-ui]` の `tick_backlog`
+- 受け入れ判定:
+  - `avx2` が `scalar` より悪化しないこと（目安: 5%以内）
+  - 表示結果（弾幕位置/消去タイミング）が体感一致すること
+
+## Issue #14 Comparison Focus
+
+- `NICONEON_DANMAKU_WORKER=on` と `off` を同条件で比較する。
+- 比較対象:
+  - `[perf-ui]` の `tick_backlog`
+  - `[perf-danmaku]` の `p95_ms` / `p99_ms`
+- 受け入れ判定:
+  - worker `on` 既定で機能回帰がないこと
+  - `off` で即時フォールバック可能であること
 
 ## Expected Log Prefixes
 
