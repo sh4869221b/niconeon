@@ -26,7 +26,6 @@ qt_add_executable(niconeon-ui
   src/LicenseProvider.cpp
   src/mpv/MpvItem.cpp
   src/ipc/CoreClient.cpp
-  src/danmaku/DanmakuListModel.cpp
   src/danmaku/DanmakuController.cpp
   src/danmaku/DanmakuSimdUpdater.cpp
   src/danmaku/DanmakuUpdateWorker.cpp
@@ -50,7 +49,6 @@ qt_add_qml_module(niconeon-ui
   VERSION 1.0
   QML_FILES
     qml/Main.qml
-    qml/components/VideoPlayer.qml
     qml/components/AppButton.qml
     qml/components/DanmakuOverlay.qml
     qml/components/NgDropZone.qml

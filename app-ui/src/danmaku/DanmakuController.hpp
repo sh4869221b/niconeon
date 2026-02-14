@@ -1,6 +1,5 @@
 #pragma once
 
-#include "danmaku/DanmakuListModel.hpp"
 #include "danmaku/DanmakuSoAState.hpp"
 #include "danmaku/DanmakuSpatialGrid.hpp"
 
@@ -18,7 +17,6 @@ class DanmakuUpdateWorker;
 
 class DanmakuController : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QObject *itemModel READ itemModel CONSTANT)
     Q_PROPERTY(bool ngDropZoneVisible READ ngDropZoneVisible NOTIFY ngDropZoneVisibleChanged)
     Q_PROPERTY(bool playbackPaused READ playbackPaused NOTIFY playbackPausedChanged)
     Q_PROPERTY(double playbackRate READ playbackRate NOTIFY playbackRateChanged)
@@ -50,10 +48,6 @@ public:
     Q_INVOKABLE void resetForSeek();
     Q_INVOKABLE void resetGlyphSession();
 
-    Q_INVOKABLE void beginDrag(const QString &commentId);
-    Q_INVOKABLE void moveDrag(const QString &commentId, qreal x, qreal y);
-    Q_INVOKABLE void dropDrag(const QString &commentId, bool inNgZone);
-    Q_INVOKABLE void cancelDrag(const QString &commentId);
     Q_INVOKABLE bool beginDragAt(qreal x, qreal y);
     Q_INVOKABLE void moveActiveDrag(qreal x, qreal y);
     Q_INVOKABLE void dropActiveDrag(bool inNgZone);
@@ -63,7 +57,6 @@ public:
     Q_INVOKABLE void applyNgUserFade(const QString &userId);
     QVector<RenderItem> renderSnapshot() const;
 
-    QObject *itemModel();
     bool ngDropZoneVisible() const;
     bool playbackPaused() const;
     double playbackRate() const;
@@ -114,7 +107,6 @@ private:
     void ensureLaneStateSize();
     void resetLaneStates();
     qint64 estimateLaneCooldownMs(const Item &item) const;
-    int findItemIndex(const QString &commentId) const;
     int findItemIndexAt(qreal x, qreal y);
     int acquireRow();
     void releaseRow(int row);
@@ -151,12 +143,9 @@ private:
     bool beginDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void moveDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void dropDragInternal(int index, bool inNgZone);
-    DanmakuListModel::Row makeRow(const Item &item) const;
-
     QVector<Item> m_items;
     QVector<LaneState> m_laneStates;
     QVector<int> m_freeRows;
-    DanmakuListModel m_itemModel;
     DanmakuSpatialGrid m_spatialGrid;
     bool m_spatialDirty = true;
 

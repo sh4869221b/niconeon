@@ -1,5 +1,7 @@
 core/target/
 app-ui/build/
+app-ui/build-deadcode/
 app-ui/build-ci/
 app-ui/build-release/
 dist/
+.cache/

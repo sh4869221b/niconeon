@@ -243,13 +243,6 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
         laneState.nextAvailableAtMs = std::max(laneState.nextAvailableAtMs, nowMs) + estimateLaneCooldownMs(item);
         laneState.lastAssignedRow = row;
 
-        const DanmakuListModel::Row modelRow = makeRow(item);
-        if (row < m_itemModel.rowCount()) {
-            m_itemModel.overwriteRow(row, modelRow);
-        } else {
-            m_itemModel.append(modelRow);
-        }
-
         if (m_perfLogEnabled) {
             ++m_perfLogAppendCount;
         }
@@ -262,23 +255,6 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
         rebuildRenderSnapshot();
         emit renderSnapshotChanged();
     }
-}
-
-void DanmakuController::beginDrag(const QString &commentId) {
-    const int index = findItemIndex(commentId);
-    if (index < 0) {
-        return;
-    }
-
-    beginDragInternal(index, 0.0, 0.0, false);
-}
-
-void DanmakuController::moveDrag(const QString &commentId, qreal x, qreal y) {
-    const int index = findItemIndex(commentId);
-    if (index < 0) {
-        return;
-    }
-    moveDragInternal(index, x, y, false);
 }
 
 void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal height) {
@@ -303,7 +279,6 @@ void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal h
             continue;
         }
         item.ngDropHovered = hovered;
-        m_itemModel.setNgDropHovered(i, hovered);
         changed = true;
     }
 
@@ -311,19 +286,6 @@ void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal h
         rebuildRenderSnapshot();
         emit renderSnapshotChanged();
     }
-}
-
-void DanmakuController::dropDrag(const QString &commentId, bool inNgZone) {
-    const int index = findItemIndex(commentId);
-    if (index < 0) {
-        return;
-    }
-
-    dropDragInternal(index, inNgZone);
-}
-
-void DanmakuController::cancelDrag(const QString &commentId) {
-    dropDrag(commentId, false);
 }
 
 bool DanmakuController::beginDragAt(qreal x, qreal y) {
@@ -377,8 +339,6 @@ bool DanmakuController::beginDragInternal(int index, qreal pointerX, qreal point
         m_activeDragOffsetY = 0.0;
     }
 
-    m_itemModel.setDragState(index, true);
-    m_itemModel.setNgDropHovered(index, item.ngDropHovered);
     updateNgZoneVisibility();
     invalidateWorkerGeneration();
     markSpatialDirty();
@@ -409,10 +369,8 @@ void DanmakuController::moveDragInternal(int index, qreal pointerX, qreal pointe
     const bool hovered = isItemInNgZone(item);
     if (hovered != item.ngDropHovered) {
         item.ngDropHovered = hovered;
-        m_itemModel.setNgDropHovered(index, hovered);
     }
     invalidateWorkerGeneration();
-    m_itemModel.setGeometry(index, item.x, item.y, item.alpha);
     markSpatialDirty();
     rebuildSpatialIndex();
     rebuildRenderSnapshot();
@@ -444,10 +402,6 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
         item.frozen = false;
         item.ngDropHovered = false;
         recoverToLane(item);
-        m_itemModel.setDragState(index, false);
-        m_itemModel.setLane(index, item.lane);
-        m_itemModel.setNgDropHovered(index, false);
-        m_itemModel.setGeometry(index, item.x, item.y, item.alpha);
     }
 
     updateNgZoneVisibility();
@@ -505,10 +459,6 @@ void DanmakuController::resetGlyphSession() {
     if (m_glyphWarmupEnabled) {
         queueGlyphSeedCharacters();
     }
-}
-
-QObject *DanmakuController::itemModel() {
-    return &m_itemModel;
 }
 
 bool DanmakuController::ngDropZoneVisible() const {
@@ -580,8 +530,6 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
     const qreal elapsedSec = elapsedMs / 1000.0;
     QVector<int> removeRows;
     removeRows.reserve(m_items.size());
-    QVector<DanmakuListModel::GeometryUpdate> geometryUpdates;
-    geometryUpdates.reserve(m_items.size());
     int frameGeometryUpdates = 0;
     bool frameStateChanged = false;
 
@@ -611,13 +559,11 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
             const bool hovered = isItemInNgZone(item);
             if (hovered != item.ngDropHovered) {
                 item.ngDropHovered = hovered;
-                m_itemModel.setNgDropHovered(i, hovered);
                 frameStateChanged = true;
             }
         }
 
         if (geometryChanged) {
-            geometryUpdates.push_back({i, item.x, item.y, item.alpha});
             ++frameGeometryUpdates;
             frameStateChanged = true;
         }
@@ -632,9 +578,6 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
 
     if (m_perfLogEnabled) {
         m_perfLogGeometryUpdateCount += frameGeometryUpdates;
-    }
-    if (!geometryUpdates.isEmpty()) {
-        m_itemModel.setGeometryBatch(geometryUpdates);
     }
     if (!removeRows.isEmpty()) {
         releaseRowsDescending(removeRows);
@@ -803,15 +746,6 @@ void DanmakuController::recoverToLane(Item &item) {
     }
 }
 
-int DanmakuController::findItemIndex(const QString &commentId) const {
-    for (int i = 0; i < m_items.size(); ++i) {
-        if (m_items[i].active && m_items[i].commentId == commentId) {
-            return i;
-        }
-    }
-    return -1;
-}
-
 int DanmakuController::findItemIndexAt(qreal x, qreal y) {
     ensureSpatialIndex();
 
@@ -881,9 +815,6 @@ void DanmakuController::releaseRow(int row) {
     item.userId.clear();
     item.text.clear();
 
-    m_itemModel.setDragState(row, false);
-    m_itemModel.setNgDropHovered(row, false);
-    m_itemModel.setActive(row, false);
     m_freeRows.push_back(row);
     if (m_activeDragRow == row) {
         m_activeDragRow = -1;
@@ -924,19 +855,15 @@ void DanmakuController::maybeCompactRows() {
 
     QVector<Item> compactItems;
     compactItems.reserve(totalRows - freeRows);
-    QVector<DanmakuListModel::Row> compactRows;
-    compactRows.reserve(totalRows - freeRows);
 
     for (const Item &item : m_items) {
         if (!item.active) {
             continue;
         }
         compactItems.push_back(item);
-        compactRows.push_back(makeRow(item));
     }
 
     m_items = std::move(compactItems);
-    m_itemModel.resetRows(compactRows);
     m_freeRows.clear();
     for (LaneState &state : m_laneStates) {
         state.lastAssignedRow = -1;
@@ -1209,8 +1136,8 @@ void DanmakuController::handleWorkerFrame(
         item.fading = (flags[i] & DanmakuSoAFlagFading) != 0;
     }
 
-    QVector<DanmakuListModel::GeometryUpdate> geometryUpdates;
-    geometryUpdates.reserve(changedRows.size());
+    int geometryUpdateCount = 0;
+    bool hasGeometryUpdates = false;
     for (const int row : changedRows) {
         if (row < 0 || row >= m_items.size()) {
             continue;
@@ -1219,14 +1146,12 @@ void DanmakuController::handleWorkerFrame(
         if (!item.active) {
             continue;
         }
-        geometryUpdates.push_back({row, item.x, item.y, item.alpha});
+        ++geometryUpdateCount;
+        hasGeometryUpdates = true;
     }
 
     if (m_perfLogEnabled) {
-        m_perfLogGeometryUpdateCount += geometryUpdates.size();
-    }
-    if (!geometryUpdates.isEmpty()) {
-        m_itemModel.setGeometryBatch(geometryUpdates);
+        m_perfLogGeometryUpdateCount += geometryUpdateCount;
     }
 
     if (!removeRows.isEmpty()) {
@@ -1241,7 +1166,7 @@ void DanmakuController::handleWorkerFrame(
     maybeCompactRows();
     const bool compacted = (m_items.size() != totalBeforeCompact || m_freeRows.size() != freeBeforeCompact);
 
-    if (!geometryUpdates.isEmpty() || !removeRows.isEmpty() || compacted) {
+    if (hasGeometryUpdates || !removeRows.isEmpty() || compacted) {
         markSpatialDirty();
         rebuildSpatialIndex();
         rebuildRenderSnapshot();
@@ -1310,23 +1235,6 @@ void DanmakuController::rebuildRenderSnapshot() {
 
     QMutexLocker locker(&m_renderSnapshotMutex);
     m_renderSnapshot = std::move(snapshot);
-}
-
-DanmakuListModel::Row DanmakuController::makeRow(const Item &item) const {
-    DanmakuListModel::Row row;
-    row.commentId = item.commentId;
-    row.userId = item.userId;
-    row.text = item.text;
-    row.posX = item.x;
-    row.posY = item.y;
-    row.alpha = item.alpha;
-    row.lane = item.lane;
-    row.dragging = item.dragging;
-    row.widthEstimate = item.widthEstimate;
-    row.speedPxPerSec = item.speedPxPerSec;
-    row.ngDropHovered = item.ngDropHovered;
-    row.active = item.active;
-    return row;
 }
 
 void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
