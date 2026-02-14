@@ -38,6 +38,9 @@ build: licenses core-build ui-configure ui-build
 run: build
     {{ if os() == "windows" { "set NICONEON_CORE_BIN=core\\target\\debug\\niconeon-core.exe && app-ui\\build\\niconeon-ui.exe" } else { "NICONEON_CORE_BIN=core/target/debug/niconeon-core app-ui/build/niconeon-ui" } }}
 
+perf-dummy out="perf-dummy.log" duration="60": build
+    scripts/perf/run_dummy_profile.sh {{out}} {{duration}}
+
 clean:
     cd core && cargo clean
     cd app-ui && cmake --build build --target clean

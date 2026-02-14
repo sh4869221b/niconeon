@@ -102,6 +102,36 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 ./app-ui/build/niconeon-ui 2>&1 | tee perf-worker-on-avx2.log
 ```
 
+## CLI-only Dummy Profile
+
+ダミー動画 + ダミーコメント（秒ごとにコメント数が増加する ramp）で、手操作なしに計測できます。
+
+Prerequisites:
+- `ffmpeg`
+- ヘッドレス環境の場合は `xvfb-run`
+
+Run:
+
+```bash
+just perf-dummy perf-dummy.log 60
+```
+
+このコマンドは以下を自動実行します。
+- `sm9` を含むダミー動画を生成（未作成時）
+- `NICONEON_SYNTHETIC_COMMENTS=ramp` で Core 側の合成コメントを有効化
+- `NICONEON_AUTO_VIDEO_PATH` で UI 起動時に自動再生
+- `NICONEON_AUTO_PERF_LOG=1` で計測ログを自動有効化
+- 指定秒数後に自動終了し、`perf-dummy.log` へ出力
+
+主要な調整パラメータ（任意）:
+
+```bash
+NICONEON_SYNTHETIC_BASE_PER_SEC=1
+NICONEON_SYNTHETIC_RAMP_PER_SEC=1
+NICONEON_SYNTHETIC_MAX_PER_SEC=160
+NICONEON_SYNTHETIC_USER_SPAN=200
+```
+
 ## Operation Procedure
 
 1. アプリを起動して対象動画を開く。

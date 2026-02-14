@@ -4,6 +4,7 @@
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QVariantMap>
 #include <QtGlobal>
 
 #include "LicenseProvider.hpp"
@@ -33,6 +34,23 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<LicenseProvider>("Niconeon", 1, 0, "LicenseProvider");
 
     QQmlApplicationEngine engine;
+    QVariantMap initialProps;
+    const QByteArray autoVideoPath = qgetenv("NICONEON_AUTO_VIDEO_PATH");
+    if (!autoVideoPath.isEmpty()) {
+        initialProps.insert(QStringLiteral("autoVideoPath"), QString::fromLocal8Bit(autoVideoPath));
+    }
+    const QByteArray autoPerfLog = qgetenv("NICONEON_AUTO_PERF_LOG");
+    if (autoPerfLog == "1" || autoPerfLog.compare("true", Qt::CaseInsensitive) == 0) {
+        initialProps.insert(QStringLiteral("autoPerfLogStart"), true);
+    }
+    bool autoExitOk = false;
+    const int autoExitMs = qgetenv("NICONEON_AUTO_EXIT_MS").toInt(&autoExitOk);
+    if (autoExitOk && autoExitMs > 0) {
+        initialProps.insert(QStringLiteral("autoExitMs"), autoExitMs);
+    }
+    if (!initialProps.isEmpty()) {
+        engine.setInitialProperties(initialProps);
+    }
     QObject::connect(
         &engine,
         &QQmlApplicationEngine::objectCreationFailed,

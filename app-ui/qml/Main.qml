@@ -36,6 +36,9 @@ ApplicationWindow {
     property bool glyphWarmupEnabled: true
     property int perfTickSentCount: 0
     property int perfTickResultCount: 0
+    property string autoVideoPath: ""
+    property bool autoPerfLogStart: false
+    property int autoExitMs: 0
 
     Settings {
         id: speedSettings
@@ -385,6 +388,12 @@ ApplicationWindow {
         onTriggered: toast.visible = false
     }
 
+    Timer {
+        id: autoExitTimer
+        repeat: false
+        onTriggered: Qt.quit()
+    }
+
     FileDialog {
         id: fileDialog
         title: "動画ファイルを選択"
@@ -682,6 +691,17 @@ ApplicationWindow {
         danmakuController.setGlyphWarmupEnabled(root.glyphWarmupEnabled)
         if (!root.commentsVisible) {
             danmakuController.resetForSeek()
+        }
+        if (root.autoPerfLogStart) {
+            root.applyPerfLogEnabled(true, false)
+        }
+        const autoPath = String(root.autoVideoPath || "").trim()
+        if (autoPath !== "") {
+            root.startPlaybackFromPath(autoPath)
+        }
+        if (root.autoExitMs > 0) {
+            autoExitTimer.interval = root.autoExitMs
+            autoExitTimer.start()
         }
     }
 }

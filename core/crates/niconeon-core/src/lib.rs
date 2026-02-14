@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 
 use anyhow::{Context, Result};
 use niconeon_domain::{CommentEvent, CommentSource};
@@ -97,22 +98,29 @@ impl<F: CommentFetcher> AppCore<F> {
             .upsert_video_map(&params.video_path, &params.video_id)
             .context("save video mapping")?;
 
-        let (comments, source) = match self.fetcher.fetch_comments(&params.video_id) {
-            Ok(comments) => {
-                self.store
-                    .save_comment_cache(&params.video_id, &comments)
-                    .context("save comment cache")?;
-                (comments, CommentSource::Network)
-            }
-            Err(err) => {
-                eprintln!("comment fetch failed for {}: {err:#}", params.video_id);
-                match self
-                    .store
-                    .load_comment_cache(&params.video_id)
-                    .context("load cache")?
-                {
-                    Some(cached) => (cached, CommentSource::Cache),
-                    None => (Vec::new(), CommentSource::None),
+        let (comments, source) = if synthetic_comment_mode_enabled() {
+            (
+                generate_synthetic_comments_ramp(&params.video_id),
+                CommentSource::Network,
+            )
+        } else {
+            match self.fetcher.fetch_comments(&params.video_id) {
+                Ok(comments) => {
+                    self.store
+                        .save_comment_cache(&params.video_id, &comments)
+                        .context("save comment cache")?;
+                    (comments, CommentSource::Network)
+                }
+                Err(err) => {
+                    eprintln!("comment fetch failed for {}: {err:#}", params.video_id);
+                    match self
+                        .store
+                        .load_comment_cache(&params.video_id)
+                        .context("load cache")?
+                    {
+                        Some(cached) => (cached, CommentSource::Cache),
+                        None => (Vec::new(), CommentSource::None),
+                    }
                 }
             }
         };
@@ -339,6 +347,46 @@ fn to_json_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value> {
 
 fn cursor_for_position(comments: &[CommentEvent], position_ms: i64) -> usize {
     comments.partition_point(|c| c.at_ms <= position_ms)
+}
+
+fn synthetic_comment_mode_enabled() -> bool {
+    match env::var("NICONEON_SYNTHETIC_COMMENTS") {
+        Ok(v) => v.eq_ignore_ascii_case("ramp"),
+        Err(_) => false,
+    }
+}
+
+fn env_i64(name: &str, default: i64) -> i64 {
+    env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(default)
+}
+
+fn generate_synthetic_comments_ramp(video_id: &str) -> Vec<CommentEvent> {
+    let duration_sec = env_i64("NICONEON_SYNTHETIC_DURATION_SEC", 120).clamp(1, 3600);
+    let base_per_sec = env_i64("NICONEON_SYNTHETIC_BASE_PER_SEC", 1).clamp(1, 500);
+    let ramp_per_sec = env_i64("NICONEON_SYNTHETIC_RAMP_PER_SEC", 1).clamp(0, 100);
+    let max_per_sec = env_i64("NICONEON_SYNTHETIC_MAX_PER_SEC", 160).clamp(1, 2000);
+    let user_span = env_i64("NICONEON_SYNTHETIC_USER_SPAN", 200).clamp(1, 100000);
+
+    let mut comments = Vec::new();
+    comments.reserve((duration_sec * (base_per_sec + max_per_sec) / 2) as usize);
+
+    for sec in 0..duration_sec {
+        let per_sec = (base_per_sec + sec * ramp_per_sec).min(max_per_sec);
+        for idx in 0..per_sec {
+            let at_ms = sec * 1000 + ((idx * 1000) / per_sec);
+            comments.push(CommentEvent {
+                comment_id: format!("{}-dummy-{}-{}", video_id, sec, idx),
+                at_ms,
+                user_id: format!("dummy-user-{}", (sec * 31 + idx) % user_span),
+                text: format!("dummy comment {}-{} / {}cps", sec, idx, per_sec),
+            });
+        }
+    }
+
+    comments
 }
 
 #[cfg(test)]

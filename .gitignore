@@ -5,3 +5,5 @@ app-ui/build-ci/
 app-ui/build-release/
 dist/
 .cache/
+deep-research-report.md
+perf-*.log
