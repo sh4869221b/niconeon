@@ -25,6 +25,21 @@ Each line is one JSON-RPC 2.0 message.
   - `emit_comments: CommentEvent[]`
   - `processed_ticks: number`
   - `last_position_ms: number`
+  - `dropped_comments: number`
+  - `coalesced_comments: number`
+  - `emit_over_budget: boolean`
+
+### `set_runtime_profile`
+- params:
+  - `profile: "high" | "balanced" | "low_spec"`
+  - `target_fps?: number` (10..120)
+  - `max_emit_per_tick?: number` (`0` は無制限)
+  - `coalesce_same_content?: boolean`
+- result:
+  - `profile: string`
+  - `target_fps: number`
+  - `max_emit_per_tick: number`
+  - `coalesce_same_content: boolean`
 
 ### `add_ng_user`
 - params:

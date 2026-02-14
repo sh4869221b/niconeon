@@ -81,6 +81,25 @@ pub struct PlaybackTickBatchResult {
     pub emit_comments: Vec<CommentEvent>,
     pub processed_ticks: usize,
     pub last_position_ms: i64,
+    pub dropped_comments: usize,
+    pub coalesced_comments: usize,
+    pub emit_over_budget: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetRuntimeProfileParams {
+    pub profile: String,
+    pub target_fps: Option<u32>,
+    pub max_emit_per_tick: Option<usize>,
+    pub coalesce_same_content: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetRuntimeProfileResult {
+    pub profile: String,
+    pub target_fps: u32,
+    pub max_emit_per_tick: usize,
+    pub coalesce_same_content: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

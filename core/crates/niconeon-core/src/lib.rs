@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 
 use anyhow::{Context, Result};
@@ -8,8 +8,8 @@ use niconeon_protocol::{
     AddNgUserParams, AddNgUserResult, AddRegexFilterParams, AddRegexFilterResult, JsonRpcRequest,
     JsonRpcResponse, ListFiltersResult, OpenVideoParams, OpenVideoResult, PingResult,
     PlaybackTickBatchParams, PlaybackTickBatchResult, PlaybackTickSample, RemoveNgUserParams,
-    RemoveNgUserResult, RemoveRegexFilterParams, RemoveRegexFilterResult, UndoLastNgParams,
-    UndoLastNgResult,
+    RemoveNgUserResult, RemoveRegexFilterParams, RemoveRegexFilterResult, SetRuntimeProfileParams,
+    SetRuntimeProfileResult, UndoLastNgParams, UndoLastNgResult,
 };
 use niconeon_store::Store;
 use uuid::Uuid;
@@ -37,12 +37,93 @@ struct UndoState {
     user_id: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeProfile {
+    High,
+    Balanced,
+    LowSpec,
+}
+
+impl RuntimeProfile {
+    fn from_str(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "high" => Some(Self::High),
+            "balanced" => Some(Self::Balanced),
+            "low_spec" | "lowspec" => Some(Self::LowSpec),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Balanced => "balanced",
+            Self::LowSpec => "low_spec",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeProfileConfig {
+    profile: RuntimeProfile,
+    target_fps: u32,
+    max_emit_per_tick: usize,
+    coalesce_same_content: bool,
+}
+
+impl RuntimeProfileConfig {
+    fn defaults() -> Self {
+        Self::for_profile(RuntimeProfile::Balanced)
+    }
+
+    fn for_profile(profile: RuntimeProfile) -> Self {
+        match profile {
+            RuntimeProfile::High => Self {
+                profile,
+                target_fps: 30,
+                max_emit_per_tick: 0,
+                coalesce_same_content: false,
+            },
+            RuntimeProfile::Balanced => Self {
+                profile,
+                target_fps: 30,
+                max_emit_per_tick: 96,
+                coalesce_same_content: false,
+            },
+            RuntimeProfile::LowSpec => Self {
+                profile,
+                target_fps: 30,
+                max_emit_per_tick: 48,
+                coalesce_same_content: true,
+            },
+        }
+    }
+
+    fn apply_overrides(
+        &mut self,
+        target_fps: Option<u32>,
+        max_emit_per_tick: Option<usize>,
+        coalesce_same_content: Option<bool>,
+    ) {
+        if let Some(value) = target_fps {
+            self.target_fps = value.clamp(10, 120);
+        }
+        if let Some(value) = max_emit_per_tick {
+            self.max_emit_per_tick = value.min(2000);
+        }
+        if let Some(value) = coalesce_same_content {
+            self.coalesce_same_content = value;
+        }
+    }
+}
+
 pub struct AppCore<F> {
     store: Store,
     fetcher: F,
     filter_engine: FilterEngine,
     sessions: HashMap<String, Session>,
     last_undo: Option<UndoState>,
+    runtime_profile: RuntimeProfileConfig,
 }
 
 impl<F: CommentFetcher> AppCore<F> {
@@ -58,6 +139,7 @@ impl<F: CommentFetcher> AppCore<F> {
             filter_engine,
             sessions: HashMap::new(),
             last_undo: None,
+            runtime_profile: RuntimeProfileConfig::defaults(),
         })
     }
 
@@ -73,6 +155,9 @@ impl<F: CommentFetcher> AppCore<F> {
             "add_regex_filter" => self.add_regex_filter(req.params).and_then(to_json_value),
             "remove_regex_filter" => self.remove_regex_filter(req.params).and_then(to_json_value),
             "list_filters" => self.list_filters().and_then(to_json_value),
+            "set_runtime_profile" => self
+                .set_runtime_profile(req.params)
+                .and_then(to_json_value),
             _ => {
                 return JsonRpcResponse::failure(
                     id,
@@ -165,11 +250,59 @@ impl<F: CommentFetcher> AppCore<F> {
             emit_comments.extend(Self::apply_playback_tick(session, tick, filter_engine));
         }
 
+        let (emit_comments, coalesced_comments) = if self.runtime_profile.coalesce_same_content {
+            Self::coalesce_emitted_comments(emit_comments)
+        } else {
+            (emit_comments, 0)
+        };
+
+        let (emit_comments, dropped_comments, emit_over_budget) =
+            Self::apply_emit_budget(emit_comments, self.runtime_profile.max_emit_per_tick);
+
         Ok(PlaybackTickBatchResult {
             emit_comments,
             processed_ticks: params.ticks.len(),
             last_position_ms: session.last_position_ms,
+            dropped_comments,
+            coalesced_comments,
+            emit_over_budget,
         })
+    }
+
+    fn coalesce_emitted_comments(comments: Vec<CommentEvent>) -> (Vec<CommentEvent>, usize) {
+        if comments.is_empty() {
+            return (comments, 0);
+        }
+
+        let mut seen = HashSet::<(i64, String, String)>::new();
+        let mut output = Vec::with_capacity(comments.len());
+        let mut dropped = 0usize;
+        for comment in comments {
+            let key = (
+                comment.at_ms,
+                comment.user_id.clone(),
+                comment.text.clone(),
+            );
+            if seen.insert(key) {
+                output.push(comment);
+            } else {
+                dropped += 1;
+            }
+        }
+        (output, dropped)
+    }
+
+    fn apply_emit_budget(
+        mut comments: Vec<CommentEvent>,
+        max_emit_per_tick: usize,
+    ) -> (Vec<CommentEvent>, usize, bool) {
+        if max_emit_per_tick == 0 || comments.len() <= max_emit_per_tick {
+            return (comments, 0, false);
+        }
+
+        let dropped = comments.len().saturating_sub(max_emit_per_tick);
+        comments.truncate(max_emit_per_tick);
+        (comments, dropped, true)
     }
 
     fn apply_playback_tick(
@@ -333,6 +466,29 @@ impl<F: CommentFetcher> AppCore<F> {
         Ok(ListFiltersResult {
             ng_users: self.filter_engine.list_ng_users(),
             regex_filters: self.filter_engine.list_regex_filters(),
+        })
+    }
+
+    fn set_runtime_profile(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<SetRuntimeProfileResult> {
+        let params: SetRuntimeProfileParams = parse_params(params)?;
+        let profile = RuntimeProfile::from_str(&params.profile)
+            .ok_or_else(|| anyhow::anyhow!("invalid runtime profile: {}", params.profile))?;
+        let mut config = RuntimeProfileConfig::for_profile(profile);
+        config.apply_overrides(
+            params.target_fps,
+            params.max_emit_per_tick,
+            params.coalesce_same_content,
+        );
+        self.runtime_profile = config.clone();
+
+        Ok(SetRuntimeProfileResult {
+            profile: self.runtime_profile.profile.as_str().to_string(),
+            target_fps: self.runtime_profile.target_fps,
+            max_emit_per_tick: self.runtime_profile.max_emit_per_tick,
+            coalesce_same_content: self.runtime_profile.coalesce_same_content,
         })
     }
 }
@@ -608,6 +764,183 @@ mod tests {
             id: json!(1),
             method: "add_regex_filter".to_string(),
             params: json!({ "pattern": "(" }),
+        };
+        let res = app.handle_request(req);
+        assert!(res.error.is_some());
+    }
+
+    #[test]
+    fn runtime_profile_caps_emit_comments() {
+        let mut comments = Vec::new();
+        for idx in 0..20 {
+            comments.push(CommentEvent {
+                comment_id: format!("c{idx}"),
+                at_ms: 100 + idx as i64,
+                user_id: format!("u{}", idx % 3),
+                text: format!("comment-{idx}"),
+            });
+        }
+
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(comments)),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+        let open = app.handle_request(open_video_req());
+        let session_id = open
+            .result
+            .as_ref()
+            .and_then(|v| v.get("session_id"))
+            .and_then(|v| v.as_str())
+            .expect("session id")
+            .to_string();
+
+        let set_profile = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(2),
+            method: "set_runtime_profile".to_string(),
+            params: json!({
+                "profile": "low_spec",
+                "max_emit_per_tick": 5,
+                "coalesce_same_content": false
+            }),
+        };
+        let _ = app.handle_request(set_profile);
+
+        let tick = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(3),
+            method: "playback_tick_batch".to_string(),
+            params: json!({
+                "session_id": session_id,
+                "ticks": [{
+                    "position_ms": 300,
+                    "paused": false,
+                    "is_seek": false
+                }]
+            }),
+        };
+        let res = app.handle_request(tick);
+        let emitted = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("emit_comments"))
+            .and_then(|v| v.as_array())
+            .expect("emit comments");
+        let dropped = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("dropped_comments"))
+            .and_then(|v| v.as_u64())
+            .expect("dropped comments");
+        let over_budget = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("emit_over_budget"))
+            .and_then(|v| v.as_bool())
+            .expect("emit over budget");
+
+        assert_eq!(emitted.len(), 5);
+        assert_eq!(dropped, 15);
+        assert!(over_budget);
+    }
+
+    #[test]
+    fn runtime_profile_can_coalesce_comments() {
+        let comments = vec![
+            CommentEvent {
+                comment_id: "a".to_string(),
+                at_ms: 100,
+                user_id: "u1".to_string(),
+                text: "same".to_string(),
+            },
+            CommentEvent {
+                comment_id: "b".to_string(),
+                at_ms: 100,
+                user_id: "u1".to_string(),
+                text: "same".to_string(),
+            },
+            CommentEvent {
+                comment_id: "c".to_string(),
+                at_ms: 120,
+                user_id: "u2".to_string(),
+                text: "different".to_string(),
+            },
+        ];
+
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(comments)),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+        let open = app.handle_request(open_video_req());
+        let session_id = open
+            .result
+            .as_ref()
+            .and_then(|v| v.get("session_id"))
+            .and_then(|v| v.as_str())
+            .expect("session id")
+            .to_string();
+
+        let set_profile = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(2),
+            method: "set_runtime_profile".to_string(),
+            params: json!({
+                "profile": "low_spec",
+                "max_emit_per_tick": 0,
+                "coalesce_same_content": true
+            }),
+        };
+        let _ = app.handle_request(set_profile);
+
+        let tick = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(3),
+            method: "playback_tick_batch".to_string(),
+            params: serde_json::to_value(PlaybackTickBatchParams {
+                session_id,
+                ticks: vec![PlaybackTickSample {
+                    position_ms: 200,
+                    paused: false,
+                    is_seek: false,
+                }],
+            })
+            .expect("tick params"),
+        };
+        let res = app.handle_request(tick);
+        let emitted = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("emit_comments"))
+            .and_then(|v| v.as_array())
+            .expect("emit comments");
+        let coalesced = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("coalesced_comments"))
+            .and_then(|v| v.as_u64())
+            .expect("coalesced comments");
+
+        assert_eq!(emitted.len(), 2);
+        assert_eq!(coalesced, 1);
+    }
+
+    #[test]
+    fn runtime_profile_rejects_unknown_profile() {
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(Vec::new())),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(1),
+            method: "set_runtime_profile".to_string(),
+            params: json!({
+                "profile": "unknown"
+            }),
         };
         let res = app.handle_request(req);
         assert!(res.error.is_some());
