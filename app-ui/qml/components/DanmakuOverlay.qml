@@ -1,14 +1,31 @@
 import QtQuick
 import QtQuick.Controls
+import Niconeon
 
 Item {
     id: root
     property var controller
+    property string backend: "scenegraph"
+    property bool sceneDragging: false
+    readonly property bool useLegacyBackend: backend === "legacy"
+
     function syncNgZoneRect() {
         if (!root.controller) {
             return
         }
         root.controller.setNgDropZoneRect(ngZone.x, ngZone.y, ngZone.width, ngZone.height)
+    }
+
+    function finishSceneDrag(canceled) {
+        if (!root.controller || !sceneDragging) {
+            return
+        }
+        sceneDragging = false
+        if (canceled) {
+            root.controller.cancelActiveDrag()
+        } else {
+            root.controller.dropActiveDrag(false)
+        }
     }
 
     onWidthChanged: syncNgZoneRect()
@@ -31,11 +48,66 @@ Item {
         z: -1
     }
 
-    Repeater {
-        model: root.controller ? root.controller.itemModel : null
-        delegate: DanmakuItem {
-            overlay: root
-            controller: root.controller
+    DanmakuSceneItem {
+        anchors.fill: parent
+        visible: !root.useLegacyBackend
+        controller: root.controller
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        enabled: !root.useLegacyBackend && !!root.controller
+        hoverEnabled: true
+        preventStealing: true
+
+        onPressed: function(mouse) {
+            if (!root.controller) {
+                return
+            }
+            sceneDragging = root.controller.beginDragAt(mouse.x, mouse.y)
+            if (sceneDragging) {
+                root.controller.moveActiveDrag(mouse.x, mouse.y)
+            }
+        }
+
+        onPositionChanged: function(mouse) {
+            if (!root.controller || !pressed || !sceneDragging) {
+                return
+            }
+            root.controller.moveActiveDrag(mouse.x, mouse.y)
+        }
+
+        onReleased: {
+            finishSceneDrag(false)
+        }
+
+        onCanceled: {
+            finishSceneDrag(true)
+        }
+
+        onPressedChanged: {
+            if (!pressed && sceneDragging) {
+                Qt.callLater(function() {
+                    if (sceneDragging) {
+                        finishSceneDrag(false)
+                    }
+                })
+            }
+        }
+    }
+
+    Loader {
+        anchors.fill: parent
+        active: root.useLegacyBackend
+        sourceComponent: Item {
+            anchors.fill: parent
+            Repeater {
+                model: root.controller ? root.controller.itemModel : null
+                delegate: DanmakuItem {
+                    overlay: root
+                    controller: root.controller
+                }
+            }
         }
     }
 

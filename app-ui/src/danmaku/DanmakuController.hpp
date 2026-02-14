@@ -1,8 +1,10 @@
 #pragma once
 
 #include "danmaku/DanmakuListModel.hpp"
+#include "danmaku/DanmakuSpatialGrid.hpp"
 
 #include <QObject>
+#include <QMutex>
 #include <QQueue>
 #include <QSet>
 #include <QString>
@@ -21,6 +23,16 @@ class DanmakuController : public QObject {
     Q_PROPERTY(QString glyphWarmupText READ glyphWarmupText NOTIFY glyphWarmupTextChanged)
 
 public:
+    struct RenderItem {
+        QString commentId;
+        QString text;
+        qreal x = 0;
+        qreal y = 0;
+        qreal alpha = 1.0;
+        int widthEstimate = 120;
+        bool ngDropHovered = false;
+    };
+
     explicit DanmakuController(QObject *parent = nullptr);
 
     Q_INVOKABLE void setViewportSize(qreal width, qreal height);
@@ -37,9 +49,14 @@ public:
     Q_INVOKABLE void moveDrag(const QString &commentId, qreal x, qreal y);
     Q_INVOKABLE void dropDrag(const QString &commentId, bool inNgZone);
     Q_INVOKABLE void cancelDrag(const QString &commentId);
+    Q_INVOKABLE bool beginDragAt(qreal x, qreal y);
+    Q_INVOKABLE void moveActiveDrag(qreal x, qreal y);
+    Q_INVOKABLE void dropActiveDrag(bool inNgZone);
+    Q_INVOKABLE void cancelActiveDrag();
     Q_INVOKABLE void setNgDropZoneRect(qreal x, qreal y, qreal width, qreal height);
 
     Q_INVOKABLE void applyNgUserFade(const QString &userId);
+    QVector<RenderItem> renderSnapshot() const;
 
     QObject *itemModel();
     bool ngDropZoneVisible() const;
@@ -57,6 +74,7 @@ signals:
     void glyphWarmupEnabledChanged();
     void glyphWarmupTextChanged();
     void ngDropRequested(const QString &userId);
+    void renderSnapshotChanged();
 
 private:
     struct LaneState {
@@ -86,12 +104,13 @@ private:
     void onFrame();
     int laneCount() const;
     int pickLane(qint64 nowMs);
-    bool laneHasCollision(int lane, const Item &candidate) const;
+    bool laneHasCollision(int lane, const Item &candidate);
     void recoverToLane(Item &item);
     void ensureLaneStateSize();
     void resetLaneStates();
     qint64 estimateLaneCooldownMs(const Item &item) const;
     int findItemIndex(const QString &commentId) const;
+    int findItemIndexAt(qreal x, qreal y);
     int acquireRow();
     void releaseRow(int row);
     void releaseRowsDescending(const QVector<int> &rowsDescending);
@@ -106,12 +125,21 @@ private:
     void dispatchGlyphWarmupIfDue(qint64 nowMs);
     void clearGlyphWarmupText();
     void maybeWritePerfLog(qint64 nowMs);
+    void markSpatialDirty();
+    void rebuildSpatialIndex();
+    void ensureSpatialIndex();
+    void rebuildRenderSnapshot();
+    bool beginDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
+    void moveDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
+    void dropDragInternal(int index, bool inNgZone);
     DanmakuListModel::Row makeRow(const Item &item) const;
 
     QVector<Item> m_items;
     QVector<LaneState> m_laneStates;
     QVector<int> m_freeRows;
     DanmakuListModel m_itemModel;
+    DanmakuSpatialGrid m_spatialGrid;
+    bool m_spatialDirty = true;
 
     qreal m_viewportWidth = 1280;
     qreal m_viewportHeight = 720;
@@ -151,6 +179,11 @@ private:
     int m_perfGlyphWarmupSentCodepoints = 0;
     int m_perfGlyphWarmupBatchCount = 0;
     int m_perfGlyphWarmupDroppedCodepoints = 0;
+    int m_activeDragRow = -1;
+    qreal m_activeDragOffsetX = 0;
+    qreal m_activeDragOffsetY = 0;
+    mutable QMutex m_renderSnapshotMutex;
+    QVector<RenderItem> m_renderSnapshot;
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;

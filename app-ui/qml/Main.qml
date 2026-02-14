@@ -36,6 +36,7 @@ ApplicationWindow {
     property bool glyphWarmupEnabled: true
     property int perfTickSentCount: 0
     property int perfTickResultCount: 0
+    property string danmakuBackend: (typeof niconeonDanmakuBackend !== "undefined" && niconeonDanmakuBackend === "legacy") ? "legacy" : "scenegraph"
 
     Settings {
         id: speedSettings
@@ -583,6 +584,7 @@ ApplicationWindow {
                 id: overlay
                 anchors.fill: parent
                 controller: danmakuController
+                backend: root.danmakuBackend
                 visible: root.commentsVisible
             }
 
@@ -678,6 +680,7 @@ ApplicationWindow {
         danmakuController.setPlaybackRate(mpv.speed)
         danmakuController.setPerfLogEnabled(root.perfLogEnabled)
         danmakuController.setGlyphWarmupEnabled(root.glyphWarmupEnabled)
+        console.log("[danmaku-backend] backend=" + root.danmakuBackend)
         if (!root.commentsVisible) {
             danmakuController.resetForSeek()
         }
