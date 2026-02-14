@@ -82,16 +82,7 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 ./app-ui/build/niconeon-ui 2>&1 | tee perf-combined.log
 ```
 
-### 5) legacy backend comparison
-
-```bash
-LC_NUMERIC=C \
-NICONEON_DANMAKU_BACKEND=legacy \
-NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
-./app-ui/build/niconeon-ui 2>&1 | tee perf-legacy.log
-```
-
-### 6) worker off + scalar (fallback baseline)
+### 5) worker off + scalar (fallback baseline)
 
 ```bash
 LC_NUMERIC=C \
@@ -101,7 +92,7 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 ./app-ui/build/niconeon-ui 2>&1 | tee perf-worker-off-scalar.log
 ```
 
-### 7) worker on + avx2 (R2 fast path)
+### 6) worker on + avx2 (R2 fast path)
 
 ```bash
 LC_NUMERIC=C \
@@ -143,7 +134,7 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
   - `[perf-danmaku]` の `updates`（同等以下であること）
   - `fps` / `p95_ms` / `p99_ms`（悪化しないこと）
 - Qt Creator QML Profiler が利用できる場合:
-  - `DanmakuItem` の毎フレーム評価バインディングが減っていること
+  - 弾幕オーバーレイの毎フレーム評価バインディングが減っていること
   - ドラッグ中・シーク後でも hot path が過度に増えないこと
 - 目視回帰:
   - NGドロップ判定、ゾーン外ドロップ復帰、Undo が従来通り動作すること
@@ -164,7 +155,7 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 
 ## Issue #9 Comparison Focus
 
-- 同一動画・同一区間で `scenegraph`（既定）と `legacy`（`NICONEON_DANMAKU_BACKEND=legacy`）を比較する。
+- 同一動画・同一区間で、R1以前のタグと現行タグを比較する（旧 `legacy` バックエンド比較は廃止）。
 - 比較対象:
   - `[perf-danmaku]` の `fps` / `p95_ms` / `p99_ms`
   - `[perf-danmaku]` の `updates` / `removed`

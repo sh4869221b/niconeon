@@ -13,10 +13,9 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
 
 - Host `libmpv` as a QML item.
 - Control playback (play/pause/seek/volume).
-- Send periodic playback ticks (`50ms`) to core.
+- Enqueue periodic playback ticks (`50ms`) and send them to core as `playback_tick_batch`.
 - Render danmaku overlays and drag/drop interactions.
-  - Default backend: Scene Graph aggregate renderer (`DanmakuSceneItem`).
-  - Fallback backend: legacy QML delegates (`NICONEON_DANMAKU_BACKEND=legacy`).
+  - Backend: `QSGRenderNode` aggregate renderer (`DanmakuRenderNodeItem`).
   - Simulation update path:
     - Default: worker-thread simulation (`NICONEON_DANMAKU_WORKER=on`).
     - Fallback: single-thread simulation (`NICONEON_DANMAKU_WORKER=off`).

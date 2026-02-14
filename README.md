@@ -113,12 +113,8 @@ GitHub Actions で以下を実行します。
 
 ## 弾幕描画バックエンド
 
-- 既定は `scenegraph`（`DanmakuSceneItem + updatePaintNode()`）です。
-- 障害切り分け用に `legacy` バックエンド（`Repeater + DanmakuItem`）へ切り替えられます。
-
-```bash
-NICONEON_DANMAKU_BACKEND=legacy just run
-```
+- 既定は `QSGRenderNode` ベースの集約描画（`DanmakuRenderNodeItem`）です。
+- R3 以降、旧 `scenegraph` / `legacy` 切り替えは廃止されています。
 
 ## 弾幕更新モード（R2）
 

@@ -6,7 +6,7 @@
 - regex validation: valid and invalid patterns.
 - filter order: NG user first, then regex.
 - undo last NG: only the latest token is restorable.
-- tick window emission: normal progression and seek reset.
+- `playback_tick_batch`: normal progression, seek reset, paused tick, and legacy method rejection.
 
 ## Core Integration Tests
 
@@ -34,14 +34,13 @@
 - 高密度再生で `lane_forced_count` が増えても、シーク後の再同期とドロップ復帰（同一レーン優先）が壊れない。
 - `QSG_RENDERER_DEBUG=render` および `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` のプロファイルでログ取得できる。
 - #7 回帰確認として、同一動画・同一区間で `fps` / `p95_ms` / `p99_ms` が悪化しない（目安: 5%以内）ことを確認する。
-- #7 回帰確認として、Qt Creator QML Profiler で `DanmakuItem` の per-frame hot path（Binding/JS）が増加していないことを確認する。
+- #7 回帰確認として、Qt Creator QML Profiler で弾幕オーバーレイの per-frame hot path（Binding/JS）が増加していないことを確認する。
 - `Glyph warmup ON/OFF` を切り替えて、再起動後も設定が維持されることを確認する。
 - `Glyph warmup ON` 時に `[perf-glyph]` ログが2秒ごとに出力され、`warmup_sent_cp` / `warmup_batches` / `warmup_pending_cp` を含むことを確認する。
 - `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` と併用時に、`[perf-glyph]` のスパイク窓と glyph ログを突合できることを確認する。
 - `Glyph warmup ON/OFF` 比較で `p95_ms` / `p99_ms` が悪化しないこと、かつ文字化け・欠落がないことを確認する。
 - About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。
-- 既定の `scenegraph` バックエンドで、コメント表示・ドラッグ・NGドロップ・Undo が機能する。
-- `NICONEON_DANMAKU_BACKEND=legacy` でも同等の操作が機能し、回避手段として使える。
+- 既定の `QSGRenderNode` バックエンドで、コメント表示・ドラッグ・NGドロップ・Undo が機能する。
 - 高密度区間でドラッグ開始時のヒットテストが安定し、意図しないコメント選択が増えない。
 - `NICONEON_DANMAKU_WORKER=on`（既定）で再生・シーク・ドラッグ・NG の回帰がない。
 - `NICONEON_DANMAKU_WORKER=off` へ切替後も同等機能が成立し、クラッシュしない。
