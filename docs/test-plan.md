@@ -24,5 +24,7 @@
 - removing an NG user from filter dialog updates list and future filtering.
 - regex invalid input shows error and is not registered.
 - コメント非表示時は弾幕描画が停止し、再度表示に戻すと現在再生位置から再同期する。
-- 計測ログ有効化時に、2秒ごとにUI計測ログが標準出力へ出力される。
+- 計測ログ有効化時に、2秒ごとに `[perf-ui]` が標準出力へ出力され、`tick_sent`/`tick_result`/`tick_backlog` を含む。
+- 計測ログ有効化時に、2秒ごとに `[perf-danmaku]` が標準出力へ出力され、`avg_ms`/`p50_ms`/`p95_ms`/`p99_ms`/`max_ms` を含む。
+- `QSG_RENDERER_DEBUG=render` および `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` のプロファイルでログ取得できる。
 - About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。

@@ -303,9 +303,12 @@ ApplicationWindow {
             if (!root.perfLogEnabled) {
                 return
             }
+            const tickBacklog = Math.max(0, root.perfTickSentCount - root.perfTickResultCount)
             console.log(
-                "[perf-ui] tick_sent=" + root.perfTickSentCount
+                "[perf-ui] window_ms=" + perfLogTimer.interval
+                + " tick_sent=" + root.perfTickSentCount
                 + " tick_result=" + root.perfTickResultCount
+                + " tick_backlog=" + tickBacklog
                 + " comments_visible=" + (root.commentsVisible ? "1" : "0")
                 + " position_ms=" + mpv.positionMs
                 + " paused=" + (mpv.paused ? "1" : "0")

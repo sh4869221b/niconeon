@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
 
 namespace {
 constexpr qreal kLaneTopMargin = 10.0;
@@ -57,6 +58,7 @@ void DanmakuController::setPerfLogEnabled(bool enabled) {
     m_perfLogEnabled = enabled;
     m_perfLogWindowStartMs = QDateTime::currentMSecsSinceEpoch();
     m_perfLogFrameCount = 0;
+    m_perfFrameSamplesMs.clear();
     m_perfLogAppendCount = 0;
     m_perfLogGeometryUpdateCount = 0;
     m_perfLogRemovedCount = 0;
@@ -267,6 +269,7 @@ void DanmakuController::onFrame() {
     }
     if (m_perfLogEnabled) {
         ++m_perfLogFrameCount;
+        m_perfFrameSamplesMs.push_back(elapsedMs);
     }
 
     const bool dragging = hasDragging();
@@ -504,11 +507,37 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
         return;
     }
 
+    QVector<int> sortedSamples = m_perfFrameSamplesMs;
+    std::sort(sortedSamples.begin(), sortedSamples.end());
+    const int sampleCount = sortedSamples.size();
+    const auto percentileMs = [&sortedSamples](double p) -> double {
+        if (sortedSamples.isEmpty()) {
+            return 0.0;
+        }
+
+        const double rank = std::ceil((p / 100.0) * sortedSamples.size());
+        const int maxIndex = static_cast<int>(sortedSamples.size()) - 1;
+        const int index = std::clamp(static_cast<int>(rank) - 1, 0, maxIndex);
+        return sortedSamples[index];
+    };
+    const double avgMs = sampleCount > 0
+        ? static_cast<double>(std::accumulate(sortedSamples.begin(), sortedSamples.end(), 0LL)) / sampleCount
+        : 0.0;
+    const double p50Ms = percentileMs(50.0);
+    const double p95Ms = percentileMs(95.0);
+    const double p99Ms = percentileMs(99.0);
+    const double maxMs = sampleCount > 0 ? sortedSamples.last() : 0.0;
     const double fps = elapsedMs > 0 ? (m_perfLogFrameCount * 1000.0 / elapsedMs) : 0.0;
     qInfo().noquote()
-        << QString("[perf] window_ms=%1 fps=%2 active=%3 appended=%4 updates=%5 removed=%6 dragging=%7 paused=%8 rate=%9")
+        << QString("[perf-danmaku] window_ms=%1 frame_count=%2 fps=%3 avg_ms=%4 p50_ms=%5 p95_ms=%6 p99_ms=%7 max_ms=%8 active=%9 appended=%10 updates=%11 removed=%12 dragging=%13 paused=%14 rate=%15")
                .arg(elapsedMs)
+               .arg(m_perfLogFrameCount)
                .arg(fps, 0, 'f', 1)
+               .arg(avgMs, 0, 'f', 2)
+               .arg(p50Ms, 0, 'f', 2)
+               .arg(p95Ms, 0, 'f', 2)
+               .arg(p99Ms, 0, 'f', 2)
+               .arg(maxMs, 0, 'f', 2)
                .arg(m_items.size())
                .arg(m_perfLogAppendCount)
                .arg(m_perfLogGeometryUpdateCount)
@@ -519,6 +548,7 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
 
     m_perfLogWindowStartMs = nowMs;
     m_perfLogFrameCount = 0;
+    m_perfFrameSamplesMs.clear();
     m_perfLogAppendCount = 0;
     m_perfLogGeometryUpdateCount = 0;
     m_perfLogRemovedCount = 0;

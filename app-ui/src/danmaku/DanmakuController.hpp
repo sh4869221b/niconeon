@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QTimer>
 #include <QVariantList>
+#include <QVector>
 
 class DanmakuController : public QObject {
     Q_OBJECT
@@ -98,6 +99,7 @@ private:
     bool m_perfLogEnabled = false;
     qint64 m_perfLogWindowStartMs = 0;
     int m_perfLogFrameCount = 0;
+    QVector<int> m_perfFrameSamplesMs;
     int m_perfLogAppendCount = 0;
     int m_perfLogGeometryUpdateCount = 0;
     int m_perfLogRemovedCount = 0;
