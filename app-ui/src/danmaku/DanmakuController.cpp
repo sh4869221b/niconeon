@@ -4,6 +4,7 @@
 #include "danmaku/DanmakuUpdateWorker.hpp"
 
 #include <QDateTime>
+#include <QMetaType>
 #include <QMutexLocker>
 #include <QPointF>
 #include <QRectF>
@@ -60,6 +61,8 @@ bool isTrackableGlyphCodepoint(char32_t codepoint) {
 }
 
 DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
+    qRegisterMetaType<DanmakuFrameInput>("DanmakuFrameInput");
+
     m_lastTickMs = QDateTime::currentMSecsSinceEpoch();
     m_perfLogWindowStartMs = m_lastTickMs;
     const QString workerMode = qEnvironmentVariable("NICONEON_DANMAKU_WORKER").trimmed().toLower();
@@ -1141,32 +1144,28 @@ void DanmakuController::scheduleWorkerFrame(int elapsedMs, qint64 nowMs) {
         return;
     }
 
-    buildSoAState(m_workerSoAState);
-    if (m_workerSoAState.size() <= 0) {
+    DanmakuFrameInput frameInput;
+    buildSoAState(frameInput.state);
+    if (frameInput.state.size() <= 0) {
         return;
     }
 
     m_workerBusy = true;
-    const qint64 seq = ++m_workerSeq;
-    QMetaObject::invokeMethod(
+    frameInput.seq = ++m_workerSeq;
+    frameInput.playbackPaused = m_playbackPaused;
+    frameInput.playbackRate = static_cast<qreal>(m_playbackRate);
+    frameInput.elapsedMs = elapsedMs;
+    frameInput.viewportHeight = m_viewportHeight;
+    frameInput.cullThreshold = kItemCullThreshold;
+    frameInput.itemHeight = kItemHeight;
+    const bool enqueued = QMetaObject::invokeMethod(
         m_updateWorker,
         "processFrame",
         Qt::QueuedConnection,
-        Q_ARG(qint64, seq),
-        Q_ARG(bool, m_playbackPaused),
-        Q_ARG(qreal, static_cast<qreal>(m_playbackRate)),
-        Q_ARG(int, elapsedMs),
-        Q_ARG(qreal, m_viewportHeight),
-        Q_ARG(qreal, kItemCullThreshold),
-        Q_ARG(qreal, kItemHeight),
-        Q_ARG(QVector<int>, m_workerSoAState.rows),
-        Q_ARG(QVector<qreal>, m_workerSoAState.x),
-        Q_ARG(QVector<qreal>, m_workerSoAState.y),
-        Q_ARG(QVector<qreal>, m_workerSoAState.speed),
-        Q_ARG(QVector<qreal>, m_workerSoAState.alpha),
-        Q_ARG(QVector<int>, m_workerSoAState.widthEstimate),
-        Q_ARG(QVector<int>, m_workerSoAState.fadeRemainingMs),
-        Q_ARG(QVector<quint8>, m_workerSoAState.flags));
+        Q_ARG(DanmakuFrameInput, frameInput));
+    if (!enqueued) {
+        m_workerBusy = false;
+    }
 }
 
 void DanmakuController::handleWorkerFrame(

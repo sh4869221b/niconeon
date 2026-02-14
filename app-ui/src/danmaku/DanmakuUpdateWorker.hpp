@@ -1,6 +1,7 @@
 #pragma once
 
 #include "danmaku/DanmakuSimdUpdater.hpp"
+#include "danmaku/DanmakuSoAState.hpp"
 
 #include <QObject>
 #include <QVector>
@@ -15,22 +16,7 @@ public:
     void setSimdMode(DanmakuSimdMode mode);
 
 public slots:
-    void processFrame(
-        qint64 seq,
-        bool playbackPaused,
-        qreal playbackRate,
-        int elapsedMs,
-        qreal viewportHeight,
-        qreal cullThreshold,
-        qreal itemHeight,
-        QVector<int> rows,
-        QVector<qreal> x,
-        QVector<qreal> y,
-        QVector<qreal> speed,
-        QVector<qreal> alpha,
-        QVector<int> widthEstimate,
-        QVector<int> fadeRemainingMs,
-        QVector<quint8> flags);
+    void processFrame(DanmakuFrameInput input);
 
 signals:
     void frameProcessed(

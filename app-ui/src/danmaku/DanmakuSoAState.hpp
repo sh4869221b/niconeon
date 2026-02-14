@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QMetaType>
 #include <QVector>
 #include <QtGlobal>
 
@@ -45,3 +46,16 @@ struct DanmakuSoAState {
         return rows.size();
     }
 };
+
+struct DanmakuFrameInput {
+    qint64 seq = 0;
+    bool playbackPaused = false;
+    qreal playbackRate = 1.0;
+    int elapsedMs = 0;
+    qreal viewportHeight = 0;
+    qreal cullThreshold = 0;
+    qreal itemHeight = 0;
+    DanmakuSoAState state;
+};
+
+Q_DECLARE_METATYPE(DanmakuFrameInput)

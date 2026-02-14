@@ -203,7 +203,6 @@ private:
     qreal m_activeDragOffsetY = 0;
     mutable QMutex m_renderSnapshotMutex;
     QVector<RenderItem> m_renderSnapshot;
-    DanmakuSoAState m_workerSoAState;
     bool m_workerEnabled = true;
     bool m_workerBusy = false;
     qint64 m_workerSeq = 0;
