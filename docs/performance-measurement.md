@@ -22,7 +22,7 @@ Issue `#4` の目的は、同一条件で再現可能なログを取り、ボト
 
 ## Metrics to Compare
 
-- UI: `tick_sent`, `tick_result`, `tick_backlog`
+- UI: `tick_sent`, `tick_result`, `tick_backlog`, `dropped_comments`, `coalesced_comments`, `emit_over_budget`, `profile`, `target_fps`, `emit_cap`
 - Danmaku: `fps`, `avg_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`, `updates`, `removed`
 - Pool状態: `rows_total`, `rows_active`, `rows_free`, `compacted`
 - Lane状態: `lane_pick_count`, `lane_ready_count`, `lane_forced_count`, `lane_wait_ms_avg`, `lane_wait_ms_max`

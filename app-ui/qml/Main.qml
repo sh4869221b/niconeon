@@ -34,8 +34,17 @@ ApplicationWindow {
     property bool commentsVisible: true
     property bool perfLogEnabled: false
     property bool glyphWarmupEnabled: true
+    property string perfProfile: "low_spec"
+    property int targetFps: 30
+    property int maxEmitPerTick: 48
+    property bool coalesceSameContent: true
     property int perfTickSentCount: 0
     property int perfTickResultCount: 0
+    property int perfDroppedCommentsCount: 0
+    property int perfCoalescedCommentsCount: 0
+    property int perfEmitOverBudgetCount: 0
+    property int qosOverBudgetStreak: 0
+    property int qosStableStreak: 0
     property string autoVideoPath: ""
     property bool autoPerfLogStart: false
     property int autoExitMs: 0
@@ -53,6 +62,10 @@ ApplicationWindow {
         property bool commentsVisible: true
         property bool perfLogEnabled: false
         property bool glyphWarmupEnabled: true
+        property string perfProfile: "low_spec"
+        property int targetFps: 30
+        property int maxEmitPerTick: 48
+        property bool coalesceSameContent: true
     }
 
     function extractVideoId(path) {
@@ -246,6 +259,11 @@ ApplicationWindow {
         danmakuController.setPerfLogEnabled(next)
         root.perfTickSentCount = 0
         root.perfTickResultCount = 0
+        root.perfDroppedCommentsCount = 0
+        root.perfCoalescedCommentsCount = 0
+        root.perfEmitOverBudgetCount = 0
+        root.qosOverBudgetStreak = 0
+        root.qosStableStreak = 0
 
         if (notify) {
             showToast(next ? "計測ログを有効化しました" : "計測ログを無効化しました")
@@ -265,6 +283,105 @@ ApplicationWindow {
         if (notify) {
             showToast(next ? "Glyph warmup を有効化しました" : "Glyph warmup を無効化しました")
         }
+    }
+
+    function sanitizePerfProfile(value) {
+        const raw = String(value || "").trim().toLowerCase()
+        if (raw === "high" || raw === "balanced" || raw === "low_spec") {
+            return raw
+        }
+        return "low_spec"
+    }
+
+    function defaultRuntimeProfileConfig(profile) {
+        const normalized = sanitizePerfProfile(profile)
+        if (normalized === "high") {
+            return {
+                targetFps: 30,
+                maxEmitPerTick: 0,
+                coalesceSameContent: false
+            }
+        }
+        if (normalized === "balanced") {
+            return {
+                targetFps: 30,
+                maxEmitPerTick: 96,
+                coalesceSameContent: false
+            }
+        }
+        return {
+            targetFps: 30,
+            maxEmitPerTick: 48,
+            coalesceSameContent: true
+        }
+    }
+
+    function applyRuntimeProfile(profile, targetFps, maxEmitPerTick, coalesceSameContent, notify) {
+        const normalizedProfile = sanitizePerfProfile(profile)
+        const normalizedTargetFps = Math.max(10, Math.min(120, Number(targetFps) || 30))
+        const normalizedMaxEmit = Math.max(0, Math.min(2000, Number(maxEmitPerTick) || 0))
+        const normalizedCoalesce = !!coalesceSameContent
+
+        root.perfProfile = normalizedProfile
+        root.targetFps = normalizedTargetFps
+        root.maxEmitPerTick = normalizedMaxEmit
+        root.coalesceSameContent = normalizedCoalesce
+        uiSettings.perfProfile = normalizedProfile
+        uiSettings.targetFps = normalizedTargetFps
+        uiSettings.maxEmitPerTick = normalizedMaxEmit
+        uiSettings.coalesceSameContent = normalizedCoalesce
+
+        danmakuController.setTargetFps(normalizedTargetFps)
+        coreClient.setRuntimeProfile(
+            normalizedProfile,
+            normalizedTargetFps,
+            normalizedMaxEmit,
+            normalizedCoalesce ? 1 : 0)
+
+        if (notify) {
+            showToast(
+                "Runtime profile: " + normalizedProfile
+                + " / target_fps=" + normalizedTargetFps
+                + " / emit_cap=" + normalizedMaxEmit)
+        }
+    }
+
+    function handleQosWindowFeedback(tickBacklog) {
+        const backlog = Math.max(0, Number(tickBacklog) || 0)
+        if (root.perfEmitOverBudgetCount > 0 || backlog >= 3) {
+            root.qosOverBudgetStreak += 1
+            root.qosStableStreak = 0
+        } else {
+            root.qosStableStreak += 1
+            root.qosOverBudgetStreak = Math.max(0, root.qosOverBudgetStreak - 1)
+        }
+
+        if (root.qosOverBudgetStreak >= 2) {
+            const currentCap = root.maxEmitPerTick <= 0 ? 128 : root.maxEmitPerTick
+            const nextCap = Math.max(16, currentCap - 8)
+            if (root.maxEmitPerTick <= 0 || nextCap < root.maxEmitPerTick) {
+                applyRuntimeProfile(root.perfProfile, root.targetFps, nextCap, root.coalesceSameContent, false)
+            }
+            root.qosOverBudgetStreak = 0
+        } else if (root.qosStableStreak >= 4) {
+            const nextCap = Math.min(128, root.maxEmitPerTick + 4)
+            if (nextCap > root.maxEmitPerTick) {
+                applyRuntimeProfile(root.perfProfile, root.targetFps, nextCap, root.coalesceSameContent, false)
+            }
+            root.qosStableStreak = 0
+        }
+    }
+
+    function cycleRuntimeProfile() {
+        const order = ["high", "balanced", "low_spec"]
+        const current = sanitizePerfProfile(root.perfProfile)
+        let index = order.indexOf(current)
+        if (index < 0) {
+            index = 0
+        }
+        const next = order[(index + 1) % order.length]
+        const defaults = defaultRuntimeProfileConfig(next)
+        applyRuntimeProfile(next, defaults.targetFps, defaults.maxEmitPerTick, defaults.coalesceSameContent, true)
     }
 
     function showToast(message, actionText) {
@@ -362,22 +479,31 @@ ApplicationWindow {
         repeat: true
         running: true
         onTriggered: {
-            if (!root.perfLogEnabled) {
-                return
-            }
             const tickBacklog = Math.max(0, root.perfTickSentCount - root.perfTickResultCount)
-            console.log(
-                "[perf-ui] window_ms=" + perfLogTimer.interval
-                + " tick_sent=" + root.perfTickSentCount
-                + " tick_result=" + root.perfTickResultCount
-                + " tick_backlog=" + tickBacklog
-                + " comments_visible=" + (root.commentsVisible ? "1" : "0")
-                + " position_ms=" + mpv.positionMs
-                + " paused=" + (mpv.paused ? "1" : "0")
-                + " speed=" + root.formatRate(mpv.speed)
-            )
+            if (root.perfLogEnabled) {
+                console.log(
+                    "[perf-ui] window_ms=" + perfLogTimer.interval
+                    + " tick_sent=" + root.perfTickSentCount
+                    + " tick_result=" + root.perfTickResultCount
+                    + " tick_backlog=" + tickBacklog
+                    + " dropped_comments=" + root.perfDroppedCommentsCount
+                    + " coalesced_comments=" + root.perfCoalescedCommentsCount
+                    + " emit_over_budget=" + root.perfEmitOverBudgetCount
+                    + " comments_visible=" + (root.commentsVisible ? "1" : "0")
+                    + " position_ms=" + mpv.positionMs
+                    + " paused=" + (mpv.paused ? "1" : "0")
+                    + " speed=" + root.formatRate(mpv.speed)
+                    + " profile=" + root.perfProfile
+                    + " target_fps=" + root.targetFps
+                    + " emit_cap=" + root.maxEmitPerTick
+                )
+            }
+            root.handleQosWindowFeedback(tickBacklog)
             root.perfTickSentCount = 0
             root.perfTickResultCount = 0
+            root.perfDroppedCommentsCount = 0
+            root.perfCoalescedCommentsCount = 0
+            root.perfEmitOverBudgetCount = 0
         }
     }
 
@@ -497,6 +623,11 @@ ApplicationWindow {
             }
 
             AppButton {
+                text: "Profile: " + root.perfProfile
+                onClicked: root.cycleRuntimeProfile()
+            }
+
+            AppButton {
                 text: "フィルタ"
                 onClicked: {
                     coreClient.listFilters()
@@ -610,6 +741,8 @@ ApplicationWindow {
                     showToast("正規表現が不正です")
                 } else if (method === "open_video") {
                     showToast("コメント取得に失敗しました（再生は継続）")
+                } else if (method === "set_runtime_profile") {
+                    // 起動直後にcore未起動だと失敗し得るため、トーストは抑制する。
                 } else {
                     showToast("Core error: " + error)
                 }
@@ -624,8 +757,25 @@ ApplicationWindow {
             } else if (method === "playback_tick_batch") {
                 const processedTicks = Number(result.processed_ticks || 0)
                 root.perfTickResultCount += processedTicks > 0 ? processedTicks : 1
+                root.perfDroppedCommentsCount += Number(result.dropped_comments || 0)
+                root.perfCoalescedCommentsCount += Number(result.coalesced_comments || 0)
+                if (Boolean(result.emit_over_budget || false)) {
+                    root.perfEmitOverBudgetCount += 1
+                }
                 if (root.commentsVisible) {
                     danmakuController.appendFromCore(result.emit_comments || [], mpv.positionMs)
+                }
+            } else if (method === "set_runtime_profile") {
+                if (result && typeof result === "object") {
+                    root.perfProfile = root.sanitizePerfProfile(result.profile || root.perfProfile)
+                    root.targetFps = Math.max(10, Math.min(120, Number(result.target_fps || root.targetFps)))
+                    root.maxEmitPerTick = Math.max(0, Math.min(2000, Number(result.max_emit_per_tick || root.maxEmitPerTick)))
+                    root.coalesceSameContent = Boolean(result.coalesce_same_content)
+                    uiSettings.perfProfile = root.perfProfile
+                    uiSettings.targetFps = root.targetFps
+                    uiSettings.maxEmitPerTick = root.maxEmitPerTick
+                    uiSettings.coalesceSameContent = root.coalesceSameContent
+                    danmakuController.setTargetFps(root.targetFps)
                 }
             } else if (method === "add_ng_user") {
                 danmakuController.applyNgUserFade(result.hidden_user_id)
@@ -682,13 +832,23 @@ ApplicationWindow {
         root.commentsVisible = uiSettings.commentsVisible
         root.perfLogEnabled = uiSettings.perfLogEnabled
         root.glyphWarmupEnabled = uiSettings.glyphWarmupEnabled
+        root.perfProfile = root.sanitizePerfProfile(uiSettings.perfProfile)
+        root.targetFps = Math.max(10, Math.min(120, Number(uiSettings.targetFps || 30)))
+        root.maxEmitPerTick = Math.max(0, Math.min(2000, Number(uiSettings.maxEmitPerTick || 48)))
+        root.coalesceSameContent = !!uiSettings.coalesceSameContent
         coreClient.startDefault()
         danmakuController.setViewportSize(playerArea.width, playerArea.height)
         danmakuController.setLaneMetrics(36, 6)
         danmakuController.setPlaybackPaused(mpv.paused)
         danmakuController.setPlaybackRate(mpv.speed)
+        danmakuController.setTargetFps(root.targetFps)
         danmakuController.setPerfLogEnabled(root.perfLogEnabled)
         danmakuController.setGlyphWarmupEnabled(root.glyphWarmupEnabled)
+        coreClient.setRuntimeProfile(
+            root.perfProfile,
+            root.targetFps,
+            root.maxEmitPerTick,
+            root.coalesceSameContent ? 1 : 0)
         if (!root.commentsVisible) {
             danmakuController.resetForSeek()
         }

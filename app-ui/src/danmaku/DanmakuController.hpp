@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QMutex>
 #include <QQueue>
+#include <QSharedPointer>
 #include <QSet>
 #include <QString>
 #include <QThread>
@@ -20,6 +21,7 @@ class DanmakuController : public QObject {
     Q_PROPERTY(bool ngDropZoneVisible READ ngDropZoneVisible NOTIFY ngDropZoneVisibleChanged)
     Q_PROPERTY(bool playbackPaused READ playbackPaused NOTIFY playbackPausedChanged)
     Q_PROPERTY(double playbackRate READ playbackRate NOTIFY playbackRateChanged)
+    Q_PROPERTY(int targetFps READ targetFps WRITE setTargetFps NOTIFY targetFpsChanged)
     Q_PROPERTY(bool perfLogEnabled READ perfLogEnabled WRITE setPerfLogEnabled NOTIFY perfLogEnabledChanged)
     Q_PROPERTY(bool glyphWarmupEnabled READ glyphWarmupEnabled WRITE setGlyphWarmupEnabled NOTIFY glyphWarmupEnabledChanged)
     Q_PROPERTY(QString glyphWarmupText READ glyphWarmupText NOTIFY glyphWarmupTextChanged)
@@ -42,6 +44,7 @@ public:
     Q_INVOKABLE void setLaneMetrics(int fontPx, int laneGap);
     Q_INVOKABLE void setPlaybackPaused(bool paused);
     Q_INVOKABLE void setPlaybackRate(double rate);
+    Q_INVOKABLE void setTargetFps(int fps);
     Q_INVOKABLE void setPerfLogEnabled(bool enabled);
     Q_INVOKABLE void setGlyphWarmupEnabled(bool enabled);
     Q_INVOKABLE void appendFromCore(const QVariantList &comments, qint64 playbackPositionMs);
@@ -55,11 +58,12 @@ public:
     Q_INVOKABLE void setNgDropZoneRect(qreal x, qreal y, qreal width, qreal height);
 
     Q_INVOKABLE void applyNgUserFade(const QString &userId);
-    QVector<RenderItem> renderSnapshot() const;
+    QSharedPointer<const QVector<RenderItem>> renderSnapshot() const;
 
     bool ngDropZoneVisible() const;
     bool playbackPaused() const;
     double playbackRate() const;
+    int targetFps() const;
     bool perfLogEnabled() const;
     bool glyphWarmupEnabled() const;
     QString glyphWarmupText() const;
@@ -68,6 +72,7 @@ signals:
     void ngDropZoneVisibleChanged();
     void playbackPausedChanged();
     void playbackRateChanged();
+    void targetFpsChanged();
     void perfLogEnabledChanged();
     void glyphWarmupEnabledChanged();
     void glyphWarmupTextChanged();
@@ -140,6 +145,7 @@ private:
         const QVector<int> &changedRows,
         const QVector<int> &removeRows);
     void invalidateWorkerGeneration();
+    void updateFrameTimerInterval();
     bool beginDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void moveDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void dropDragInternal(int index, bool inNgZone);
@@ -158,6 +164,7 @@ private:
     bool m_ngDropZoneVisible = false;
     bool m_playbackPaused = true;
     double m_playbackRate = 1.0;
+    int m_targetFps = 30;
     qreal m_ngZoneX = 0;
     qreal m_ngZoneY = 0;
     qreal m_ngZoneWidth = 0;
@@ -191,7 +198,7 @@ private:
     qreal m_activeDragOffsetX = 0;
     qreal m_activeDragOffsetY = 0;
     mutable QMutex m_renderSnapshotMutex;
-    QVector<RenderItem> m_renderSnapshot;
+    QSharedPointer<const QVector<RenderItem>> m_renderSnapshot;
     bool m_workerEnabled = true;
     bool m_workerBusy = false;
     qint64 m_workerSeq = 0;

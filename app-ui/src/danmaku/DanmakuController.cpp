@@ -73,7 +73,7 @@ DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
     const DanmakuSimdMode resolvedSimdMode = DanmakuSimdUpdater::resolveMode(requestedSimdMode);
     m_simdModeName = DanmakuSimdUpdater::modeName(resolvedSimdMode);
 
-    m_frameTimer.setInterval(33);
+    updateFrameTimerInterval();
     connect(&m_frameTimer, &QTimer::timeout, this, &DanmakuController::onFrame);
     m_frameTimer.start();
 
@@ -152,6 +152,16 @@ void DanmakuController::setPlaybackRate(double rate) {
     m_playbackRate = normalized;
     invalidateWorkerGeneration();
     emit playbackRateChanged();
+}
+
+void DanmakuController::setTargetFps(int fps) {
+    const int normalized = std::clamp(fps, 10, 120);
+    if (m_targetFps == normalized) {
+        return;
+    }
+    m_targetFps = normalized;
+    updateFrameTimerInterval();
+    emit targetFpsChanged();
 }
 
 void DanmakuController::setPerfLogEnabled(bool enabled) {
@@ -251,7 +261,6 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
 
     if (appendedAny) {
         markSpatialDirty();
-        rebuildSpatialIndex();
         rebuildRenderSnapshot();
         emit renderSnapshotChanged();
     }
@@ -342,7 +351,6 @@ bool DanmakuController::beginDragInternal(int index, qreal pointerX, qreal point
     updateNgZoneVisibility();
     invalidateWorkerGeneration();
     markSpatialDirty();
-    rebuildSpatialIndex();
     rebuildRenderSnapshot();
     emit renderSnapshotChanged();
     return true;
@@ -372,7 +380,6 @@ void DanmakuController::moveDragInternal(int index, qreal pointerX, qreal pointe
     }
     invalidateWorkerGeneration();
     markSpatialDirty();
-    rebuildSpatialIndex();
     rebuildRenderSnapshot();
     emit renderSnapshotChanged();
 }
@@ -406,7 +413,6 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
 
     updateNgZoneVisibility();
     markSpatialDirty();
-    rebuildSpatialIndex();
     rebuildRenderSnapshot();
     emit renderSnapshotChanged();
 }
@@ -444,7 +450,6 @@ void DanmakuController::resetForSeek() {
     m_activeDragOffsetY = 0.0;
     updateNgZoneVisibility();
     markSpatialDirty();
-    rebuildSpatialIndex();
     rebuildRenderSnapshot();
     emit renderSnapshotChanged();
 }
@@ -473,6 +478,10 @@ double DanmakuController::playbackRate() const {
     return m_playbackRate;
 }
 
+int DanmakuController::targetFps() const {
+    return m_targetFps;
+}
+
 bool DanmakuController::perfLogEnabled() const {
     return m_perfLogEnabled;
 }
@@ -485,7 +494,7 @@ QString DanmakuController::glyphWarmupText() const {
     return m_glyphWarmupText;
 }
 
-QVector<DanmakuController::RenderItem> DanmakuController::renderSnapshot() const {
+QSharedPointer<const QVector<DanmakuController::RenderItem>> DanmakuController::renderSnapshot() const {
     QMutexLocker locker(&m_renderSnapshotMutex);
     return m_renderSnapshot;
 }
@@ -595,7 +604,6 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
 
     if (frameStateChanged) {
         markSpatialDirty();
-        rebuildSpatialIndex();
         rebuildRenderSnapshot();
         emit renderSnapshotChanged();
     }
@@ -1168,7 +1176,6 @@ void DanmakuController::handleWorkerFrame(
 
     if (hasGeometryUpdates || !removeRows.isEmpty() || compacted) {
         markSpatialDirty();
-        rebuildSpatialIndex();
         rebuildRenderSnapshot();
         emit renderSnapshotChanged();
     }
@@ -1181,6 +1188,12 @@ void DanmakuController::invalidateWorkerGeneration() {
     if (m_workerBusy) {
         ++m_workerSeq;
     }
+}
+
+void DanmakuController::updateFrameTimerInterval() {
+    const int fps = std::clamp(m_targetFps, 10, 120);
+    const int intervalMs = std::max(1, static_cast<int>(std::lround(1000.0 / fps)));
+    m_frameTimer.setInterval(intervalMs);
 }
 
 void DanmakuController::markSpatialDirty() {
@@ -1233,8 +1246,9 @@ void DanmakuController::rebuildRenderSnapshot() {
         snapshot.push_back(renderItem);
     }
 
+    auto newSnapshot = QSharedPointer<QVector<RenderItem>>::create(std::move(snapshot));
     QMutexLocker locker(&m_renderSnapshotMutex);
-    m_renderSnapshot = std::move(snapshot);
+    m_renderSnapshot = newSnapshot;
 }
 
 void DanmakuController::maybeWritePerfLog(qint64 nowMs) {

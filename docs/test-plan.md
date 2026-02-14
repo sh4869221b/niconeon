@@ -25,6 +25,7 @@
 - regex invalid input shows error and is not registered.
 - コメント非表示時は弾幕描画が停止し、再度表示に戻すと現在再生位置から再同期する。
 - 計測ログ有効化時に、2秒ごとに `[perf-ui]` が標準出力へ出力され、`tick_sent`/`tick_result`/`tick_backlog` を含む。
+- 計測ログ有効化時に、`[perf-ui]` が `dropped_comments` / `coalesced_comments` / `emit_over_budget` を含む。
 - 計測ログ有効化時に、2秒ごとに `[perf-danmaku]` が標準出力へ出力され、`avg_ms`/`p50_ms`/`p95_ms`/`p99_ms`/`max_ms` を含む。
 - 画面外に出た弾幕（左外/縦外/フェード完了）は次フレームで表示から外れ、更新対象に残らない。
 - 1件ドラッグ中でも、他弾幕は通常どおり移動し、画面外弾幕は継続して除去される。
@@ -46,3 +47,4 @@
 - `NICONEON_DANMAKU_WORKER=off` へ切替後も同等機能が成立し、クラッシュしない。
 - `NICONEON_SIMD_MODE=auto/scalar/avx2` で起動し、`[danmaku-simd]` ログが期待モードを示す。
 - `NICONEON_SIMD_MODE=avx2` と `scalar` で表示破綻（位置飛び/消去漏れ）がない。
+- Runtime profile を `high` / `balanced` / `low_spec` に切り替えて、`set_runtime_profile` 応答と挙動（emit cap/coalesce）が一致する。

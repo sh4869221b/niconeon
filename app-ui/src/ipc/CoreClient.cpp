@@ -177,6 +177,26 @@ void CoreClient::listFilters() {
     sendRequest("list_filters", {});
 }
 
+void CoreClient::setRuntimeProfile(
+    const QString &profile,
+    int targetFps,
+    int maxEmitPerTick,
+    int coalesceSameContent) {
+    QVariantMap params {
+        {"profile", profile.trimmed()},
+    };
+    if (targetFps > 0) {
+        params.insert("target_fps", targetFps);
+    }
+    if (maxEmitPerTick >= 0) {
+        params.insert("max_emit_per_tick", maxEmitPerTick);
+    }
+    if (coalesceSameContent >= 0) {
+        params.insert("coalesce_same_content", coalesceSameContent != 0);
+    }
+    sendRequest("set_runtime_profile", params);
+}
+
 bool CoreClient::running() const {
     return m_process.state() != QProcess::NotRunning;
 }

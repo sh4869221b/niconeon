@@ -18,6 +18,7 @@
 #include <QRectF>
 #include <QSGNode>
 #include <QSGRenderNode>
+#include <QSharedPointer>
 #include <QSize>
 #include <QDebug>
 #include <QtGlobal>
@@ -28,6 +29,8 @@
 namespace {
 constexpr int kItemHeightPx = 42;
 constexpr int kTextPixelSize = 24;
+constexpr int kDenseRenderThreshold = 80;
+constexpr int kUltraDenseRenderThreshold = 140;
 
 QImage renderSnapshotImage(
     const QVector<DanmakuController::RenderItem> &items,
@@ -42,8 +45,10 @@ QImage renderSnapshotImage(
     image.fill(Qt::transparent);
 
     QPainter painter(&image);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    const bool dense = items.size() >= kDenseRenderThreshold;
+    const bool ultraDense = items.size() >= kUltraDenseRenderThreshold;
+    painter.setRenderHint(QPainter::Antialiasing, !dense);
+    painter.setRenderHint(QPainter::TextAntialiasing, !ultraDense);
 
     QFont font;
     font.setPixelSize(kTextPixelSize);
@@ -61,9 +66,16 @@ QImage renderSnapshotImage(
 
         painter.setOpacity(std::clamp(item.alpha, 0.0, 1.0));
         const QRectF rect(item.x, item.y, item.widthEstimate, kItemHeightPx);
-        painter.setBrush(fillColor);
-        painter.setPen(QPen(item.ngDropHovered ? ngBorder : normalBorder, item.ngDropHovered ? 2.0 : 1.0));
-        painter.drawRoundedRect(rect, 8.0, 8.0);
+        const bool drawBody = !ultraDense || item.ngDropHovered;
+        if (drawBody) {
+            painter.setBrush(fillColor);
+            painter.setPen(QPen(item.ngDropHovered ? ngBorder : normalBorder, item.ngDropHovered ? 2.0 : 1.0));
+            if (dense) {
+                painter.drawRect(rect);
+            } else {
+                painter.drawRoundedRect(rect, 8.0, 8.0);
+            }
+        }
 
         painter.setPen(textColor);
         const QRectF textRect = rect.adjusted(8.0, 0.0, -8.0, 0.0);
@@ -408,12 +420,16 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
         return node;
     }
 
-    QVector<DanmakuController::RenderItem> items;
+    QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot;
     if (m_controller) {
-        items = m_controller->renderSnapshot();
+        snapshot = m_controller->renderSnapshot();
     }
 
-    node->setFrame(items, QSize(itemWidth, itemHeight), window()->effectiveDevicePixelRatio());
+    if (snapshot) {
+        node->setFrame(*snapshot, QSize(itemWidth, itemHeight), window()->effectiveDevicePixelRatio());
+    } else {
+        node->setFrame({}, QSize(itemWidth, itemHeight), window()->effectiveDevicePixelRatio());
+    }
     return node;
 }
 

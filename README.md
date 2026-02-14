@@ -14,6 +14,7 @@ Niconeon は、ローカル動画を再生しながらニコニココメント�
 - 正規表現フィルタの登録/削除
 - 計測ログ（UI/弾幕更新 + フレーム時間分布: avg/p50/p95/p99/max）
 - Glyph warmup（初出文字の段階プリウォーム）ON/OFF
+- Runtime profile（`high` / `balanced` / `low_spec`）によるコメント放出制御
 - SQLite 永続化（NG/正規表現/コメントキャッシュ）
 - About ダイアログでライセンス情報表示（MIT / GPLv3+ / Third-Party Notices）
 
@@ -108,6 +109,7 @@ GitHub Actions で以下を実行します。
 
 - `コメント非表示` ボタンで弾幕描画を停止すると、CPU負荷を下げられます。
 - `計測ログ開始` ボタンで、2秒ごとの UI 計測ログ（`tick_sent`/`tick_result`/`tick_backlog`）と弾幕ログ（`fps`/`p95`/`p99` など）を標準出力に出せます。
+- `Profile` ボタンで runtime profile を切り替え、`max_emit_per_tick` を調整しながら負荷を抑制できます。
 - `Glyph warmup ON/OFF` で、文字生成スパイク対策のプリウォームを切り替えできます（既定: ON）。
 - 計測プロファイル（baseline / scenegraph / glyph / combined）は `docs/performance-measurement.md` を参照してください。
 

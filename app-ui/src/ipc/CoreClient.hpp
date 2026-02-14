@@ -27,6 +27,11 @@ public:
     Q_INVOKABLE void addRegexFilter(const QString &pattern);
     Q_INVOKABLE void removeRegexFilter(qint64 filterId);
     Q_INVOKABLE void listFilters();
+    Q_INVOKABLE void setRuntimeProfile(
+        const QString &profile,
+        int targetFps = -1,
+        int maxEmitPerTick = -1,
+        int coalesceSameContent = -1);
 
     bool running() const;
 
