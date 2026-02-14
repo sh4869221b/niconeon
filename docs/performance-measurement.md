@@ -82,6 +82,15 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 ./app-ui/build/niconeon-ui 2>&1 | tee perf-combined.log
 ```
 
+### 5) legacy backend comparison
+
+```bash
+LC_NUMERIC=C \
+NICONEON_DANMAKU_BACKEND=legacy \
+NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
+./app-ui/build/niconeon-ui 2>&1 | tee perf-legacy.log
+```
+
 ## Operation Procedure
 
 1. アプリを起動して対象動画を開く。
@@ -132,6 +141,23 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
   - `ON` で `p99_ms` が悪化しないこと
   - 文字化けや欠落がないこと
   - `warmup_enabled=1` で `warmup_sent_cp > 0` が観測できること
+
+## Issue #9 Comparison Focus
+
+- 同一動画・同一区間で `scenegraph`（既定）と `legacy`（`NICONEON_DANMAKU_BACKEND=legacy`）を比較する。
+- 比較対象:
+  - `[perf-danmaku]` の `fps` / `p95_ms` / `p99_ms`
+  - `[perf-danmaku]` の `updates` / `removed`
+  - ドラッグ中に他弾幕が停止しないこと、NG ドロップ登録が機能すること
+- 受け入れ判定（R1）:
+  - 性能値は参考記録（閾値でブロックしない）
+  - 機能回帰がないことを必須とする
+
+## Issue #11 Comparison Focus
+
+- 高密度区間でドラッグ開始の取りやすさ（ヒットテスト）を確認する。
+- `drop` での復帰（同一レーン優先）と NG ドロップ判定が維持されることを確認する。
+- 連続ドラッグ時に誤判定（掴めない/別コメントを掴む）が増えていないことを確認する。
 
 ## Expected Log Prefixes
 

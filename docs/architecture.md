@@ -15,6 +15,8 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
 - Control playback (play/pause/seek/volume).
 - Send periodic playback ticks (`50ms`) to core.
 - Render danmaku overlays and drag/drop interactions.
+  - Default backend: Scene Graph aggregate renderer (`DanmakuSceneItem`).
+  - Fallback backend: legacy QML delegates (`NICONEON_DANMAKU_BACKEND=legacy`).
 - Provide danmaku visibility toggle for low-spec environments.
 - Emit periodic UI/danmaku performance logs when enabled.
 - Show NG drop zone only during drag.

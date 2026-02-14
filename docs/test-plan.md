@@ -40,3 +40,6 @@
 - `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` と併用時に、`[perf-glyph]` のスパイク窓と glyph ログを突合できることを確認する。
 - `Glyph warmup ON/OFF` 比較で `p95_ms` / `p99_ms` が悪化しないこと、かつ文字化け・欠落がないことを確認する。
 - About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。
+- 既定の `scenegraph` バックエンドで、コメント表示・ドラッグ・NGドロップ・Undo が機能する。
+- `NICONEON_DANMAKU_BACKEND=legacy` でも同等の操作が機能し、回避手段として使える。
+- 高密度区間でドラッグ開始時のヒットテストが安定し、意図しないコメント選択が増えない。

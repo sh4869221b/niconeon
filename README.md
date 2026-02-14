@@ -111,6 +111,15 @@ GitHub Actions で以下を実行します。
 - `Glyph warmup ON/OFF` で、文字生成スパイク対策のプリウォームを切り替えできます（既定: ON）。
 - 計測プロファイル（baseline / scenegraph / glyph / combined）は `docs/performance-measurement.md` を参照してください。
 
+## 弾幕描画バックエンド
+
+- 既定は `scenegraph`（`DanmakuSceneItem + updatePaintNode()`）です。
+- 障害切り分け用に `legacy` バックエンド（`Repeater + DanmakuItem`）へ切り替えられます。
+
+```bash
+NICONEON_DANMAKU_BACKEND=legacy just run
+```
+
 ## ライセンス
 
 - 本リポジトリの自作ソースコードは `MIT` ライセンスです（`LICENSE`）。
