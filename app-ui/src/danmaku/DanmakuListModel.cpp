@@ -1,7 +1,6 @@
 #include "danmaku/DanmakuListModel.hpp"
 
 #include <QtGlobal>
-#include <algorithm>
 
 namespace {
 bool nearlyEqual(qreal lhs, qreal rhs) {
@@ -47,6 +46,8 @@ QVariant DanmakuListModel::data(const QModelIndex &index, int role) const {
         return row.speedPxPerSec;
     case NgDropHoveredRole:
         return row.ngDropHovered;
+    case ActiveRole:
+        return row.active;
     default:
         return {};
     }
@@ -65,6 +66,7 @@ QHash<int, QByteArray> DanmakuListModel::roleNames() const {
         {WidthEstimateRole, "widthEstimate"},
         {SpeedPxPerSecRole, "speedPxPerSec"},
         {NgDropHoveredRole, "ngDropHovered"},
+        {ActiveRole, "active"},
     };
 }
 
@@ -84,27 +86,36 @@ void DanmakuListModel::append(const Row &row) {
     endInsertRows();
 }
 
-void DanmakuListModel::removeAt(int row) {
+void DanmakuListModel::overwriteRow(int row, const Row &rowData) {
     if (row < 0 || row >= m_rows.size()) {
         return;
     }
 
-    beginRemoveRows(QModelIndex(), row, row);
-    m_rows.removeAt(row);
-    endRemoveRows();
+    m_rows[row] = rowData;
+    const QModelIndex modelIndex = index(row, 0);
+    emit dataChanged(
+        modelIndex,
+        modelIndex,
+        {
+            CommentIdRole,
+            UserIdRole,
+            TextRole,
+            PosXRole,
+            PosYRole,
+            AlphaRole,
+            LaneRole,
+            DraggingRole,
+            WidthEstimateRole,
+            SpeedPxPerSecRole,
+            NgDropHoveredRole,
+            ActiveRole,
+        });
 }
 
-void DanmakuListModel::removeRowsDescending(const QVector<int> &rowsDescending) {
-    if (rowsDescending.isEmpty()) {
-        return;
-    }
-
-    QVector<int> rows = rowsDescending;
-    std::sort(rows.begin(), rows.end(), std::greater<int>());
-    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
-    for (const int row : rows) {
-        removeAt(row);
-    }
+void DanmakuListModel::resetRows(const QVector<Row> &rows) {
+    beginResetModel();
+    m_rows = rows;
+    endResetModel();
 }
 
 void DanmakuListModel::setGeometry(int row, qreal posX, qreal posY, qreal alpha) {
@@ -164,4 +175,14 @@ void DanmakuListModel::setNgDropHovered(int row, bool hovered) {
     m_rows[row].ngDropHovered = hovered;
     const QModelIndex modelIndex = index(row, 0);
     emit dataChanged(modelIndex, modelIndex, {NgDropHoveredRole});
+}
+
+void DanmakuListModel::setActive(int row, bool active) {
+    if (row < 0 || row >= m_rows.size() || m_rows[row].active == active) {
+        return;
+    }
+
+    m_rows[row].active = active;
+    const QModelIndex modelIndex = index(row, 0);
+    emit dataChanged(modelIndex, modelIndex, {ActiveRole});
 }

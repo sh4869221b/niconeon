@@ -13,6 +13,7 @@ Rectangle {
     required property int widthEstimate
     required property real speedPxPerSec
     required property bool ngDropHovered
+    required property bool active
     property var controller
     property Item overlay
     property Item ngZone
@@ -70,6 +71,8 @@ Rectangle {
 
     x: (localDragging ? localX : posX) - dragVisualOffsetX
     y: localDragging ? localY : posY
+    visible: active
+    enabled: active
     width: widthEstimate
     height: 42
     radius: 8

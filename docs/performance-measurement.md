@@ -24,6 +24,7 @@ Issue `#4` の目的は、同一条件で再現可能なログを取り、ボト
 
 - UI: `tick_sent`, `tick_result`, `tick_backlog`
 - Danmaku: `fps`, `avg_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`, `updates`, `removed`
+- Pool状態: `rows_total`, `rows_active`, `rows_free`, `compacted`
 - Scene Graph: batch/upload 関連ログ
 - Glyph: glyph time ログのスパイク有無
 
@@ -87,6 +88,14 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 3. 指定区間（例: 60秒）を再生する。
 4. 必要なら一時停止・シークなしのケースを先に取得する。
 5. ログを保存し、次のプロファイルで同じ手順を繰り返す。
+
+## Issue #5 Comparison Focus
+
+- 同一動画・同一区間で、以下を #5 前後で比較する:
+  - `updates`（過剰更新が減っているか）
+  - `p95_ms` / `p99_ms`（フレーム時間スパイクが改善しているか）
+  - `rows_active` と `rows_free`（画面外返却が機能しているか）
+- 高密度区間で `compacted=1` が出ることを確認し、compaction後にドラッグ/NG操作の回帰がないことを確認する。
 
 ## Expected Log Prefixes
 

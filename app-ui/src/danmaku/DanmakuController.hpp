@@ -66,6 +66,7 @@ private:
         bool dragging = false;
         bool fading = false;
         bool ngDropHovered = false;
+        bool active = false;
         int fadeRemainingMs = 0;
     };
 
@@ -75,12 +76,19 @@ private:
     bool laneHasCollision(int lane, const Item &candidate) const;
     void recoverToLane(Item &item);
     int findItemIndex(const QString &commentId) const;
+    int acquireRow();
+    void releaseRow(int row);
+    void releaseRowsDescending(const QVector<int> &rowsDescending);
+    void maybeCompactRows();
+    int activeItemCount() const;
     bool hasDragging() const;
     void updateNgZoneVisibility();
     bool isItemInNgZone(const Item &item) const;
     void maybeWritePerfLog(qint64 nowMs);
+    DanmakuListModel::Row makeRow(const Item &item) const;
 
     QVector<Item> m_items;
+    QVector<int> m_freeRows;
     DanmakuListModel m_itemModel;
 
     qreal m_viewportWidth = 1280;
@@ -103,6 +111,7 @@ private:
     int m_perfLogAppendCount = 0;
     int m_perfLogGeometryUpdateCount = 0;
     int m_perfLogRemovedCount = 0;
+    bool m_perfCompactedSinceLastLog = false;
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;

@@ -19,6 +19,7 @@ public:
         int widthEstimate = 120;
         qreal speedPxPerSec = 120;
         bool ngDropHovered = false;
+        bool active = true;
     };
 
     enum Role {
@@ -33,6 +34,7 @@ public:
         WidthEstimateRole,
         SpeedPxPerSecRole,
         NgDropHoveredRole,
+        ActiveRole,
     };
 
     explicit DanmakuListModel(QObject *parent = nullptr);
@@ -43,13 +45,14 @@ public:
 
     void clear();
     void append(const Row &row);
-    void removeAt(int row);
-    void removeRowsDescending(const QVector<int> &rowsDescending);
+    void overwriteRow(int row, const Row &rowData);
+    void resetRows(const QVector<Row> &rows);
 
     void setGeometry(int row, qreal posX, qreal posY, qreal alpha);
     void setDragState(int row, bool dragging);
     void setLane(int row, int lane);
     void setNgDropHovered(int row, bool hovered);
+    void setActive(int row, bool active);
 
 private:
     QVector<Row> m_rows;

@@ -26,5 +26,9 @@
 - コメント非表示時は弾幕描画が停止し、再度表示に戻すと現在再生位置から再同期する。
 - 計測ログ有効化時に、2秒ごとに `[perf-ui]` が標準出力へ出力され、`tick_sent`/`tick_result`/`tick_backlog` を含む。
 - 計測ログ有効化時に、2秒ごとに `[perf-danmaku]` が標準出力へ出力され、`avg_ms`/`p50_ms`/`p95_ms`/`p99_ms`/`max_ms` を含む。
+- 画面外に出た弾幕（左外/縦外/フェード完了）は次フレームで表示から外れ、更新対象に残らない。
+- 1件ドラッグ中でも、他弾幕は通常どおり移動し、画面外弾幕は継続して除去される。
+- `[perf-danmaku]` に `rows_total`/`rows_active`/`rows_free`/`compacted` が出力される。
+- 高密度再生で `rows_free` が増えたあと、条件を満たすと `compacted=1` が出力される。
 - `QSG_RENDERER_DEBUG=render` および `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` のプロファイルでログ取得できる。
 - About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。

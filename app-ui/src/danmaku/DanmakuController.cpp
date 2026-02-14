@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <utility>
 
 namespace {
 constexpr qreal kLaneTopMargin = 10.0;
@@ -13,6 +14,8 @@ constexpr qreal kSpawnOffset = 12.0;
 constexpr qreal kItemHeight = 42.0;
 constexpr qreal kItemCullThreshold = -20.0;
 constexpr qint64 kMaxLagCompensationMs = 2000;
+constexpr int kFreeRowsSoftLimit = 512;
+constexpr double kCompactTriggerRatio = 0.5;
 }
 
 DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
@@ -62,6 +65,7 @@ void DanmakuController::setPerfLogEnabled(bool enabled) {
     m_perfLogAppendCount = 0;
     m_perfLogGeometryUpdateCount = 0;
     m_perfLogRemovedCount = 0;
+    m_perfCompactedSinceLastLog = false;
     emit perfLogEnabledChanged();
 }
 
@@ -80,6 +84,7 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
         const int textWidthEstimate = static_cast<int>(item.text.size()) * (m_fontPx / 2 + 4);
         item.widthEstimate = std::max(80, textWidthEstimate);
         item.speedPxPerSec = 120 + (qHash(item.commentId) % 70);
+        item.active = true;
 
         item.lane = pickLane(item.widthEstimate);
         item.originalLane = item.lane;
@@ -93,20 +98,15 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
             continue;
         }
 
-        m_items.push_back(item);
-        DanmakuListModel::Row row;
-        row.commentId = item.commentId;
-        row.userId = item.userId;
-        row.text = item.text;
-        row.posX = item.x;
-        row.posY = item.y;
-        row.alpha = item.alpha;
-        row.lane = item.lane;
-        row.dragging = item.dragging;
-        row.widthEstimate = item.widthEstimate;
-        row.speedPxPerSec = item.speedPxPerSec;
-        row.ngDropHovered = item.ngDropHovered;
-        m_itemModel.append(row);
+        const int row = acquireRow();
+        m_items[row] = item;
+        const DanmakuListModel::Row modelRow = makeRow(item);
+        if (row < m_itemModel.rowCount()) {
+            m_itemModel.overwriteRow(row, modelRow);
+        } else {
+            m_itemModel.append(modelRow);
+        }
+
         if (m_perfLogEnabled) {
             ++m_perfLogAppendCount;
         }
@@ -119,7 +119,7 @@ void DanmakuController::beginDrag(const QString &commentId) {
         return;
     }
     Item &item = m_items[index];
-    if (item.dragging) {
+    if (!item.active || item.dragging) {
         return;
     }
     item.frozen = true;
@@ -141,7 +141,7 @@ void DanmakuController::moveDrag(const QString &commentId, qreal x, qreal y) {
         return;
     }
     Item &item = m_items[index];
-    if (!item.dragging) {
+    if (!item.active || !item.dragging) {
         return;
     }
     item.x = x;
@@ -166,7 +166,7 @@ void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal h
 
     for (int i = 0; i < m_items.size(); ++i) {
         Item &item = m_items[i];
-        if (!item.dragging) {
+        if (!item.active || !item.dragging) {
             continue;
         }
         const bool hovered = isItemInNgZone(item);
@@ -184,13 +184,15 @@ void DanmakuController::dropDrag(const QString &commentId, bool inNgZone) {
         return;
     }
     Item &item = m_items[index];
+    if (!item.active) {
+        return;
+    }
 
     const bool resolvedInNgZone = inNgZone || isItemInNgZone(item);
 
     if (resolvedInNgZone) {
         const QString userId = item.userId;
-        m_items.removeAt(index);
-        m_itemModel.removeAt(index);
+        releaseRow(index);
         emit ngDropRequested(userId);
     } else {
         item.dragging = false;
@@ -216,7 +218,7 @@ void DanmakuController::cancelDrag(const QString &commentId) {
 
 void DanmakuController::applyNgUserFade(const QString &userId) {
     for (Item &item : m_items) {
-        if (item.userId == userId) {
+        if (item.active && item.userId == userId) {
             item.fading = true;
             item.fadeRemainingMs = 300;
         }
@@ -228,10 +230,15 @@ void DanmakuController::resetForSeek() {
         m_dragVisualElapsedMs = 0;
         emit dragVisualElapsedMsChanged();
     }
-    if (!m_items.isEmpty()) {
-        m_items.clear();
-        m_itemModel.clear();
+    QVector<int> activeRows;
+    activeRows.reserve(m_items.size());
+    for (int i = 0; i < m_items.size(); ++i) {
+        if (m_items[i].active) {
+            activeRows.push_back(i);
+        }
     }
+    releaseRowsDescending(activeRows);
+    maybeCompactRows();
     updateNgZoneVisibility();
 }
 
@@ -286,7 +293,7 @@ void DanmakuController::onFrame() {
         emit dragVisualElapsedMsChanged();
     }
 
-    if (m_items.isEmpty()) {
+    if (activeItemCount() == 0) {
         maybeWritePerfLog(now);
         return;
     }
@@ -298,6 +305,10 @@ void DanmakuController::onFrame() {
 
     for (int i = 0; i < m_items.size(); ++i) {
         Item &item = m_items[i];
+        if (!item.active) {
+            continue;
+        }
+
         bool geometryChanged = false;
         if (!m_playbackPaused && !item.frozen) {
             item.x -= (item.speedPxPerSec * m_playbackRate) * elapsedSec;
@@ -327,29 +338,24 @@ void DanmakuController::onFrame() {
             ++frameGeometryUpdates;
         }
 
-        if (!dragging && (item.alpha <= 0.0 || item.x + item.widthEstimate < kItemCullThreshold)) {
+        const bool outOfHorizontalBounds = item.x + item.widthEstimate < kItemCullThreshold;
+        const bool outOfVerticalBounds = item.y > m_viewportHeight || item.y + kItemHeight < 0.0;
+        const bool canCull = !item.dragging && (item.alpha <= 0.0 || outOfHorizontalBounds || outOfVerticalBounds);
+        if (canCull) {
             removeRows.push_back(i);
         }
     }
 
-    if (removeRows.isEmpty()) {
-        if (m_perfLogEnabled) {
-            m_perfLogGeometryUpdateCount += frameGeometryUpdates;
-            maybeWritePerfLog(now);
-        }
-        return;
-    }
-
-    std::sort(removeRows.begin(), removeRows.end(), std::greater<int>());
-    removeRows.erase(std::unique(removeRows.begin(), removeRows.end()), removeRows.end());
-    for (const int row : removeRows) {
-        m_items.removeAt(row);
-    }
-    m_itemModel.removeRowsDescending(removeRows);
     if (m_perfLogEnabled) {
         m_perfLogGeometryUpdateCount += frameGeometryUpdates;
-        m_perfLogRemovedCount += removeRows.size();
     }
+    if (!removeRows.isEmpty()) {
+        releaseRowsDescending(removeRows);
+        if (m_perfLogEnabled) {
+            m_perfLogRemovedCount += removeRows.size();
+        }
+    }
+    maybeCompactRows();
     maybeWritePerfLog(now);
 }
 
@@ -369,7 +375,7 @@ int DanmakuController::pickLane(int widthEstimate) const {
     for (int lane = 0; lane < lanes; ++lane) {
         qreal tail = -1e9;
         for (const Item &item : m_items) {
-            if (item.lane != lane || item.dragging) {
+            if (!item.active || item.lane != lane || item.dragging) {
                 continue;
             }
             tail = std::max(tail, item.x + item.widthEstimate + 20.0);
@@ -387,7 +393,7 @@ int DanmakuController::pickLane(int widthEstimate) const {
 
 bool DanmakuController::laneHasCollision(int lane, const Item &candidate) const {
     for (const Item &item : m_items) {
-        if (item.commentId == candidate.commentId || item.lane != lane) {
+        if (!item.active || item.commentId == candidate.commentId || item.lane != lane) {
             continue;
         }
         const qreal left = candidate.x;
@@ -436,16 +442,109 @@ void DanmakuController::recoverToLane(Item &item) {
 
 int DanmakuController::findItemIndex(const QString &commentId) const {
     for (int i = 0; i < m_items.size(); ++i) {
-        if (m_items[i].commentId == commentId) {
+        if (m_items[i].active && m_items[i].commentId == commentId) {
             return i;
         }
     }
     return -1;
 }
 
+int DanmakuController::acquireRow() {
+    if (!m_freeRows.isEmpty()) {
+        const int row = m_freeRows.back();
+        m_freeRows.pop_back();
+        return row;
+    }
+
+    const int row = m_items.size();
+    m_items.push_back(Item{});
+    return row;
+}
+
+void DanmakuController::releaseRow(int row) {
+    if (row < 0 || row >= m_items.size()) {
+        return;
+    }
+
+    Item &item = m_items[row];
+    if (!item.active) {
+        return;
+    }
+
+    item.active = false;
+    item.frozen = false;
+    item.dragging = false;
+    item.fading = false;
+    item.ngDropHovered = false;
+    item.fadeRemainingMs = 0;
+    item.alpha = 1.0;
+    item.commentId.clear();
+    item.userId.clear();
+    item.text.clear();
+
+    m_itemModel.setDragState(row, false);
+    m_itemModel.setNgDropHovered(row, false);
+    m_itemModel.setActive(row, false);
+    m_freeRows.push_back(row);
+}
+
+void DanmakuController::releaseRowsDescending(const QVector<int> &rowsDescending) {
+    if (rowsDescending.isEmpty()) {
+        return;
+    }
+
+    QVector<int> rows = rowsDescending;
+    std::sort(rows.begin(), rows.end(), std::greater<int>());
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    for (const int row : rows) {
+        releaseRow(row);
+    }
+}
+
+void DanmakuController::maybeCompactRows() {
+    if (hasDragging()) {
+        return;
+    }
+
+    const int totalRows = m_items.size();
+    const int freeRows = m_freeRows.size();
+    if (totalRows == 0 || freeRows <= kFreeRowsSoftLimit) {
+        return;
+    }
+
+    const double freeRatio = totalRows > 0 ? (static_cast<double>(freeRows) / totalRows) : 0.0;
+    if (freeRatio < kCompactTriggerRatio) {
+        return;
+    }
+
+    QVector<Item> compactItems;
+    compactItems.reserve(totalRows - freeRows);
+    QVector<DanmakuListModel::Row> compactRows;
+    compactRows.reserve(totalRows - freeRows);
+
+    for (const Item &item : m_items) {
+        if (!item.active) {
+            continue;
+        }
+        compactItems.push_back(item);
+        compactRows.push_back(makeRow(item));
+    }
+
+    m_items = std::move(compactItems);
+    m_itemModel.resetRows(compactRows);
+    m_freeRows.clear();
+    m_perfCompactedSinceLastLog = true;
+}
+
+int DanmakuController::activeItemCount() const {
+    const int total = m_items.size();
+    const int free = m_freeRows.size();
+    return std::max(0, total - free);
+}
+
 bool DanmakuController::hasDragging() const {
     for (const Item &item : m_items) {
-        if (item.dragging) {
+        if (item.active && item.dragging) {
             return true;
         }
     }
@@ -455,7 +554,7 @@ bool DanmakuController::hasDragging() const {
 void DanmakuController::updateNgZoneVisibility() {
     bool visible = false;
     for (const Item &item : m_items) {
-        if (item.dragging) {
+        if (item.active && item.dragging) {
             visible = true;
             break;
         }
@@ -468,6 +567,9 @@ void DanmakuController::updateNgZoneVisibility() {
 }
 
 bool DanmakuController::isItemInNgZone(const Item &item) const {
+    if (!item.active) {
+        return false;
+    }
     if (m_ngZoneWidth <= 0 || m_ngZoneHeight <= 0) {
         return false;
     }
@@ -490,6 +592,23 @@ bool DanmakuController::isItemInNgZone(const Item &item) const {
     const qreal centerX = itemLeft + item.widthEstimate / 2.0;
     const qreal centerY = itemTop + (kItemHeight / 2.0);
     return centerX >= zoneLeft && centerX <= zoneRight && centerY >= zoneTop && centerY <= zoneBottom;
+}
+
+DanmakuListModel::Row DanmakuController::makeRow(const Item &item) const {
+    DanmakuListModel::Row row;
+    row.commentId = item.commentId;
+    row.userId = item.userId;
+    row.text = item.text;
+    row.posX = item.x;
+    row.posY = item.y;
+    row.alpha = item.alpha;
+    row.lane = item.lane;
+    row.dragging = item.dragging;
+    row.widthEstimate = item.widthEstimate;
+    row.speedPxPerSec = item.speedPxPerSec;
+    row.ngDropHovered = item.ngDropHovered;
+    row.active = item.active;
+    return row;
 }
 
 void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
@@ -528,8 +647,11 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
     const double p99Ms = percentileMs(99.0);
     const double maxMs = sampleCount > 0 ? sortedSamples.last() : 0.0;
     const double fps = elapsedMs > 0 ? (m_perfLogFrameCount * 1000.0 / elapsedMs) : 0.0;
+    const int rowsTotal = m_items.size();
+    const int rowsFree = m_freeRows.size();
+    const int rowsActive = activeItemCount();
     qInfo().noquote()
-        << QString("[perf-danmaku] window_ms=%1 frame_count=%2 fps=%3 avg_ms=%4 p50_ms=%5 p95_ms=%6 p99_ms=%7 max_ms=%8 active=%9 appended=%10 updates=%11 removed=%12 dragging=%13 paused=%14 rate=%15")
+        << QString("[perf-danmaku] window_ms=%1 frame_count=%2 fps=%3 avg_ms=%4 p50_ms=%5 p95_ms=%6 p99_ms=%7 max_ms=%8 rows_total=%9 rows_active=%10 rows_free=%11 compacted=%12 appended=%13 updates=%14 removed=%15 dragging=%16 paused=%17 rate=%18")
                .arg(elapsedMs)
                .arg(m_perfLogFrameCount)
                .arg(fps, 0, 'f', 1)
@@ -538,7 +660,10 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
                .arg(p95Ms, 0, 'f', 2)
                .arg(p99Ms, 0, 'f', 2)
                .arg(maxMs, 0, 'f', 2)
-               .arg(m_items.size())
+               .arg(rowsTotal)
+               .arg(rowsActive)
+               .arg(rowsFree)
+               .arg(m_perfCompactedSinceLastLog ? 1 : 0)
                .arg(m_perfLogAppendCount)
                .arg(m_perfLogGeometryUpdateCount)
                .arg(m_perfLogRemovedCount)
@@ -552,4 +677,5 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
     m_perfLogAppendCount = 0;
     m_perfLogGeometryUpdateCount = 0;
     m_perfLogRemovedCount = 0;
+    m_perfCompactedSinceLastLog = false;
 }
