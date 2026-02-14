@@ -6,6 +6,7 @@ Item {
     id: root
     property var controller
     property bool sceneDragging: false
+    clip: true
 
     function syncNgZoneRect() {
         if (!root.controller) {

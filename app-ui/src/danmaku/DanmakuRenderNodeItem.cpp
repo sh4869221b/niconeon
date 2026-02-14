@@ -8,6 +8,7 @@
 #include <QOpenGLBuffer>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
+#include <QOpenGLPixelTransferOptions>
 #include <QOpenGLShader>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
@@ -18,6 +19,7 @@
 #include <QSGNode>
 #include <QSGRenderNode>
 #include <QSize>
+#include <QDebug>
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
@@ -172,41 +174,69 @@ private:
         }
 
         if (!m_program) {
-            m_program = new QOpenGLShaderProgram();
-            static const char *kVertexShader = R"(
-                #ifdef GL_ES
-                precision mediump float;
-                #endif
-                attribute vec2 a_position;
-                attribute vec2 a_uv;
-                uniform mat4 u_matrix;
-                varying vec2 v_uv;
-                void main() {
-                    v_uv = a_uv;
-                    gl_Position = u_matrix * vec4(a_position, 0.0, 1.0);
-                }
-            )";
-            static const char *kFragmentShader = R"(
-                #ifdef GL_ES
-                precision mediump float;
-                #endif
-                varying vec2 v_uv;
-                uniform sampler2D u_texture;
-                void main() {
-                    gl_FragColor = texture2D(u_texture, v_uv);
-                }
-            )";
+            const bool isGles = ctx->isOpenGLES();
+            const char *vertexSource = isGles
+                ? R"(
+                    precision mediump float;
+                    attribute vec2 a_position;
+                    attribute vec2 a_uv;
+                    uniform mat4 u_matrix;
+                    varying vec2 v_uv;
+                    void main() {
+                        v_uv = a_uv;
+                        gl_Position = u_matrix * vec4(a_position, 0.0, 1.0);
+                    }
+                )"
+                : R"(
+                    #version 150
+                    in vec2 a_position;
+                    in vec2 a_uv;
+                    uniform mat4 u_matrix;
+                    out vec2 v_uv;
+                    void main() {
+                        v_uv = a_uv;
+                        gl_Position = u_matrix * vec4(a_position, 0.0, 1.0);
+                    }
+                )";
 
-            if (!m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShader)
-                || !m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, kFragmentShader)) {
-                delete m_program;
-                m_program = nullptr;
+            const char *fragmentSource = isGles
+                ? R"(
+                    precision mediump float;
+                    varying vec2 v_uv;
+                    uniform sampler2D u_texture;
+                    void main() {
+                        gl_FragColor = texture2D(u_texture, v_uv);
+                    }
+                )"
+                : R"(
+                    #version 150
+                    in vec2 v_uv;
+                    uniform sampler2D u_texture;
+                    out vec4 fragColor;
+                    void main() {
+                        fragColor = texture(u_texture, v_uv);
+                    }
+                )";
+
+            QOpenGLShaderProgram *program = new QOpenGLShaderProgram();
+            if (!program->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexSource)
+                || !program->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentSource)) {
+                delete program;
+                qWarning().noquote() << "danmaku rendernode shader compile failed backend=" << (isGles ? "gles" : "glcore");
                 return false;
             }
 
-            m_program->bindAttributeLocation("a_position", 0);
-            m_program->bindAttributeLocation("a_uv", 1);
-            if (!m_program->link()) {
+            program->bindAttributeLocation("a_position", 0);
+            program->bindAttributeLocation("a_uv", 1);
+            if (!program->link()) {
+                delete program;
+                qWarning().noquote() << "danmaku rendernode shader link failed backend=" << (isGles ? "gles" : "glcore");
+                return false;
+            }
+
+            m_program = program;
+            if (!m_program) {
+                qWarning().noquote() << "danmaku rendernode shader setup failed backend=" << (isGles ? "gles" : "glcore");
                 delete m_program;
                 m_program = nullptr;
                 return false;
@@ -242,7 +272,32 @@ private:
             m_texture->setMagnificationFilter(QOpenGLTexture::Linear);
         }
 
-        m_texture->setData(m_image, QOpenGLTexture::DontGenerateMipMaps);
+        if (!m_texture->isCreated()) {
+            if (!m_texture->create()) {
+                qWarning() << "danmaku rendernode failed to create texture";
+                return false;
+            }
+        }
+
+        if (m_texture->width() != m_image.width() || m_texture->height() != m_image.height() || !m_textureStorageReady) {
+            // Recreate storage only when size changes. Qt warns if setSize/setFormat are called on allocated storage.
+            m_texture->destroy();
+            if (!m_texture->create()) {
+                qWarning() << "danmaku rendernode failed to recreate texture";
+                return false;
+            }
+            m_texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+            m_texture->setSize(m_image.width(), m_image.height());
+            m_texture->setMipLevels(1);
+            m_texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+            m_textureStorageReady = true;
+        }
+
+        const QImage &glImage = m_image;
+        QOpenGLPixelTransferOptions options;
+        options.setAlignment(1);
+        options.setRowLength(glImage.bytesPerLine() / 4);
+        m_texture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, glImage.constBits(), &options);
         m_textureDirty = false;
         return true;
     }
@@ -257,6 +312,7 @@ private:
 
         const float width = static_cast<float>(m_itemSize.width());
         const float height = static_cast<float>(m_itemSize.height());
+        // Keep canonical UVs. Qt Quick's render path already accounts for texture origin.
         const Vertex vertices[4] = {
             {0.0f, 0.0f, 0.0f, 0.0f},
             {width, 0.0f, 1.0f, 0.0f},
@@ -276,6 +332,7 @@ private:
         if (m_texture) {
             delete m_texture;
             m_texture = nullptr;
+            m_textureStorageReady = false;
         }
         if (m_program) {
             delete m_program;
@@ -294,6 +351,7 @@ private:
 
     QOpenGLShaderProgram *m_program = nullptr;
     QOpenGLTexture *m_texture = nullptr;
+    bool m_textureStorageReady = false;
     QOpenGLBuffer m_vbo;
 
     int m_positionLoc = -1;

@@ -567,6 +567,7 @@ ApplicationWindow {
             Layout.leftMargin: 8
             Layout.rightMargin: 8
             Layout.bottomMargin: 8
+            clip: true
 
             Rectangle {
                 anchors.fill: parent
