@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMetaType>
+#include <QSharedPointer>
 #include <QVector>
 #include <QtGlobal>
 
@@ -42,12 +43,23 @@ struct DanmakuSoAState {
         flags.reserve(count);
     }
 
+    void resize(int count) {
+        rows.resize(count);
+        x.resize(count);
+        y.resize(count);
+        speed.resize(count);
+        alpha.resize(count);
+        widthEstimate.resize(count);
+        fadeRemainingMs.resize(count);
+        flags.resize(count);
+    }
+
     int size() const {
         return rows.size();
     }
 };
 
-struct DanmakuFrameInput {
+struct DanmakuWorkerFrame {
     qint64 seq = 0;
     bool playbackPaused = false;
     qreal playbackRate = 1.0;
@@ -56,6 +68,10 @@ struct DanmakuFrameInput {
     qreal cullThreshold = 0;
     qreal itemHeight = 0;
     DanmakuSoAState state;
+    QVector<int> changedRows;
+    QVector<int> removeRows;
 };
 
-Q_DECLARE_METATYPE(DanmakuFrameInput)
+using DanmakuWorkerFramePtr = QSharedPointer<DanmakuWorkerFrame>;
+
+Q_DECLARE_METATYPE(DanmakuWorkerFramePtr)

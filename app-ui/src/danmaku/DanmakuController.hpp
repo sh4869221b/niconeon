@@ -134,16 +134,7 @@ private:
     void rebuildRenderSnapshot();
     void buildSoAState(DanmakuSoAState &state) const;
     void scheduleWorkerFrame(int elapsedMs, qint64 nowMs);
-    void handleWorkerFrame(
-        qint64 seq,
-        const QVector<int> &rows,
-        const QVector<qreal> &x,
-        const QVector<qreal> &y,
-        const QVector<qreal> &alpha,
-        const QVector<int> &fadeRemainingMs,
-        const QVector<quint8> &flags,
-        const QVector<int> &changedRows,
-        const QVector<int> &removeRows);
+    void handleWorkerFrame(DanmakuWorkerFramePtr frame);
     void invalidateWorkerGeneration();
     void updateFrameTimerInterval();
     bool beginDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
@@ -203,6 +194,7 @@ private:
     bool m_workerBusy = false;
     qint64 m_workerSeq = 0;
     int m_workerAccumulatedElapsedMs = 0;
+    DanmakuWorkerFramePtr m_workerReusableFrame;
     DanmakuUpdateWorker *m_updateWorker = nullptr;
     QThread m_updateThread;
     QString m_simdModeName = QStringLiteral("auto");

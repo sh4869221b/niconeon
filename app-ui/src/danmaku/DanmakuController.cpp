@@ -61,7 +61,7 @@ bool isTrackableGlyphCodepoint(char32_t codepoint) {
 }
 
 DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
-    qRegisterMetaType<DanmakuFrameInput>("DanmakuFrameInput");
+    qRegisterMetaType<DanmakuWorkerFramePtr>("DanmakuWorkerFramePtr");
 
     m_lastTickMs = QDateTime::currentMSecsSinceEpoch();
     m_perfLogWindowStartMs = m_lastTickMs;
@@ -86,18 +86,7 @@ DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
             m_updateWorker,
             &DanmakuUpdateWorker::frameProcessed,
             this,
-            [this](
-                qint64 seq,
-                const QVector<int> &rows,
-                const QVector<qreal> &x,
-                const QVector<qreal> &y,
-                const QVector<qreal> &alpha,
-                const QVector<int> &fadeRemainingMs,
-                const QVector<quint8> &flags,
-                const QVector<int> &changedRows,
-                const QVector<int> &removeRows) {
-                handleWorkerFrame(seq, rows, x, y, alpha, fadeRemainingMs, flags, changedRows, removeRows);
-            },
+            &DanmakuController::handleWorkerFrame,
             Qt::QueuedConnection);
         m_updateThread.start();
     }
@@ -1043,8 +1032,9 @@ void DanmakuController::clearGlyphWarmupText() {
 }
 
 void DanmakuController::buildSoAState(DanmakuSoAState &state) const {
-    state.clear();
-    state.reserve(activeItemCount());
+    const int count = activeItemCount();
+    state.resize(count);
+    int index = 0;
     for (int row = 0; row < m_items.size(); ++row) {
         const Item &item = m_items[row];
         if (!item.active) {
@@ -1061,15 +1051,17 @@ void DanmakuController::buildSoAState(DanmakuSoAState &state) const {
             flags |= DanmakuSoAFlagFading;
         }
 
-        state.rows.push_back(row);
-        state.x.push_back(item.x);
-        state.y.push_back(item.y);
-        state.speed.push_back(item.speedPxPerSec);
-        state.alpha.push_back(item.alpha);
-        state.widthEstimate.push_back(item.widthEstimate);
-        state.fadeRemainingMs.push_back(item.fadeRemainingMs);
-        state.flags.push_back(flags);
+        state.rows[index] = row;
+        state.x[index] = item.x;
+        state.y[index] = item.y;
+        state.speed[index] = item.speedPxPerSec;
+        state.alpha[index] = item.alpha;
+        state.widthEstimate[index] = item.widthEstimate;
+        state.fadeRemainingMs[index] = item.fadeRemainingMs;
+        state.flags[index] = flags;
+        ++index;
     }
+    Q_ASSERT(index == count);
 }
 
 void DanmakuController::scheduleWorkerFrame(int elapsedMs, qint64 nowMs) {
@@ -1079,50 +1071,71 @@ void DanmakuController::scheduleWorkerFrame(int elapsedMs, qint64 nowMs) {
         return;
     }
 
-    DanmakuFrameInput frameInput;
-    buildSoAState(frameInput.state);
-    if (frameInput.state.size() <= 0) {
+    DanmakuWorkerFramePtr frameInput = m_workerReusableFrame;
+    if (!frameInput) {
+        frameInput = DanmakuWorkerFramePtr::create();
+    } else {
+        m_workerReusableFrame.clear();
+    }
+
+    buildSoAState(frameInput->state);
+    frameInput->changedRows.clear();
+    frameInput->removeRows.clear();
+    if (frameInput->state.size() <= 0) {
+        m_workerReusableFrame = std::move(frameInput);
         return;
     }
 
     m_workerBusy = true;
-    frameInput.seq = ++m_workerSeq;
-    frameInput.playbackPaused = m_playbackPaused;
-    frameInput.playbackRate = static_cast<qreal>(m_playbackRate);
-    frameInput.elapsedMs = elapsedMs;
-    frameInput.viewportHeight = m_viewportHeight;
-    frameInput.cullThreshold = kItemCullThreshold;
-    frameInput.itemHeight = kItemHeight;
+    frameInput->seq = ++m_workerSeq;
+    frameInput->playbackPaused = m_playbackPaused;
+    frameInput->playbackRate = static_cast<qreal>(m_playbackRate);
+    frameInput->elapsedMs = elapsedMs;
+    frameInput->viewportHeight = m_viewportHeight;
+    frameInput->cullThreshold = kItemCullThreshold;
+    frameInput->itemHeight = kItemHeight;
     const bool enqueued = QMetaObject::invokeMethod(
         m_updateWorker,
         "processFrame",
         Qt::QueuedConnection,
-        Q_ARG(DanmakuFrameInput, frameInput));
+        Q_ARG(DanmakuWorkerFramePtr, frameInput));
     if (!enqueued) {
         m_workerBusy = false;
+        m_workerReusableFrame = std::move(frameInput);
     }
 }
 
-void DanmakuController::handleWorkerFrame(
-    qint64 seq,
-    const QVector<int> &rows,
-    const QVector<qreal> &x,
-    const QVector<qreal> &y,
-    const QVector<qreal> &alpha,
-    const QVector<int> &fadeRemainingMs,
-    const QVector<quint8> &flags,
-    const QVector<int> &changedRows,
-    const QVector<int> &removeRows) {
+void DanmakuController::handleWorkerFrame(DanmakuWorkerFramePtr frame) {
     m_workerBusy = false;
-    if (seq != m_workerSeq) {
+    if (!frame) {
         return;
     }
 
+    auto reclaimFrame = [this](DanmakuWorkerFramePtr &processedFrame) {
+        m_workerReusableFrame = std::move(processedFrame);
+    };
+
+    if (frame->seq != m_workerSeq) {
+        reclaimFrame(frame);
+        return;
+    }
+
+    const QVector<int> &rows = frame->state.rows;
+    const QVector<qreal> &x = frame->state.x;
+    const QVector<qreal> &y = frame->state.y;
+    const QVector<qreal> &alpha = frame->state.alpha;
+    const QVector<int> &fadeRemainingMs = frame->state.fadeRemainingMs;
+    const QVector<quint8> &flags = frame->state.flags;
+    const QVector<int> &changedRows = frame->changedRows;
+    const QVector<int> &removeRows = frame->removeRows;
+
     const int count = rows.size();
     if (count <= 0) {
+        reclaimFrame(frame);
         return;
     }
     if (x.size() != count || y.size() != count || alpha.size() != count || fadeRemainingMs.size() != count || flags.size() != count) {
+        reclaimFrame(frame);
         return;
     }
 
@@ -1179,6 +1192,8 @@ void DanmakuController::handleWorkerFrame(
         rebuildRenderSnapshot();
         emit renderSnapshotChanged();
     }
+
+    reclaimFrame(frame);
 }
 
 void DanmakuController::invalidateWorkerGeneration() {

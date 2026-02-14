@@ -225,6 +225,17 @@ NICONEON_SYNTHETIC_USER_SPAN=200
   - worker `on` 既定で機能回帰がないこと
   - `off` で即時フォールバック可能であること
 
+## Issue #24 Comparison Focus
+
+- 同一動画・同一区間で、#24 前後の `worker=on` を比較する。
+- 比較対象:
+  - `[perf-danmaku]` の `avg_ms` / `p95_ms` / `p99_ms`
+  - `[perf-danmaku]` の `updates`（同等条件で比較）
+  - `[perf-ui]` の `tick_backlog`
+- 回帰確認:
+  - `NICONEON_DANMAKU_WORKER=off` / `NICONEON_SIMD_MODE=scalar|avx2` で表示破綻や操作回帰がないこと
+  - 連続シーク・連続ドラッグ時にクラッシュ（double free/use-after-free）がないこと
+
 ## Expected Log Prefixes
 
 - `[perf-ui] ...`

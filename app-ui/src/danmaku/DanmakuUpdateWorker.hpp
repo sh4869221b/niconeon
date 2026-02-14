@@ -16,20 +16,13 @@ public:
     void setSimdMode(DanmakuSimdMode mode);
 
 public slots:
-    void processFrame(DanmakuFrameInput input);
+    void processFrame(DanmakuWorkerFramePtr frame);
 
 signals:
-    void frameProcessed(
-        qint64 seq,
-        QVector<int> rows,
-        QVector<qreal> x,
-        QVector<qreal> y,
-        QVector<qreal> alpha,
-        QVector<int> fadeRemainingMs,
-        QVector<quint8> flags,
-        QVector<int> changedRows,
-        QVector<int> removeRows);
+    void frameProcessed(DanmakuWorkerFramePtr frame);
 
 private:
+    QVector<quint8> m_movableMask;
+    QVector<quint8> m_changedMask;
     DanmakuSimdMode m_simdMode = DanmakuSimdMode::Scalar;
 };
