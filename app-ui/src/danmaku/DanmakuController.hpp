@@ -3,6 +3,9 @@
 #include "danmaku/DanmakuListModel.hpp"
 
 #include <QObject>
+#include <QQueue>
+#include <QSet>
+#include <QString>
 #include <QTimer>
 #include <QVariantList>
 #include <QVector>
@@ -14,6 +17,8 @@ class DanmakuController : public QObject {
     Q_PROPERTY(bool playbackPaused READ playbackPaused NOTIFY playbackPausedChanged)
     Q_PROPERTY(double playbackRate READ playbackRate NOTIFY playbackRateChanged)
     Q_PROPERTY(bool perfLogEnabled READ perfLogEnabled WRITE setPerfLogEnabled NOTIFY perfLogEnabledChanged)
+    Q_PROPERTY(bool glyphWarmupEnabled READ glyphWarmupEnabled WRITE setGlyphWarmupEnabled NOTIFY glyphWarmupEnabledChanged)
+    Q_PROPERTY(QString glyphWarmupText READ glyphWarmupText NOTIFY glyphWarmupTextChanged)
 
 public:
     explicit DanmakuController(QObject *parent = nullptr);
@@ -23,8 +28,10 @@ public:
     Q_INVOKABLE void setPlaybackPaused(bool paused);
     Q_INVOKABLE void setPlaybackRate(double rate);
     Q_INVOKABLE void setPerfLogEnabled(bool enabled);
+    Q_INVOKABLE void setGlyphWarmupEnabled(bool enabled);
     Q_INVOKABLE void appendFromCore(const QVariantList &comments, qint64 playbackPositionMs);
     Q_INVOKABLE void resetForSeek();
+    Q_INVOKABLE void resetGlyphSession();
 
     Q_INVOKABLE void beginDrag(const QString &commentId);
     Q_INVOKABLE void moveDrag(const QString &commentId, qreal x, qreal y);
@@ -39,12 +46,16 @@ public:
     bool playbackPaused() const;
     double playbackRate() const;
     bool perfLogEnabled() const;
+    bool glyphWarmupEnabled() const;
+    QString glyphWarmupText() const;
 
 signals:
     void ngDropZoneVisibleChanged();
     void playbackPausedChanged();
     void playbackRateChanged();
     void perfLogEnabledChanged();
+    void glyphWarmupEnabledChanged();
+    void glyphWarmupTextChanged();
     void ngDropRequested(const QString &userId);
 
 private:
@@ -89,6 +100,11 @@ private:
     bool hasDragging() const;
     void updateNgZoneVisibility();
     bool isItemInNgZone(const Item &item) const;
+    void observeGlyphText(const QString &text);
+    void queueGlyphCodepoint(char32_t codepoint);
+    void queueGlyphSeedCharacters();
+    void dispatchGlyphWarmupIfDue(qint64 nowMs);
+    void clearGlyphWarmupText();
     void maybeWritePerfLog(qint64 nowMs);
     DanmakuListModel::Row makeRow(const Item &item) const;
 
@@ -123,6 +139,18 @@ private:
     qint64 m_perfLaneWaitTotalMs = 0;
     qint64 m_perfLaneWaitMaxMs = 0;
     bool m_perfCompactedSinceLastLog = false;
+    bool m_glyphWarmupEnabled = true;
+    QString m_glyphWarmupText;
+    QSet<char32_t> m_seenGlyphCodepoints;
+    QSet<char32_t> m_warmedGlyphCodepoints;
+    QSet<char32_t> m_queuedGlyphCodepoints;
+    QQueue<char32_t> m_glyphWarmupQueue;
+    qint64 m_lastGlyphWarmupDispatchMs = 0;
+    int m_perfGlyphNewCodepoints = 0;
+    int m_perfGlyphNewNonAsciiCodepoints = 0;
+    int m_perfGlyphWarmupSentCodepoints = 0;
+    int m_perfGlyphWarmupBatchCount = 0;
+    int m_perfGlyphWarmupDroppedCodepoints = 0;
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;

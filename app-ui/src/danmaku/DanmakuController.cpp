@@ -16,6 +16,38 @@ constexpr qint64 kMaxLagCompensationMs = 2000;
 constexpr qreal kLaneSpawnGapPx = 20.0;
 constexpr int kFreeRowsSoftLimit = 512;
 constexpr double kCompactTriggerRatio = 0.5;
+constexpr qint64 kGlyphWarmupIntervalMs = 80;
+constexpr int kGlyphWarmupBatchChars = 24;
+constexpr int kGlyphWarmupQueueMax = 2048;
+constexpr const char *kGlyphWarmupSeed =
+    "0123456789"
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "!?#$%&*+-=/:;.,_()[]{}<>|~^'\"`\\"
+    "あいうえおかきくけこさしすせそたちつてとなにぬねの"
+    "はひふへほまみむめもやゆよらりるれろわをん"
+    "アイウエオカキクケコサシスセソタチツテトナニヌネノ"
+    "ハヒフヘホマミムメモヤユヨラリルレロワヲン"
+    "。、！？「」『』（）【】・ー";
+
+bool isTrackableGlyphCodepoint(char32_t codepoint) {
+    if (codepoint == U'\0') {
+        return false;
+    }
+    if (codepoint > 0x10FFFF) {
+        return false;
+    }
+    if (codepoint < 0x20 || (codepoint >= 0x7F && codepoint <= 0x9F)) {
+        return false;
+    }
+    if (codepoint == U' ' || codepoint == 0x3000) {
+        return false;
+    }
+    if (codepoint >= 0xD800 && codepoint <= 0xDFFF) {
+        return false;
+    }
+    return true;
+}
 }
 
 DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
@@ -26,6 +58,7 @@ DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
     m_frameTimer.start();
     ensureLaneStateSize();
     resetLaneStates();
+    resetGlyphSession();
 }
 
 void DanmakuController::setViewportSize(qreal width, qreal height) {
@@ -75,7 +108,35 @@ void DanmakuController::setPerfLogEnabled(bool enabled) {
     m_perfLaneWaitTotalMs = 0;
     m_perfLaneWaitMaxMs = 0;
     m_perfCompactedSinceLastLog = false;
+    m_perfGlyphNewCodepoints = 0;
+    m_perfGlyphNewNonAsciiCodepoints = 0;
+    m_perfGlyphWarmupSentCodepoints = 0;
+    m_perfGlyphWarmupBatchCount = 0;
+    m_perfGlyphWarmupDroppedCodepoints = 0;
     emit perfLogEnabledChanged();
+}
+
+void DanmakuController::setGlyphWarmupEnabled(bool enabled) {
+    if (m_glyphWarmupEnabled == enabled) {
+        return;
+    }
+
+    m_glyphWarmupEnabled = enabled;
+    emit glyphWarmupEnabledChanged();
+
+    m_glyphWarmupQueue.clear();
+    m_queuedGlyphCodepoints.clear();
+    m_lastGlyphWarmupDispatchMs = 0;
+
+    if (!m_glyphWarmupEnabled) {
+        clearGlyphWarmupText();
+        return;
+    }
+
+    queueGlyphSeedCharacters();
+    for (const char32_t codepoint : m_seenGlyphCodepoints) {
+        queueGlyphCodepoint(codepoint);
+    }
 }
 
 void DanmakuController::appendFromCore(const QVariantList &comments, qint64 playbackPositionMs) {
@@ -90,6 +151,7 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
         if (item.commentId.isEmpty()) {
             continue;
         }
+        observeGlyphText(item.text);
 
         const qint64 atMs = map.value("at_ms").toLongLong();
         const int textWidthEstimate = static_cast<int>(item.text.size()) * (m_fontPx / 2 + 4);
@@ -246,6 +308,18 @@ void DanmakuController::resetForSeek() {
     updateNgZoneVisibility();
 }
 
+void DanmakuController::resetGlyphSession() {
+    m_seenGlyphCodepoints.clear();
+    m_warmedGlyphCodepoints.clear();
+    m_queuedGlyphCodepoints.clear();
+    m_glyphWarmupQueue.clear();
+    m_lastGlyphWarmupDispatchMs = 0;
+    clearGlyphWarmupText();
+    if (m_glyphWarmupEnabled) {
+        queueGlyphSeedCharacters();
+    }
+}
+
 QObject *DanmakuController::itemModel() {
     return &m_itemModel;
 }
@@ -266,6 +340,14 @@ bool DanmakuController::perfLogEnabled() const {
     return m_perfLogEnabled;
 }
 
+bool DanmakuController::glyphWarmupEnabled() const {
+    return m_glyphWarmupEnabled;
+}
+
+QString DanmakuController::glyphWarmupText() const {
+    return m_glyphWarmupText;
+}
+
 void DanmakuController::onFrame() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const int elapsedMs = static_cast<int>(now - m_lastTickMs);
@@ -278,6 +360,7 @@ void DanmakuController::onFrame() {
         ++m_perfLogFrameCount;
         m_perfFrameSamplesMs.push_back(elapsedMs);
     }
+    dispatchGlyphWarmupIfDue(now);
 
     if (activeItemCount() == 0) {
         maybeWritePerfLog(now);
@@ -643,6 +726,110 @@ bool DanmakuController::isItemInNgZone(const Item &item) const {
     return centerX >= zoneLeft && centerX <= zoneRight && centerY >= zoneTop && centerY <= zoneBottom;
 }
 
+void DanmakuController::observeGlyphText(const QString &text) {
+    if (text.isEmpty()) {
+        return;
+    }
+
+    const QVector<uint> codepoints = text.toUcs4();
+    for (const uint value : codepoints) {
+        const char32_t codepoint = static_cast<char32_t>(value);
+        if (!isTrackableGlyphCodepoint(codepoint)) {
+            continue;
+        }
+
+        if (m_seenGlyphCodepoints.contains(codepoint)) {
+            continue;
+        }
+        m_seenGlyphCodepoints.insert(codepoint);
+
+        ++m_perfGlyphNewCodepoints;
+        if (codepoint > 0x7F) {
+            ++m_perfGlyphNewNonAsciiCodepoints;
+        }
+        queueGlyphCodepoint(codepoint);
+    }
+}
+
+void DanmakuController::queueGlyphCodepoint(char32_t codepoint) {
+    if (!m_glyphWarmupEnabled) {
+        return;
+    }
+    if (!isTrackableGlyphCodepoint(codepoint)) {
+        return;
+    }
+    if (m_warmedGlyphCodepoints.contains(codepoint) || m_queuedGlyphCodepoints.contains(codepoint)) {
+        return;
+    }
+    if (m_glyphWarmupQueue.size() >= kGlyphWarmupQueueMax) {
+        ++m_perfGlyphWarmupDroppedCodepoints;
+        return;
+    }
+
+    m_glyphWarmupQueue.enqueue(codepoint);
+    m_queuedGlyphCodepoints.insert(codepoint);
+}
+
+void DanmakuController::queueGlyphSeedCharacters() {
+    const QString seed = QString::fromUtf8(kGlyphWarmupSeed);
+    const QVector<uint> codepoints = seed.toUcs4();
+    for (const uint value : codepoints) {
+        queueGlyphCodepoint(static_cast<char32_t>(value));
+    }
+}
+
+void DanmakuController::dispatchGlyphWarmupIfDue(qint64 nowMs) {
+    if (!m_glyphWarmupEnabled) {
+        return;
+    }
+    if (m_lastGlyphWarmupDispatchMs > 0 && nowMs - m_lastGlyphWarmupDispatchMs < kGlyphWarmupIntervalMs) {
+        return;
+    }
+    if (m_glyphWarmupQueue.isEmpty()) {
+        clearGlyphWarmupText();
+        return;
+    }
+
+    QString batch;
+    batch.reserve(kGlyphWarmupBatchChars * 2);
+
+    int sent = 0;
+    while (sent < kGlyphWarmupBatchChars && !m_glyphWarmupQueue.isEmpty()) {
+        const char32_t codepoint = m_glyphWarmupQueue.dequeue();
+        m_queuedGlyphCodepoints.remove(codepoint);
+        if (m_warmedGlyphCodepoints.contains(codepoint)) {
+            continue;
+        }
+
+        const char32_t raw[] = {codepoint};
+        batch.append(QString::fromUcs4(raw, 1));
+        m_warmedGlyphCodepoints.insert(codepoint);
+        ++sent;
+    }
+
+    if (sent <= 0) {
+        clearGlyphWarmupText();
+        return;
+    }
+
+    m_lastGlyphWarmupDispatchMs = nowMs;
+    m_perfGlyphWarmupSentCodepoints += sent;
+    ++m_perfGlyphWarmupBatchCount;
+
+    if (m_glyphWarmupText != batch) {
+        m_glyphWarmupText = std::move(batch);
+        emit glyphWarmupTextChanged();
+    }
+}
+
+void DanmakuController::clearGlyphWarmupText() {
+    if (m_glyphWarmupText.isEmpty()) {
+        return;
+    }
+    m_glyphWarmupText.clear();
+    emit glyphWarmupTextChanged();
+}
+
 DanmakuListModel::Row DanmakuController::makeRow(const Item &item) const {
     DanmakuListModel::Row row;
     row.commentId = item.commentId;
@@ -727,6 +914,18 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
                .arg(hasDragging() ? 1 : 0)
                .arg(m_playbackPaused ? 1 : 0)
                .arg(m_playbackRate, 0, 'f', 2);
+    qInfo().noquote()
+        << QString("[perf-glyph] window_ms=%1 new_cp_total=%2 new_cp_non_ascii=%3 warmup_sent_cp=%4 warmup_batches=%5 warmup_pending_cp=%6 warmup_dropped_cp=%7 warmup_enabled=%8 p95_ms=%9 p99_ms=%10")
+               .arg(elapsedMs)
+               .arg(m_perfGlyphNewCodepoints)
+               .arg(m_perfGlyphNewNonAsciiCodepoints)
+               .arg(m_perfGlyphWarmupSentCodepoints)
+               .arg(m_perfGlyphWarmupBatchCount)
+               .arg(m_glyphWarmupQueue.size())
+               .arg(m_perfGlyphWarmupDroppedCodepoints)
+               .arg(m_glyphWarmupEnabled ? 1 : 0)
+               .arg(p95Ms, 0, 'f', 2)
+               .arg(p99Ms, 0, 'f', 2);
 
     m_perfLogWindowStartMs = nowMs;
     m_perfLogFrameCount = 0;
@@ -740,4 +939,9 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
     m_perfLaneWaitTotalMs = 0;
     m_perfLaneWaitMaxMs = 0;
     m_perfCompactedSinceLastLog = false;
+    m_perfGlyphNewCodepoints = 0;
+    m_perfGlyphNewNonAsciiCodepoints = 0;
+    m_perfGlyphWarmupSentCodepoints = 0;
+    m_perfGlyphWarmupBatchCount = 0;
+    m_perfGlyphWarmupDroppedCodepoints = 0;
 }

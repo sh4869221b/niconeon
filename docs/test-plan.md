@@ -35,4 +35,8 @@
 - `QSG_RENDERER_DEBUG=render` および `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` のプロファイルでログ取得できる。
 - #7 回帰確認として、同一動画・同一区間で `fps` / `p95_ms` / `p99_ms` が悪化しない（目安: 5%以内）ことを確認する。
 - #7 回帰確認として、Qt Creator QML Profiler で `DanmakuItem` の per-frame hot path（Binding/JS）が増加していないことを確認する。
+- `Glyph warmup ON/OFF` を切り替えて、再起動後も設定が維持されることを確認する。
+- `Glyph warmup ON` 時に `[perf-glyph]` ログが2秒ごとに出力され、`warmup_sent_cp` / `warmup_batches` / `warmup_pending_cp` を含むことを確認する。
+- `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` と併用時に、`[perf-glyph]` のスパイク窓と glyph ログを突合できることを確認する。
+- `Glyph warmup ON/OFF` 比較で `p95_ms` / `p99_ms` が悪化しないこと、かつ文字化け・欠落がないことを確認する。
 - About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。

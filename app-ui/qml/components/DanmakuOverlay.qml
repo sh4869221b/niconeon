@@ -16,6 +16,21 @@ Item {
     onControllerChanged: syncNgZoneRect()
     Component.onCompleted: syncNgZoneRect()
 
+    Text {
+        id: glyphWarmupText
+        visible: root.controller ? root.controller.glyphWarmupEnabled : false
+        text: root.controller ? root.controller.glyphWarmupText : ""
+        anchors.left: parent.left
+        anchors.top: parent.top
+        width: 1
+        height: 1
+        clip: true
+        color: "white"
+        opacity: 0.01
+        font.pixelSize: 24
+        z: -1
+    }
+
     Repeater {
         model: root.controller ? root.controller.itemModel : null
         delegate: DanmakuItem {

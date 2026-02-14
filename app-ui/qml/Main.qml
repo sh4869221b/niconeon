@@ -33,6 +33,7 @@ ApplicationWindow {
     property int pendingSeekTargetMs: 0
     property bool commentsVisible: true
     property bool perfLogEnabled: false
+    property bool glyphWarmupEnabled: true
     property int perfTickSentCount: 0
     property int perfTickResultCount: 0
 
@@ -48,6 +49,7 @@ ApplicationWindow {
         category: "ui"
         property bool commentsVisible: true
         property bool perfLogEnabled: false
+        property bool glyphWarmupEnabled: true
     }
 
     function extractVideoId(path) {
@@ -244,6 +246,21 @@ ApplicationWindow {
 
         if (notify) {
             showToast(next ? "計測ログを有効化しました" : "計測ログを無効化しました")
+        }
+    }
+
+    function applyGlyphWarmupEnabled(enabled, notify) {
+        const next = !!enabled
+        if (root.glyphWarmupEnabled === next) {
+            return
+        }
+
+        root.glyphWarmupEnabled = next
+        uiSettings.glyphWarmupEnabled = next
+        danmakuController.setGlyphWarmupEnabled(next)
+
+        if (notify) {
+            showToast(next ? "Glyph warmup を有効化しました" : "Glyph warmup を無効化しました")
         }
     }
 
@@ -466,6 +483,11 @@ ApplicationWindow {
             }
 
             AppButton {
+                text: root.glyphWarmupEnabled ? "Glyph warmup ON" : "Glyph warmup OFF"
+                onClicked: root.applyGlyphWarmupEnabled(!root.glyphWarmupEnabled, true)
+            }
+
+            AppButton {
                 text: "フィルタ"
                 onClicked: {
                     coreClient.listFilters()
@@ -587,6 +609,7 @@ ApplicationWindow {
             if (method === "open_video") {
                 root.sessionId = result.session_id
                 root.pendingSeek = false
+                danmakuController.resetGlyphSession()
                 showToast("コメント取得: " + result.comment_source + " / " + result.total_comments + "件")
             } else if (method === "playback_tick") {
                 root.perfTickResultCount += 1
@@ -647,12 +670,14 @@ ApplicationWindow {
         loadSpeedSettings()
         root.commentsVisible = uiSettings.commentsVisible
         root.perfLogEnabled = uiSettings.perfLogEnabled
+        root.glyphWarmupEnabled = uiSettings.glyphWarmupEnabled
         coreClient.startDefault()
         danmakuController.setViewportSize(playerArea.width, playerArea.height)
         danmakuController.setLaneMetrics(36, 6)
         danmakuController.setPlaybackPaused(mpv.paused)
         danmakuController.setPlaybackRate(mpv.speed)
         danmakuController.setPerfLogEnabled(root.perfLogEnabled)
+        danmakuController.setGlyphWarmupEnabled(root.glyphWarmupEnabled)
         if (!root.commentsVisible) {
             danmakuController.resetForSeek()
         }
