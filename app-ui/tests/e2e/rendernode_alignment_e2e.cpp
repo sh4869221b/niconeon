@@ -84,8 +84,6 @@ const char *graphicsApiName(QSGRendererInterface::GraphicsApi api) {
         return "Metal";
     case QSGRendererInterface::Null:
         return "Null";
-    case QSGRendererInterface::Direct3D12:
-        return "Direct3D12";
     }
 
     return "Unrecognized";
