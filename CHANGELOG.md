@@ -2,6 +2,15 @@
 
 _Generated from git commit subjects (merge commits excluded)._
 
+## v0.0.16 (2026-02-15)
+
+_Range: `v0.0.15..v0.0.16`_
+
+- feat(ui): incremental danmaku spatial updates
+- fix(ui): prevent danmaku text clipping
+- fix(ui): make theme dark-mode-safe across Windows controls
+- chore(release): auto-update repository changelog on tag release
+
 ## v0.0.15 (2026-02-15)
 
 _Range: `v0.0.14..v0.0.15`_
