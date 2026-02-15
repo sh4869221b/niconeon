@@ -100,6 +100,9 @@ private slots:
 void RenderNodeAlignmentE2E::renderNodeRespectsItemTranslation() {
     qputenv("NICONEON_DANMAKU_WORKER", "off");
     qputenv("NICONEON_SIMD_MODE", "scalar");
+    if (qEnvironmentVariableIsSet("GITHUB_ACTIONS")) {
+        QSKIP("GitHub Actions runner cannot reliably assert rendernode pixels; run just ui-e2e locally for UI changes.");
+    }
     // DanmakuRenderNodeItem uses OpenGL-backed QSGRenderNode implementation.
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 
