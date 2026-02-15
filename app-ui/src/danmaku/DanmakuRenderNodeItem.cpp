@@ -147,8 +147,14 @@ public:
             glDisable(GL_SCISSOR_TEST);
         }
 
+        QMatrix4x4 mvp = *projection;
+        const QMatrix4x4 *model = matrix();
+        if (model) {
+            mvp *= *model;
+        }
+
         m_program->bind();
-        m_program->setUniformValue(m_matrixLoc, *projection);
+        m_program->setUniformValue(m_matrixLoc, mvp);
         m_program->setUniformValue(m_textureLoc, 0);
 
         m_texture->bind(0);
