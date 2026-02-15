@@ -17,6 +17,8 @@
 
 - `rendernode_alignment_e2e`: `DanmakuRenderNodeItem` をオフセット付きコンテナに配置して描画し、弾幕ピクセルがコンテナ内に出ることを検証する（座標変換漏れ回帰の検知）。
 - 実行コマンド: `just ui-e2e`
+- 画面修正（`app-ui/qml` や `app-ui/src/danmaku`）を含む変更では、CI結果に関わらずローカルで `just ui-e2e` を実行して結果を確認する。
+- CI上で OpenGL scenegraph backend を確保できない環境では、このテストは `SKIP` になる（ローカル実行を正とする）。
 
 ## UI Manual Tests
 

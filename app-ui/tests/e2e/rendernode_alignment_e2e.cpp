@@ -56,6 +56,40 @@ ForegroundBounds detectForeground(const QImage &image, const QRect &rect, const 
     }
     return bounds;
 }
+
+QRect toDeviceRect(const QRect &logicalRect, qreal devicePixelRatio) {
+    const qreal dpr = std::max(devicePixelRatio, 1.0);
+    return QRect(
+        static_cast<int>(std::lround(logicalRect.x() * dpr)),
+        static_cast<int>(std::lround(logicalRect.y() * dpr)),
+        static_cast<int>(std::lround(logicalRect.width() * dpr)),
+        static_cast<int>(std::lround(logicalRect.height() * dpr)));
+}
+
+const char *graphicsApiName(QSGRendererInterface::GraphicsApi api) {
+    switch (api) {
+    case QSGRendererInterface::Unknown:
+        return "Unknown";
+    case QSGRendererInterface::Software:
+        return "Software";
+    case QSGRendererInterface::OpenVG:
+        return "OpenVG";
+    case QSGRendererInterface::OpenGL:
+        return "OpenGL";
+    case QSGRendererInterface::Direct3D11:
+        return "Direct3D11";
+    case QSGRendererInterface::Vulkan:
+        return "Vulkan";
+    case QSGRendererInterface::Metal:
+        return "Metal";
+    case QSGRendererInterface::Null:
+        return "Null";
+    case QSGRendererInterface::Direct3D12:
+        return "Direct3D12";
+    }
+
+    return "Unrecognized";
+}
 } // namespace
 
 class RenderNodeAlignmentE2E : public QObject {
@@ -127,6 +161,11 @@ Item {
     root.release();
     window.show();
     QVERIFY2(QTest::qWaitForWindowExposed(&window), "failed to expose test window");
+    const QSGRendererInterface::GraphicsApi graphicsApi = window.rendererInterface()->graphicsApi();
+    if (graphicsApi != QSGRendererInterface::OpenGL) {
+        QSKIP(qPrintable(QStringLiteral("OpenGL scenegraph backend is required for this test (actual: %1)")
+                             .arg(QString::fromLatin1(graphicsApiName(graphicsApi)))));
+    }
 
     auto *controller = rootItem->findChild<DanmakuController *>(QStringLiteral("controller"));
     auto *container = rootItem->findChild<QQuickItem *>(QStringLiteral("container"));
@@ -156,21 +195,26 @@ Item {
     const QColor background(QStringLiteral("#33AA77"));
 
     ForegroundBounds bounds;
+    qreal detectedDevicePixelRatio = 1.0;
     for (int attempt = 0; attempt < 60; ++attempt) {
         QTest::qWait(25);
+        window.requestUpdate();
         const QImage frame = window.grabWindow();
         if (frame.isNull()) {
             continue;
         }
 
-        bounds = detectForeground(frame, containerRect, background);
+        detectedDevicePixelRatio = std::max(frame.devicePixelRatio(), 1.0);
+        const QRect deviceContainerRect = toDeviceRect(containerRect, detectedDevicePixelRatio);
+        bounds = detectForeground(frame, deviceContainerRect, background);
         if (bounds.pixelCount >= kForegroundPixelMin) {
             break;
         }
     }
 
     QVERIFY2(bounds.pixelCount >= kForegroundPixelMin, "danmaku pixels were not rendered inside the viewport");
-    QVERIFY2(bounds.minY >= containerRect.top() + 6, "danmaku was rendered without item Y translation");
+    const qreal minYInLogical = bounds.minY / detectedDevicePixelRatio;
+    QVERIFY2(minYInLogical >= containerRect.top() + 6, "danmaku was rendered without item Y translation");
 }
 
 QTEST_MAIN(RenderNodeAlignmentE2E)
