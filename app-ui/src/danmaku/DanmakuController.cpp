@@ -1,9 +1,12 @@
 #include "danmaku/DanmakuController.hpp"
 
+#include "danmaku/DanmakuRenderStyle.hpp"
 #include "danmaku/DanmakuSimdUpdater.hpp"
 #include "danmaku/DanmakuUpdateWorker.hpp"
 
 #include <QDateTime>
+#include <QFont>
+#include <QFontMetrics>
 #include <QMetaType>
 #include <QMutexLocker>
 #include <QPointF>
@@ -17,7 +20,7 @@
 namespace {
 constexpr qreal kLaneTopMargin = 10.0;
 constexpr qreal kSpawnOffset = 12.0;
-constexpr qreal kItemHeight = 42.0;
+constexpr qreal kItemHeight = static_cast<qreal>(DanmakuRenderStyle::kItemHeightPx);
 constexpr qreal kItemCullThreshold = -20.0;
 constexpr qint64 kMaxLagCompensationMs = 2000;
 constexpr qreal kLaneSpawnGapPx = 20.0;
@@ -213,6 +216,9 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
     invalidateWorkerGeneration();
     ensureLaneStateSize();
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    QFont textFont;
+    textFont.setPixelSize(DanmakuRenderStyle::kTextPixelSize);
+    QFontMetrics textMetrics(textFont);
     QVector<int> appendedRows;
     appendedRows.reserve(comments.size());
     bool appendedAny = false;
@@ -228,8 +234,9 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
         observeGlyphText(item.text);
 
         const qint64 atMs = map.value("at_ms").toLongLong();
-        const int textWidthEstimate = static_cast<int>(item.text.size()) * (m_fontPx / 2 + 4);
-        item.widthEstimate = std::max(80, textWidthEstimate);
+        const int textWidth = textMetrics.horizontalAdvance(item.text);
+        const int paddedWidth = textWidth + DanmakuRenderStyle::kHorizontalPaddingPx * 2;
+        item.widthEstimate = std::max(DanmakuRenderStyle::kMinWidthPx, paddedWidth);
         item.speedPxPerSec = 120 + (qHash(item.commentId) % 70);
         item.active = true;
 

@@ -16,10 +16,12 @@
 ## UI Unit Tests (Automated)
 
 - `spatial_grid_incremental_test`: `DanmakuSpatialGrid` の `upsert/remove` 差分更新が `rebuild` と同等の検索結果になることを検証する。
+- `danmaku_text_width_test`: 全角文字/日本語文字列を含むコメントで `widthEstimate` が `QFontMetrics` 実測幅 + 左右余白以上になることを検証する。
 - 実行コマンド例:
   - `cd app-ui && cmake -S . -B build-test -DBUILD_TESTING=ON`
   - `cd app-ui && cmake --build build-test -j`
   - `cd app-ui && ctest --test-dir build-test --output-on-failure -R spatial_grid_incremental_test`
+  - `cd app-ui && ctest --test-dir build-test --output-on-failure -R danmaku_text_width_test`
 
 ## UI E2E Tests (Automated)
 

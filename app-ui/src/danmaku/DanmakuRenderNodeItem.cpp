@@ -1,6 +1,7 @@
 #include "danmaku/DanmakuRenderNodeItem.hpp"
 
 #include "danmaku/DanmakuController.hpp"
+#include "danmaku/DanmakuRenderStyle.hpp"
 
 #include <QColor>
 #include <QFont>
@@ -27,8 +28,6 @@
 #include <cstddef>
 
 namespace {
-constexpr int kItemHeightPx = 42;
-constexpr int kTextPixelSize = 24;
 constexpr int kDenseRenderThreshold = 80;
 constexpr int kUltraDenseRenderThreshold = 140;
 
@@ -51,7 +50,7 @@ QImage renderSnapshotImage(
     painter.setRenderHint(QPainter::TextAntialiasing, !ultraDense);
 
     QFont font;
-    font.setPixelSize(kTextPixelSize);
+    font.setPixelSize(DanmakuRenderStyle::kTextPixelSize);
     painter.setFont(font);
 
     const QColor fillColor(QStringLiteral("#88000000"));
@@ -65,7 +64,11 @@ QImage renderSnapshotImage(
         }
 
         painter.setOpacity(std::clamp(item.alpha, 0.0, 1.0));
-        const QRectF rect(item.x, item.y, item.widthEstimate, kItemHeightPx);
+        const QRectF rect(
+            item.x,
+            item.y,
+            item.widthEstimate,
+            static_cast<qreal>(DanmakuRenderStyle::kItemHeightPx));
         const bool drawBody = !ultraDense || item.ngDropHovered;
         if (drawBody) {
             painter.setBrush(fillColor);
@@ -78,7 +81,8 @@ QImage renderSnapshotImage(
         }
 
         painter.setPen(textColor);
-        const QRectF textRect = rect.adjusted(8.0, 0.0, -8.0, 0.0);
+        const qreal textPadding = static_cast<qreal>(DanmakuRenderStyle::kHorizontalPaddingPx);
+        const QRectF textRect = rect.adjusted(textPadding, 0.0, -textPadding, 0.0);
         painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignHCenter, item.text);
     }
 

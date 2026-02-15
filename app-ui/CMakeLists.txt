@@ -99,6 +99,26 @@ if(BUILD_TESTING)
   )
 
   add_test(NAME spatial_grid_incremental_test COMMAND niconeon-ui-unit)
+
+  qt_add_executable(niconeon-ui-unit-danmaku-text-width
+    tests/unit/danmaku_text_width_test.cpp
+    src/danmaku/DanmakuController.cpp
+    src/danmaku/DanmakuSimdUpdater.cpp
+    src/danmaku/DanmakuUpdateWorker.cpp
+    src/danmaku/DanmakuSpatialGrid.cpp
+  )
+
+  target_include_directories(niconeon-ui-unit-danmaku-text-width PRIVATE
+    src
+  )
+
+  target_link_libraries(niconeon-ui-unit-danmaku-text-width PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+  )
+
+  add_test(NAME danmaku_text_width_test COMMAND niconeon-ui-unit-danmaku-text-width)
 endif()
 
 if(BUILD_TESTING AND NICONEON_BUILD_UI_E2E)
