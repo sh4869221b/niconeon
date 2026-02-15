@@ -102,6 +102,9 @@ GitHub Actions で以下を実行します。
 - `niconeon-X.Y.Z-windows-x86_64-binaries.zip`
 - `niconeon-X.Y.Z-sha256sums.txt`
 
+GitHub Release 本文には、前回 `v*` タグから今回タグまでのコミットメッセージ（merge commit 除外）を自動で追加し、続けて GitHub 自動生成のリリースノートを併記します。
+全バージョン履歴はリポジトリ直下の `CHANGELOG.md` に配置し、タグリリース時にワークフローが自動更新して `main`（既定ブランチ）へ反映します。
+
 手動実行（`workflow_dispatch`）時は GitHub Release は作成せず、同名成果物を workflow artifact として保存します。
 
 ## 制約

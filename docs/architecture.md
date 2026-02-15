@@ -62,4 +62,6 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
     - Linux AppImage (with wrapper setting `NICONEON_CORE_BIN`).
     - Windows binaries zip (Qt runtime + `libmpv` and its dependent MinGW DLLs bundled).
     - `LICENSE`, `COPYING`, `SOURCE_CODE.md`, and `THIRD_PARTY_NOTICES.txt` bundled in distributable binaries.
+  - Repository:
+    - Full changelog markdown (`CHANGELOG.md`, generated from commit subjects and auto-updated on tag releases).
   - Publishes GitHub Release assets on tag builds and writes `sha256` checksums.
