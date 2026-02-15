@@ -105,6 +105,7 @@ jobs:
             qt6-base-dev-tools \
             qt6-declarative-dev \
             qt6-declarative-dev-tools \
+            qml6-module-qtqml-workerscript \
             xvfb
 
       - name: Configure UI E2E (Linux)
