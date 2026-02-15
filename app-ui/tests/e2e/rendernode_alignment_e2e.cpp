@@ -8,6 +8,7 @@
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QTest>
 #include <QVariantList>
 
@@ -67,6 +68,8 @@ private slots:
 void RenderNodeAlignmentE2E::renderNodeRespectsItemTranslation() {
     qputenv("NICONEON_DANMAKU_WORKER", "off");
     qputenv("NICONEON_SIMD_MODE", "scalar");
+    // DanmakuRenderNodeItem uses OpenGL-backed QSGRenderNode implementation.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 
     qmlRegisterType<DanmakuController>("Niconeon", 1, 0, "DanmakuController");
     qmlRegisterType<DanmakuRenderNodeItem>("Niconeon", 1, 0, "DanmakuRenderNodeItem");
