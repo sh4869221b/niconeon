@@ -15,6 +15,10 @@ qt_standard_project_setup(REQUIRES 6.4)
 include(CTest)
 option(NICONEON_BUILD_UI_E2E "Build Niconeon UI end-to-end tests" OFF)
 
+set_source_files_properties(qml/theme/AppTheme.qml PROPERTIES
+  QT_QML_SINGLETON_TYPE TRUE
+)
+
 # Opt in to newer QML CMake policies when supported by the installed Qt.
 if(DEFINED QT_KNOWN_POLICY_QTP0001)
   qt_policy(SET QTP0001 NEW)
@@ -51,7 +55,12 @@ qt_add_qml_module(niconeon-ui
   VERSION 1.0
   QML_FILES
     qml/Main.qml
+    qml/theme/AppTheme.qml
     qml/components/AppButton.qml
+    qml/components/AppDialog.qml
+    qml/components/AppTabButton.qml
+    qml/components/AppTextArea.qml
+    qml/components/AppTextField.qml
     qml/components/DanmakuOverlay.qml
     qml/components/NgDropZone.qml
     qml/components/Toast.qml

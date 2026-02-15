@@ -12,15 +12,15 @@ ApplicationWindow {
     visible: true
     title: "Niconeon"
     palette {
-        window: "#1F2430"
-        windowText: "#F3F6FF"
-        base: "#141B28"
-        text: "#F3F6FF"
-        button: "#2E3950"
-        buttonText: "#F3F6FF"
-        placeholderText: "#9AA6BF"
-        highlight: "#5A7FCF"
-        highlightedText: "#FFFFFF"
+        window: AppTheme.window
+        windowText: AppTheme.windowText
+        base: AppTheme.base
+        text: AppTheme.text
+        button: AppTheme.button
+        buttonText: AppTheme.buttonText
+        placeholderText: AppTheme.placeholderText
+        highlight: AppTheme.highlight
+        highlightedText: AppTheme.highlightedText
     }
 
     property string selectedVideoPath: ""
@@ -629,7 +629,7 @@ ApplicationWindow {
                 text: "ファイル"
             }
 
-            TextField {
+            AppTextField {
                 id: pathInput
                 Layout.fillWidth: true
                 placeholderText: "ファイル名に sm/nm/so ID を含めてください"

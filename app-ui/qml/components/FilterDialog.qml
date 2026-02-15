@@ -2,29 +2,12 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Dialog {
+AppDialog {
     id: root
     modal: true
     title: "フィルタ設定"
     width: 560
     height: 460
-    palette {
-        window: "#1F2430"
-        windowText: "#F3F6FF"
-        base: "#141B28"
-        text: "#F3F6FF"
-        button: "#2E3950"
-        buttonText: "#F3F6FF"
-        placeholderText: "#9AA6BF"
-        highlight: "#5A7FCF"
-        highlightedText: "#FFFFFF"
-    }
-    background: Rectangle {
-        radius: 10
-        color: "#1F2430"
-        border.color: "#3F4D67"
-        border.width: 1
-    }
 
     property var regexFilters: []
     property var ngUsers: []
@@ -70,7 +53,7 @@ Dialog {
             Layout.fillWidth: true
             spacing: 8
 
-            TextField {
+            AppTextField {
                 id: regexInput
                 Layout.fillWidth: true
                 placeholderText: "例: (草|www)+"

@@ -106,15 +106,15 @@ void RenderNodeAlignmentE2E::renderNodeRespectsItemTranslation() {
     // DanmakuRenderNodeItem uses OpenGL-backed QSGRenderNode implementation.
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 
-    qmlRegisterType<DanmakuController>("Niconeon", 1, 0, "DanmakuController");
-    qmlRegisterType<DanmakuRenderNodeItem>("Niconeon", 1, 0, "DanmakuRenderNodeItem");
+    qmlRegisterType<DanmakuController>("NiconeonTest", 1, 0, "DanmakuController");
+    qmlRegisterType<DanmakuRenderNodeItem>("NiconeonTest", 1, 0, "DanmakuRenderNodeItem");
 
     QQmlEngine engine;
     QQmlComponent component(&engine);
     component.setData(
         R"(
 import QtQuick
-import Niconeon 1.0
+import NiconeonTest 1.0
 
 Item {
     id: root

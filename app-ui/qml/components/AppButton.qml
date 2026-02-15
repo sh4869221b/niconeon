@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import Niconeon
 
 Button {
     id: control
@@ -14,17 +15,17 @@ Button {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
-        color: control.enabled ? "#F3F6FF" : "#9AA6BF"
+        color: control.enabled ? AppTheme.buttonText : AppTheme.buttonTextDisabled
     }
 
     background: Rectangle {
         radius: 8
         border.width: control.activeFocus ? 2 : 1
-        border.color: control.activeFocus ? "#9CB9FF" : "#5A6A8A"
+        border.color: control.activeFocus ? AppTheme.buttonFocusBorder : AppTheme.buttonBorder
         color: !control.enabled
-            ? "#2A2F3A"
+            ? AppTheme.buttonDisabledBackground
             : (control.down
-                ? "#3B4A67"
-                : (control.hovered ? "#34415C" : "#2E3950"))
+                ? AppTheme.buttonPressedBackground
+                : (control.hovered ? AppTheme.buttonHoverBackground : AppTheme.buttonDefaultBackground))
     }
 }

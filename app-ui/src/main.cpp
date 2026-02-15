@@ -16,6 +16,9 @@
 int main(int argc, char *argv[]) {
     // libmpv requires C numeric locale.
     setlocale(LC_NUMERIC, "C");
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
+        qputenv("QT_QUICK_CONTROLS_STYLE", "Fusion");
+    }
 
     QGuiApplication app(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("sh4869221b"));

@@ -59,6 +59,9 @@
 - `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` と併用時に、`[perf-glyph]` のスパイク窓と glyph ログを突合できることを確認する。
 - Glyph warmup 常時ON時に `p95_ms` / `p99_ms` の著しい悪化がないこと、かつ文字化け・欠落がないことを確認する。
 - About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。
+- Windows で OS が `Dark` のとき、About の本文（`TextArea`）/タブ/入力欄が可読であることを確認する。
+- Windows で OS が `Light` のときも同様に可読であることを確認する。
+- Windows で起動中に OS の Light/Dark を切り替えても、About/Filter/Speed 設定の文字色・背景色が追従してコントラストを維持することを確認する。
 - 既定の `QSGRenderNode` バックエンドで、コメント表示・ドラッグ・NGドロップ・Undo が機能する。
 - 高密度区間でドラッグ開始時のヒットテストが安定し、意図しないコメント選択が増えない。
 - `NICONEON_DANMAKU_WORKER=on`（既定）で再生・シーク・ドラッグ・NG の回帰がない。

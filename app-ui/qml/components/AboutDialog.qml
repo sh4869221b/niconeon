@@ -3,29 +3,12 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Niconeon
 
-Dialog {
+AppDialog {
     id: root
     modal: true
     title: "About / ライセンス"
     width: 760
     height: 560
-    palette {
-        window: "#1F2430"
-        windowText: "#F3F6FF"
-        base: "#141B28"
-        text: "#F3F6FF"
-        button: "#2E3950"
-        buttonText: "#F3F6FF"
-        placeholderText: "#9AA6BF"
-        highlight: "#5A7FCF"
-        highlightedText: "#FFFFFF"
-    }
-    background: Rectangle {
-        radius: 10
-        color: "#1F2430"
-        border.color: "#3F4D67"
-        border.width: 1
-    }
 
     property string appLicenseText: ""
     property string distributionLicenseText: ""
@@ -77,9 +60,9 @@ Dialog {
             id: tabs
             Layout.fillWidth: true
 
-            TabButton { text: "MIT License" }
-            TabButton { text: "Distribution (GPLv3+)" }
-            TabButton { text: "Third-Party Notices" }
+            AppTabButton { text: "MIT License" }
+            AppTabButton { text: "Distribution (GPLv3+)" }
+            AppTabButton { text: "Third-Party Notices" }
         }
 
         StackLayout {
@@ -90,9 +73,8 @@ Dialog {
             ScrollView {
                 clip: true
 
-                TextArea {
+                AppTextArea {
                     readOnly: true
-                    wrapMode: TextArea.WrapAnywhere
                     text: root.appLicenseText
                 }
             }
@@ -100,9 +82,8 @@ Dialog {
             ScrollView {
                 clip: true
 
-                TextArea {
+                AppTextArea {
                     readOnly: true
-                    wrapMode: TextArea.WrapAnywhere
                     text: root.distributionLicenseText
                 }
             }
@@ -110,9 +91,8 @@ Dialog {
             ScrollView {
                 clip: true
 
-                TextArea {
+                AppTextArea {
                     readOnly: true
-                    wrapMode: TextArea.WrapAnywhere
                     text: root.thirdPartyNoticesText
                 }
             }

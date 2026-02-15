@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Niconeon
 
 Rectangle {
     id: root
@@ -11,8 +12,8 @@ Rectangle {
     width: Math.min(parent ? parent.width - 40 : 600, 600)
     height: actionText === "" ? 52 : 60
     radius: 10
-    color: "#E0212430"
-    border.color: "#66FFFFFF"
+    color: AppTheme.toastBackground
+    border.color: AppTheme.toastBorder
 
     RowLayout {
         anchors.fill: parent
@@ -22,7 +23,7 @@ Rectangle {
         Label {
             Layout.fillWidth: true
             text: root.message
-            color: "white"
+            color: AppTheme.toastText
             wrapMode: Text.Wrap
         }
 
