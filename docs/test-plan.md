@@ -13,6 +13,14 @@
 - cache read/write roundtrip.
 - open_video returns `network` when fetched, `cache` on fallback, `none` on no data.
 
+## UI Unit Tests (Automated)
+
+- `spatial_grid_incremental_test`: `DanmakuSpatialGrid` の `upsert/remove` 差分更新が `rebuild` と同等の検索結果になることを検証する。
+- 実行コマンド例:
+  - `cd app-ui && cmake -S . -B build-test -DBUILD_TESTING=ON`
+  - `cd app-ui && cmake --build build-test -j`
+  - `cd app-ui && ctest --test-dir build-test --output-on-failure -R spatial_grid_incremental_test`
+
 ## UI E2E Tests (Automated)
 
 - `rendernode_alignment_e2e`: `DanmakuRenderNodeItem` をオフセット付きコンテナに配置して描画し、弾幕ピクセルがコンテナ内に出ることを検証する（座標変換漏れ回帰の検知）。
@@ -38,6 +46,7 @@
 - 1件ドラッグ中でも、他弾幕は通常どおり移動し、画面外弾幕は継続して除去される。
 - `[perf-danmaku]` に `rows_total`/`rows_active`/`rows_free`/`compacted` が出力される。
 - `[perf-danmaku]` に `lane_pick_count`/`lane_ready_count`/`lane_forced_count`/`lane_wait_ms_avg`/`lane_wait_ms_max` が出力される。
+- `[perf-danmaku]` に `spatial_full_rebuilds`/`spatial_row_updates`/`snapshot_full_rebuilds`/`snapshot_row_updates` が出力される。
 - 高密度再生で `rows_free` が増えたあと、条件を満たすと `compacted=1` が出力される。
 - 高密度再生で `lane_forced_count` が増えても、シーク後の再同期とドロップ復帰（同一レーン優先）が壊れない。
 - `QSG_RENDERER_DEBUG=render` および `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` のプロファイルでログ取得できる。
@@ -54,6 +63,7 @@
 - `NICONEON_DANMAKU_WORKER=off` へ切替後も同等機能が成立し、クラッシュしない。
 - `NICONEON_SIMD_MODE=auto/scalar/avx2` で起動し、`[danmaku-simd]` ログが期待モードを示す。
 - `NICONEON_SIMD_MODE=avx2` と `scalar` で表示破綻（位置飛び/消去漏れ）がない。
+- `just perf-dummy` で #21 前後を比較し、通常再生中は `spatial_full_rebuilds=0` / `snapshot_full_rebuilds=0`（シーク/compactionを除く）を満たす。
 - `just perf-dummy` で #24 前後を比較し、`updates` 同等条件で `avg_ms` または `p95_ms` が悪化していない。
 - 連続シーク（10回以上）+ 連続ドラッグ（10回以上）を行っても、worker有効時にクラッシュしない。
 - Runtime profile を `high` / `balanced` / `low_spec` に切り替えて、`set_runtime_profile` 応答と挙動（emit cap/coalesce）が一致する。

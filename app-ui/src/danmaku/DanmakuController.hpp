@@ -116,7 +116,7 @@ private:
     int acquireRow();
     void releaseRow(int row);
     void releaseRowsDescending(const QVector<int> &rowsDescending);
-    void maybeCompactRows();
+    bool maybeCompactRows();
     int activeItemCount() const;
     bool hasDragging() const;
     void updateNgZoneVisibility();
@@ -128,10 +128,24 @@ private:
     void clearGlyphWarmupText();
     void maybeWritePerfLog(qint64 nowMs);
     void runFrameSingleThread(int elapsedMs, qint64 nowMs);
-    void markSpatialDirty();
     void rebuildSpatialIndex();
-    void ensureSpatialIndex();
     void rebuildRenderSnapshot();
+    RenderItem buildRenderItem(const Item &item) const;
+    void queueSpatialUpsertRow(int row);
+    void queueSpatialUpsertRows(const QVector<int> &rows);
+    void queueSpatialRemoveRow(int row);
+    void queueSpatialRemoveRows(const QVector<int> &rows);
+    void queueSnapshotUpsertRow(int row);
+    void queueSnapshotUpsertRows(const QVector<int> &rows);
+    void queueSnapshotRemoveRow(int row);
+    void queueSnapshotRemoveRows(const QVector<int> &rows);
+    void queueFullSpatialRebuild();
+    void queueFullSnapshotRebuild();
+    bool applySnapshotRowUpsert(int row);
+    bool applySnapshotRowRemoval(int row);
+    void ensureRowToRenderIndexSize();
+    void publishRenderSnapshot();
+    void flushPendingDiffs(bool emitSnapshotSignal);
     void buildSoAState(DanmakuSoAState &state) const;
     void scheduleWorkerFrame(int elapsedMs, qint64 nowMs);
     void handleWorkerFrame(DanmakuWorkerFramePtr frame);
@@ -144,7 +158,12 @@ private:
     QVector<LaneState> m_laneStates;
     QVector<int> m_freeRows;
     DanmakuSpatialGrid m_spatialGrid;
-    bool m_spatialDirty = true;
+    QSet<int> m_pendingSpatialUpsertRows;
+    QSet<int> m_pendingSpatialRemoveRows;
+    QSet<int> m_pendingSnapshotUpsertRows;
+    QSet<int> m_pendingSnapshotRemoveRows;
+    bool m_pendingFullSpatialRebuild = true;
+    bool m_pendingFullSnapshotRebuild = true;
 
     qreal m_viewportWidth = 1280;
     qreal m_viewportHeight = 720;
@@ -189,6 +208,9 @@ private:
     qreal m_activeDragOffsetX = 0;
     qreal m_activeDragOffsetY = 0;
     mutable QMutex m_renderSnapshotMutex;
+    QVector<RenderItem> m_renderCache;
+    QVector<int> m_renderRows;
+    QVector<int> m_rowToRenderIndex;
     QSharedPointer<const QVector<RenderItem>> m_renderSnapshot;
     bool m_workerEnabled = true;
     bool m_workerBusy = false;
@@ -201,4 +223,8 @@ private:
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;
+    int m_perfSpatialFullRebuildCount = 0;
+    int m_perfSpatialRowUpdateCount = 0;
+    int m_perfSnapshotFullRebuildCount = 0;
+    int m_perfSnapshotRowUpdateCount = 0;
 };

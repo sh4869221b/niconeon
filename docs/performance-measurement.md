@@ -225,6 +225,19 @@ NICONEON_SYNTHETIC_USER_SPAN=200
   - worker `on` 既定で機能回帰がないこと
   - `off` で即時フォールバック可能であること
 
+## Issue #21 Comparison Focus
+
+- 同一動画・同一区間で、#21 前後の `worker=on` を比較する。
+- 比較対象:
+  - `[perf-danmaku]` の `avg_ms` / `p95_ms` / `p99_ms`
+  - `[perf-danmaku]` の `spatial_full_rebuilds` / `spatial_row_updates`
+  - `[perf-danmaku]` の `snapshot_full_rebuilds` / `snapshot_row_updates`
+  - `[perf-ui]` の `tick_backlog`
+- 受け入れ判定:
+  - 通常再生中は `spatial_full_rebuilds=0` かつ `snapshot_full_rebuilds=0`（シーク/compaction区間を除く）
+  - `updates` 同等条件で `avg_ms` または `p95_ms` が悪化しないこと
+  - ドラッグ/NGドロップ/シーク後再同期の機能回帰がないこと
+
 ## Issue #24 Comparison Focus
 
 - 同一動画・同一区間で、#24 前後の `worker=on` を比較する。

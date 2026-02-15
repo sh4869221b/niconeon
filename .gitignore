@@ -3,6 +3,7 @@ app-ui/build/
 app-ui/build-deadcode/
 app-ui/build-ci/
 app-ui/build-release/
+app-ui/build-test/
 dist/
 .cache/
 deep-research-report.md

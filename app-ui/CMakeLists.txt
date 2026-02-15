@@ -81,8 +81,27 @@ qt_add_resources(niconeon-ui "license_resources"
     "${third_party_notices_file}"
 )
 
-if(BUILD_TESTING AND NICONEON_BUILD_UI_E2E)
+if(BUILD_TESTING)
   find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
+
+  qt_add_executable(niconeon-ui-unit
+    tests/unit/spatial_grid_incremental_test.cpp
+    src/danmaku/DanmakuSpatialGrid.cpp
+  )
+
+  target_include_directories(niconeon-ui-unit PRIVATE
+    src
+  )
+
+  target_link_libraries(niconeon-ui-unit PRIVATE
+    Qt6::Core
+    Qt6::Test
+  )
+
+  add_test(NAME spatial_grid_incremental_test COMMAND niconeon-ui-unit)
+endif()
+
+if(BUILD_TESTING AND NICONEON_BUILD_UI_E2E)
 
   qt_add_executable(niconeon-ui-e2e
     tests/e2e/rendernode_alignment_e2e.cpp

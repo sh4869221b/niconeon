@@ -94,8 +94,9 @@ DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
     ensureLaneStateSize();
     resetLaneStates();
     resetGlyphSession();
-    rebuildSpatialIndex();
-    rebuildRenderSnapshot();
+    queueFullSpatialRebuild();
+    queueFullSnapshotRebuild();
+    flushPendingDiffs(false);
     qInfo().noquote() << QString("[danmaku-simd] mode=%1").arg(m_simdModeName);
     qInfo().noquote() << QString("[danmaku-worker] enabled=%1").arg(m_workerEnabled ? 1 : 0);
 }
@@ -112,16 +113,18 @@ void DanmakuController::setViewportSize(qreal width, qreal height) {
     m_viewportWidth = width;
     m_viewportHeight = height;
     ensureLaneStateSize();
-    markSpatialDirty();
-    rebuildRenderSnapshot();
+    queueFullSpatialRebuild();
+    queueFullSnapshotRebuild();
+    flushPendingDiffs(false);
 }
 
 void DanmakuController::setLaneMetrics(int fontPx, int laneGap) {
     m_fontPx = std::max(fontPx, 12);
     m_laneGap = std::max(laneGap, 0);
     ensureLaneStateSize();
-    markSpatialDirty();
-    rebuildRenderSnapshot();
+    queueFullSpatialRebuild();
+    queueFullSnapshotRebuild();
+    flushPendingDiffs(false);
 }
 
 void DanmakuController::setPlaybackPaused(bool paused) {
@@ -170,6 +173,10 @@ void DanmakuController::setPerfLogEnabled(bool enabled) {
     m_perfLaneForcedCount = 0;
     m_perfLaneWaitTotalMs = 0;
     m_perfLaneWaitMaxMs = 0;
+    m_perfSpatialFullRebuildCount = 0;
+    m_perfSpatialRowUpdateCount = 0;
+    m_perfSnapshotFullRebuildCount = 0;
+    m_perfSnapshotRowUpdateCount = 0;
     m_perfCompactedSinceLastLog = false;
     m_perfGlyphNewCodepoints = 0;
     m_perfGlyphNewNonAsciiCodepoints = 0;
@@ -206,6 +213,8 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
     invalidateWorkerGeneration();
     ensureLaneStateSize();
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    QVector<int> appendedRows;
+    appendedRows.reserve(comments.size());
     bool appendedAny = false;
     for (const QVariant &entry : comments) {
         const QVariantMap map = entry.toMap();
@@ -238,6 +247,7 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
 
         const int row = acquireRow();
         m_items[row] = item;
+        appendedRows.push_back(row);
         LaneState &laneState = m_laneStates[item.lane];
         laneState.nextAvailableAtMs = std::max(laneState.nextAvailableAtMs, nowMs) + estimateLaneCooldownMs(item);
         laneState.lastAssignedRow = row;
@@ -249,9 +259,9 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
     }
 
     if (appendedAny) {
-        markSpatialDirty();
-        rebuildRenderSnapshot();
-        emit renderSnapshotChanged();
+        queueSpatialUpsertRows(appendedRows);
+        queueSnapshotUpsertRows(appendedRows);
+        flushPendingDiffs(true);
     }
 }
 
@@ -267,6 +277,7 @@ void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal h
     }
 
     bool changed = false;
+    QVector<int> changedRows;
     for (int i = 0; i < m_items.size(); ++i) {
         Item &item = m_items[i];
         if (!item.active || !item.dragging) {
@@ -277,12 +288,13 @@ void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal h
             continue;
         }
         item.ngDropHovered = hovered;
+        changedRows.push_back(i);
         changed = true;
     }
 
     if (changed) {
-        rebuildRenderSnapshot();
-        emit renderSnapshotChanged();
+        queueSnapshotUpsertRows(changedRows);
+        flushPendingDiffs(true);
     }
 }
 
@@ -339,9 +351,8 @@ bool DanmakuController::beginDragInternal(int index, qreal pointerX, qreal point
 
     updateNgZoneVisibility();
     invalidateWorkerGeneration();
-    markSpatialDirty();
-    rebuildRenderSnapshot();
-    emit renderSnapshotChanged();
+    queueSnapshotUpsertRow(index);
+    flushPendingDiffs(true);
     return true;
 }
 
@@ -368,9 +379,9 @@ void DanmakuController::moveDragInternal(int index, qreal pointerX, qreal pointe
         item.ngDropHovered = hovered;
     }
     invalidateWorkerGeneration();
-    markSpatialDirty();
-    rebuildRenderSnapshot();
-    emit renderSnapshotChanged();
+    queueSpatialUpsertRow(index);
+    queueSnapshotUpsertRow(index);
+    flushPendingDiffs(true);
 }
 
 void DanmakuController::dropDragInternal(int index, bool inNgZone) {
@@ -401,24 +412,29 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
     }
 
     updateNgZoneVisibility();
-    markSpatialDirty();
-    rebuildRenderSnapshot();
-    emit renderSnapshotChanged();
+    if (!resolvedInNgZone) {
+        queueSpatialUpsertRow(index);
+        queueSnapshotUpsertRow(index);
+    }
+    flushPendingDiffs(true);
 }
 
 void DanmakuController::applyNgUserFade(const QString &userId) {
     invalidateWorkerGeneration();
     bool changed = false;
-    for (Item &item : m_items) {
+    QVector<int> changedRows;
+    for (int row = 0; row < m_items.size(); ++row) {
+        Item &item = m_items[row];
         if (item.active && item.userId == userId) {
             item.fading = true;
             item.fadeRemainingMs = 300;
+            changedRows.push_back(row);
             changed = true;
         }
     }
     if (changed) {
-        rebuildRenderSnapshot();
-        emit renderSnapshotChanged();
+        queueSnapshotUpsertRows(changedRows);
+        flushPendingDiffs(true);
     }
 }
 
@@ -438,9 +454,9 @@ void DanmakuController::resetForSeek() {
     m_activeDragOffsetX = 0.0;
     m_activeDragOffsetY = 0.0;
     updateNgZoneVisibility();
-    markSpatialDirty();
-    rebuildRenderSnapshot();
-    emit renderSnapshotChanged();
+    queueFullSpatialRebuild();
+    queueFullSnapshotRebuild();
+    flushPendingDiffs(true);
 }
 
 void DanmakuController::resetGlyphSession() {
@@ -526,6 +542,8 @@ void DanmakuController::onFrame() {
 
 void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
     const qreal elapsedSec = elapsedMs / 1000.0;
+    QVector<int> changedRows;
+    changedRows.reserve(m_items.size());
     QVector<int> removeRows;
     removeRows.reserve(m_items.size());
     int frameGeometryUpdates = 0;
@@ -557,12 +575,14 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
             const bool hovered = isItemInNgZone(item);
             if (hovered != item.ngDropHovered) {
                 item.ngDropHovered = hovered;
+                changedRows.push_back(i);
                 frameStateChanged = true;
             }
         }
 
         if (geometryChanged) {
             ++frameGeometryUpdates;
+            changedRows.push_back(i);
             frameStateChanged = true;
         }
 
@@ -577,6 +597,10 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
     if (m_perfLogEnabled) {
         m_perfLogGeometryUpdateCount += frameGeometryUpdates;
     }
+    if (!changedRows.isEmpty()) {
+        queueSpatialUpsertRows(changedRows);
+        queueSnapshotUpsertRows(changedRows);
+    }
     if (!removeRows.isEmpty()) {
         releaseRowsDescending(removeRows);
         if (m_perfLogEnabled) {
@@ -586,15 +610,13 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
     }
     const int totalBeforeCompact = m_items.size();
     const int freeBeforeCompact = m_freeRows.size();
-    maybeCompactRows();
-    if (m_items.size() != totalBeforeCompact || m_freeRows.size() != freeBeforeCompact) {
+    const bool compacted = maybeCompactRows();
+    if (compacted || m_items.size() != totalBeforeCompact || m_freeRows.size() != freeBeforeCompact) {
         frameStateChanged = true;
     }
 
     if (frameStateChanged) {
-        markSpatialDirty();
-        rebuildRenderSnapshot();
-        emit renderSnapshotChanged();
+        flushPendingDiffs(true);
     }
     maybeWritePerfLog(nowMs);
 }
@@ -687,7 +709,6 @@ int DanmakuController::pickLane(qint64 nowMs) {
 }
 
 bool DanmakuController::laneHasCollision(int lane, const Item &candidate) {
-    ensureSpatialIndex();
     const QRectF candidateRect(candidate.x, candidate.y, candidate.widthEstimate, kItemHeight);
     const QVector<int> rows = m_spatialGrid.queryRect(candidateRect);
     for (const int row : rows) {
@@ -744,8 +765,6 @@ void DanmakuController::recoverToLane(Item &item) {
 }
 
 int DanmakuController::findItemIndexAt(qreal x, qreal y) {
-    ensureSpatialIndex();
-
     const QPointF point(x, y);
     QVector<int> candidates = m_spatialGrid.queryPoint(point);
     if (candidates.isEmpty()) {
@@ -818,7 +837,8 @@ void DanmakuController::releaseRow(int row) {
         m_activeDragOffsetX = 0.0;
         m_activeDragOffsetY = 0.0;
     }
-    markSpatialDirty();
+    queueSpatialRemoveRow(row);
+    queueSnapshotRemoveRow(row);
 }
 
 void DanmakuController::releaseRowsDescending(const QVector<int> &rowsDescending) {
@@ -834,20 +854,20 @@ void DanmakuController::releaseRowsDescending(const QVector<int> &rowsDescending
     }
 }
 
-void DanmakuController::maybeCompactRows() {
+bool DanmakuController::maybeCompactRows() {
     if (hasDragging()) {
-        return;
+        return false;
     }
 
     const int totalRows = m_items.size();
     const int freeRows = m_freeRows.size();
     if (totalRows == 0 || freeRows <= kFreeRowsSoftLimit) {
-        return;
+        return false;
     }
 
     const double freeRatio = totalRows > 0 ? (static_cast<double>(freeRows) / totalRows) : 0.0;
     if (freeRatio < kCompactTriggerRatio) {
-        return;
+        return false;
     }
 
     QVector<Item> compactItems;
@@ -866,7 +886,9 @@ void DanmakuController::maybeCompactRows() {
         state.lastAssignedRow = -1;
     }
     m_perfCompactedSinceLastLog = true;
-    markSpatialDirty();
+    queueFullSpatialRebuild();
+    queueFullSnapshotRebuild();
+    return true;
 }
 
 int DanmakuController::activeItemCount() const {
@@ -1170,6 +1192,10 @@ void DanmakuController::handleWorkerFrame(DanmakuWorkerFramePtr frame) {
         ++geometryUpdateCount;
         hasGeometryUpdates = true;
     }
+    if (hasGeometryUpdates) {
+        queueSpatialUpsertRows(changedRows);
+        queueSnapshotUpsertRows(changedRows);
+    }
 
     if (m_perfLogEnabled) {
         m_perfLogGeometryUpdateCount += geometryUpdateCount;
@@ -1184,13 +1210,11 @@ void DanmakuController::handleWorkerFrame(DanmakuWorkerFramePtr frame) {
 
     const int totalBeforeCompact = m_items.size();
     const int freeBeforeCompact = m_freeRows.size();
-    maybeCompactRows();
-    const bool compacted = (m_items.size() != totalBeforeCompact || m_freeRows.size() != freeBeforeCompact);
+    const bool compacted = maybeCompactRows()
+        || (m_items.size() != totalBeforeCompact || m_freeRows.size() != freeBeforeCompact);
 
     if (hasGeometryUpdates || !removeRows.isEmpty() || compacted) {
-        markSpatialDirty();
-        rebuildRenderSnapshot();
-        emit renderSnapshotChanged();
+        flushPendingDiffs(true);
     }
 
     reclaimFrame(frame);
@@ -1211,8 +1235,96 @@ void DanmakuController::updateFrameTimerInterval() {
     m_frameTimer.setInterval(intervalMs);
 }
 
-void DanmakuController::markSpatialDirty() {
-    m_spatialDirty = true;
+DanmakuController::RenderItem DanmakuController::buildRenderItem(const Item &item) const {
+    RenderItem renderItem;
+    renderItem.commentId = item.commentId;
+    renderItem.text = item.text;
+    renderItem.x = item.x;
+    renderItem.y = item.y;
+    renderItem.alpha = item.alpha;
+    renderItem.widthEstimate = item.widthEstimate;
+    renderItem.ngDropHovered = item.ngDropHovered;
+    return renderItem;
+}
+
+void DanmakuController::queueSpatialUpsertRow(int row) {
+    if (row < 0) {
+        return;
+    }
+    if (m_pendingFullSpatialRebuild) {
+        return;
+    }
+    m_pendingSpatialRemoveRows.remove(row);
+    m_pendingSpatialUpsertRows.insert(row);
+}
+
+void DanmakuController::queueSpatialUpsertRows(const QVector<int> &rows) {
+    for (const int row : rows) {
+        queueSpatialUpsertRow(row);
+    }
+}
+
+void DanmakuController::queueSpatialRemoveRow(int row) {
+    if (row < 0) {
+        return;
+    }
+    if (m_pendingFullSpatialRebuild) {
+        return;
+    }
+    m_pendingSpatialUpsertRows.remove(row);
+    m_pendingSpatialRemoveRows.insert(row);
+}
+
+void DanmakuController::queueSpatialRemoveRows(const QVector<int> &rows) {
+    for (const int row : rows) {
+        queueSpatialRemoveRow(row);
+    }
+}
+
+void DanmakuController::queueSnapshotUpsertRow(int row) {
+    if (row < 0) {
+        return;
+    }
+    if (m_pendingFullSnapshotRebuild) {
+        return;
+    }
+    m_pendingSnapshotRemoveRows.remove(row);
+    m_pendingSnapshotUpsertRows.insert(row);
+}
+
+void DanmakuController::queueSnapshotUpsertRows(const QVector<int> &rows) {
+    for (const int row : rows) {
+        queueSnapshotUpsertRow(row);
+    }
+}
+
+void DanmakuController::queueSnapshotRemoveRow(int row) {
+    if (row < 0) {
+        return;
+    }
+    if (m_pendingFullSnapshotRebuild) {
+        return;
+    }
+    m_pendingSnapshotUpsertRows.remove(row);
+    m_pendingSnapshotRemoveRows.insert(row);
+}
+
+void DanmakuController::queueSnapshotRemoveRows(const QVector<int> &rows) {
+    for (const int row : rows) {
+        queueSnapshotRemoveRow(row);
+    }
+}
+
+void DanmakuController::queueFullSpatialRebuild() {
+    m_pendingFullSpatialRebuild = true;
+    m_pendingSpatialUpsertRows.clear();
+    m_pendingSpatialRemoveRows.clear();
+}
+
+void DanmakuController::queueFullSnapshotRebuild() {
+    m_pendingFullSnapshotRebuild = true;
+    m_pendingSnapshotUpsertRows.clear();
+    m_pendingSnapshotRemoveRows.clear();
 }
 
 void DanmakuController::rebuildSpatialIndex() {
@@ -1232,38 +1344,178 @@ void DanmakuController::rebuildSpatialIndex() {
 
     const qreal cellHeight = std::max<qreal>(kItemHeight, static_cast<qreal>(m_fontPx + m_laneGap));
     m_spatialGrid.rebuild(entries, kSpatialCellWidthPx, cellHeight);
-    m_spatialDirty = false;
-}
-
-void DanmakuController::ensureSpatialIndex() {
-    if (!m_spatialDirty) {
-        return;
-    }
-    rebuildSpatialIndex();
 }
 
 void DanmakuController::rebuildRenderSnapshot() {
-    QVector<RenderItem> snapshot;
-    snapshot.reserve(activeItemCount());
-    for (const Item &item : m_items) {
+    m_renderCache.clear();
+    m_renderRows.clear();
+    m_renderCache.reserve(activeItemCount());
+    m_renderRows.reserve(activeItemCount());
+    m_rowToRenderIndex.resize(m_items.size());
+    std::fill(m_rowToRenderIndex.begin(), m_rowToRenderIndex.end(), -1);
+
+    for (int row = 0; row < m_items.size(); ++row) {
+        const Item &item = m_items[row];
         if (!item.active) {
             continue;
         }
 
-        RenderItem renderItem;
-        renderItem.commentId = item.commentId;
-        renderItem.text = item.text;
-        renderItem.x = item.x;
-        renderItem.y = item.y;
-        renderItem.alpha = item.alpha;
-        renderItem.widthEstimate = item.widthEstimate;
-        renderItem.ngDropHovered = item.ngDropHovered;
-        snapshot.push_back(renderItem);
+        m_rowToRenderIndex[row] = m_renderCache.size();
+        m_renderRows.push_back(row);
+        m_renderCache.push_back(buildRenderItem(item));
+    }
+    publishRenderSnapshot();
+}
+
+void DanmakuController::ensureRowToRenderIndexSize() {
+    if (m_rowToRenderIndex.size() >= m_items.size()) {
+        return;
     }
 
-    auto newSnapshot = QSharedPointer<QVector<RenderItem>>::create(std::move(snapshot));
+    const int oldSize = m_rowToRenderIndex.size();
+    m_rowToRenderIndex.resize(m_items.size());
+    std::fill(m_rowToRenderIndex.begin() + oldSize, m_rowToRenderIndex.end(), -1);
+}
+
+bool DanmakuController::applySnapshotRowUpsert(int row) {
+    if (row < 0 || row >= m_items.size()) {
+        return applySnapshotRowRemoval(row);
+    }
+
+    ensureRowToRenderIndexSize();
+    const Item &item = m_items[row];
+    if (!item.active) {
+        return applySnapshotRowRemoval(row);
+    }
+
+    const int existingIndex = (row < m_rowToRenderIndex.size()) ? m_rowToRenderIndex[row] : -1;
+    if (existingIndex >= 0 && existingIndex < m_renderCache.size() && existingIndex < m_renderRows.size()) {
+        m_renderCache[existingIndex] = buildRenderItem(item);
+        return true;
+    }
+
+    const auto it = std::lower_bound(m_renderRows.begin(), m_renderRows.end(), row);
+    const int insertIndex = static_cast<int>(std::distance(m_renderRows.begin(), it));
+    m_renderRows.insert(insertIndex, row);
+    m_renderCache.insert(insertIndex, buildRenderItem(item));
+    m_rowToRenderIndex[row] = insertIndex;
+    for (int i = insertIndex + 1; i < m_renderRows.size(); ++i) {
+        const int remappedRow = m_renderRows[i];
+        if (remappedRow >= 0 && remappedRow < m_rowToRenderIndex.size()) {
+            m_rowToRenderIndex[remappedRow] = i;
+        }
+    }
+    return true;
+}
+
+bool DanmakuController::applySnapshotRowRemoval(int row) {
+    if (row < 0 || row >= m_rowToRenderIndex.size()) {
+        return false;
+    }
+    const int index = m_rowToRenderIndex[row];
+    if (index < 0 || index >= m_renderCache.size() || index >= m_renderRows.size()) {
+        m_rowToRenderIndex[row] = -1;
+        return false;
+    }
+
+    m_renderCache.removeAt(index);
+    m_renderRows.removeAt(index);
+    m_rowToRenderIndex[row] = -1;
+    for (int i = index; i < m_renderRows.size(); ++i) {
+        const int remappedRow = m_renderRows[i];
+        if (remappedRow >= 0 && remappedRow < m_rowToRenderIndex.size()) {
+            m_rowToRenderIndex[remappedRow] = i;
+        }
+    }
+    return true;
+}
+
+void DanmakuController::publishRenderSnapshot() {
+    auto newSnapshot = QSharedPointer<QVector<RenderItem>>::create(m_renderCache);
     QMutexLocker locker(&m_renderSnapshotMutex);
     m_renderSnapshot = newSnapshot;
+}
+
+void DanmakuController::flushPendingDiffs(bool emitSnapshotSignal) {
+    const auto sortedRows = [](const QSet<int> &rows, bool descending) {
+        QVector<int> sorted = rows.values();
+        if (descending) {
+            std::sort(sorted.begin(), sorted.end(), std::greater<int>());
+        } else {
+            std::sort(sorted.begin(), sorted.end());
+        }
+        return sorted;
+    };
+
+    if (m_pendingFullSpatialRebuild) {
+        rebuildSpatialIndex();
+        m_pendingFullSpatialRebuild = false;
+        m_pendingSpatialUpsertRows.clear();
+        m_pendingSpatialRemoveRows.clear();
+        if (m_perfLogEnabled) {
+            ++m_perfSpatialFullRebuildCount;
+        }
+    } else if (!m_pendingSpatialUpsertRows.isEmpty() || !m_pendingSpatialRemoveRows.isEmpty()) {
+        const qreal cellHeight = std::max<qreal>(kItemHeight, static_cast<qreal>(m_fontPx + m_laneGap));
+        m_spatialGrid.setCellSize(kSpatialCellWidthPx, cellHeight);
+        const QVector<int> removedRows = sortedRows(m_pendingSpatialRemoveRows, false);
+        const QVector<int> upsertRows = sortedRows(m_pendingSpatialUpsertRows, false);
+        for (const int row : removedRows) {
+            m_spatialGrid.removeRow(row);
+        }
+        for (const int row : upsertRows) {
+            if (row < 0 || row >= m_items.size()) {
+                m_spatialGrid.removeRow(row);
+                continue;
+            }
+            const Item &item = m_items[row];
+            if (!item.active) {
+                m_spatialGrid.removeRow(row);
+                continue;
+            }
+            m_spatialGrid.upsertRow(row, QRectF(item.x, item.y, item.widthEstimate, kItemHeight));
+        }
+        if (m_perfLogEnabled) {
+            m_perfSpatialRowUpdateCount += removedRows.size() + upsertRows.size();
+        }
+        m_pendingSpatialUpsertRows.clear();
+        m_pendingSpatialRemoveRows.clear();
+    }
+
+    bool snapshotChanged = false;
+    if (m_pendingFullSnapshotRebuild) {
+        rebuildRenderSnapshot();
+        m_pendingFullSnapshotRebuild = false;
+        m_pendingSnapshotUpsertRows.clear();
+        m_pendingSnapshotRemoveRows.clear();
+        snapshotChanged = true;
+        if (m_perfLogEnabled) {
+            ++m_perfSnapshotFullRebuildCount;
+        }
+    } else if (!m_pendingSnapshotUpsertRows.isEmpty() || !m_pendingSnapshotRemoveRows.isEmpty()) {
+        const QVector<int> removedRows = sortedRows(m_pendingSnapshotRemoveRows, true);
+        const QVector<int> upsertRows = sortedRows(m_pendingSnapshotUpsertRows, false);
+        bool rowChanged = false;
+        for (const int row : removedRows) {
+            rowChanged = applySnapshotRowRemoval(row) || rowChanged;
+        }
+        for (const int row : upsertRows) {
+            rowChanged = applySnapshotRowUpsert(row) || rowChanged;
+        }
+        if (rowChanged) {
+            publishRenderSnapshot();
+            snapshotChanged = true;
+        }
+        if (m_perfLogEnabled) {
+            m_perfSnapshotRowUpdateCount += removedRows.size() + upsertRows.size();
+        }
+        m_pendingSnapshotUpsertRows.clear();
+        m_pendingSnapshotRemoveRows.clear();
+    }
+
+    if (snapshotChanged && emitSnapshotSignal) {
+        emit renderSnapshotChanged();
+    }
 }
 
 void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
@@ -1309,7 +1561,7 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
         ? (static_cast<double>(m_perfLaneWaitTotalMs) / m_perfLanePickCount)
         : 0.0;
     qInfo().noquote()
-        << QString("[perf-danmaku] window_ms=%1 frame_count=%2 fps=%3 avg_ms=%4 p50_ms=%5 p95_ms=%6 p99_ms=%7 max_ms=%8 rows_total=%9 rows_active=%10 rows_free=%11 compacted=%12 appended=%13 updates=%14 removed=%15 lane_pick_count=%16 lane_ready_count=%17 lane_forced_count=%18 lane_wait_ms_avg=%19 lane_wait_ms_max=%20 dragging=%21 paused=%22 rate=%23")
+        << QString("[perf-danmaku] window_ms=%1 frame_count=%2 fps=%3 avg_ms=%4 p50_ms=%5 p95_ms=%6 p99_ms=%7 max_ms=%8 rows_total=%9 rows_active=%10 rows_free=%11 compacted=%12 appended=%13 updates=%14 removed=%15 lane_pick_count=%16 lane_ready_count=%17 lane_forced_count=%18 lane_wait_ms_avg=%19 lane_wait_ms_max=%20 dragging=%21 paused=%22 rate=%23 spatial_full_rebuilds=%24 spatial_row_updates=%25 snapshot_full_rebuilds=%26 snapshot_row_updates=%27")
                .arg(elapsedMs)
                .arg(m_perfLogFrameCount)
                .arg(fps, 0, 'f', 1)
@@ -1332,7 +1584,11 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
                .arg(m_perfLaneWaitMaxMs)
                .arg(hasDragging() ? 1 : 0)
                .arg(m_playbackPaused ? 1 : 0)
-               .arg(m_playbackRate, 0, 'f', 2);
+               .arg(m_playbackRate, 0, 'f', 2)
+               .arg(m_perfSpatialFullRebuildCount)
+               .arg(m_perfSpatialRowUpdateCount)
+               .arg(m_perfSnapshotFullRebuildCount)
+               .arg(m_perfSnapshotRowUpdateCount);
     qInfo().noquote()
         << QString("[perf-glyph] window_ms=%1 new_cp_total=%2 new_cp_non_ascii=%3 warmup_sent_cp=%4 warmup_batches=%5 warmup_pending_cp=%6 warmup_dropped_cp=%7 warmup_enabled=%8 p95_ms=%9 p99_ms=%10")
                .arg(elapsedMs)
@@ -1357,6 +1613,10 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
     m_perfLaneForcedCount = 0;
     m_perfLaneWaitTotalMs = 0;
     m_perfLaneWaitMaxMs = 0;
+    m_perfSpatialFullRebuildCount = 0;
+    m_perfSpatialRowUpdateCount = 0;
+    m_perfSnapshotFullRebuildCount = 0;
+    m_perfSnapshotRowUpdateCount = 0;
     m_perfCompactedSinceLastLog = false;
     m_perfGlyphNewCodepoints = 0;
     m_perfGlyphNewNonAsciiCodepoints = 0;
