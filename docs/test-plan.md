@@ -13,6 +13,11 @@
 - cache read/write roundtrip.
 - open_video returns `network` when fetched, `cache` on fallback, `none` on no data.
 
+## UI E2E Tests (Automated)
+
+- `rendernode_alignment_e2e`: `DanmakuRenderNodeItem` をオフセット付きコンテナに配置して描画し、弾幕ピクセルがコンテナ内に出ることを検証する（座標変換漏れ回帰の検知）。
+- 実行コマンド: `just ui-e2e`
+
 ## UI Manual Tests
 
 - playback controls update position and volume.

@@ -47,6 +47,9 @@ just licenses
 # Core テスト
 just core-test
 
+# UI E2E テスト（ヘッドレス環境は xvfb-run を使用）
+just ui-e2e
+
 # 全体ビルド（core + ui）
 just build
 
@@ -84,6 +87,7 @@ GitHub Actions で以下を実行します。
 
 - `core-test`（Rust core のテスト）
 - `ui-build-linux`（Linux で UI リリースビルド）
+- `ui-e2e-linux`（Linux + Xvfb で UI E2E テスト）
 - `ui-build-windows`（Windows/MSYS2 で UI リリースビルド）
 
 `main` への PR と `main` への push で実行され、`main` マージ時は必須チェックとして扱います。

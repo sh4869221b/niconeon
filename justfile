@@ -33,6 +33,11 @@ ui-configure:
 ui-build:
     cd app-ui && cmake --build build -j
 
+ui-e2e:
+    cd app-ui && cmake -S . -B build-e2e -DBUILD_TESTING=ON -DNICONEON_BUILD_UI_E2E=ON
+    cd app-ui && cmake --build build-e2e -j
+    cd app-ui && if [ -n "${DISPLAY:-}" ]; then ctest --test-dir build-e2e --output-on-failure -R rendernode_alignment_e2e; elif command -v xvfb-run >/dev/null 2>&1; then xvfb-run -a ctest --test-dir build-e2e --output-on-failure -R rendernode_alignment_e2e; else echo "DISPLAY is not set. install xvfb-run and retry." >&2; exit 1; fi
+
 build: licenses core-build ui-configure ui-build
 
 run: build

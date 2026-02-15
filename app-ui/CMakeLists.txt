@@ -12,6 +12,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV REQUIRED mpv)
 
 qt_standard_project_setup(REQUIRES 6.4)
+include(CTest)
+option(NICONEON_BUILD_UI_E2E "Build Niconeon UI end-to-end tests" OFF)
 
 # Opt in to newer QML CMake policies when supported by the installed Qt.
 if(DEFINED QT_KNOWN_POLICY_QTP0001)
@@ -78,3 +80,28 @@ qt_add_resources(niconeon-ui "license_resources"
     "${distribution_license_file}"
     "${third_party_notices_file}"
 )
+
+if(BUILD_TESTING AND NICONEON_BUILD_UI_E2E)
+  find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
+
+  qt_add_executable(niconeon-ui-e2e
+    tests/e2e/rendernode_alignment_e2e.cpp
+    src/danmaku/DanmakuController.cpp
+    src/danmaku/DanmakuSimdUpdater.cpp
+    src/danmaku/DanmakuUpdateWorker.cpp
+    src/danmaku/DanmakuSpatialGrid.cpp
+    src/danmaku/DanmakuRenderNodeItem.cpp
+  )
+
+  target_include_directories(niconeon-ui-e2e PRIVATE
+    src
+  )
+
+  target_link_libraries(niconeon-ui-e2e PRIVATE
+    Qt6::Quick
+    Qt6::Qml
+    Qt6::Test
+  )
+
+  add_test(NAME rendernode_alignment_e2e COMMAND niconeon-ui-e2e)
+endif()

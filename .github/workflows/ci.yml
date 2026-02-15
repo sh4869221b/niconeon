@@ -85,6 +85,45 @@ jobs:
       - name: Build UI (Linux)
         run: cmake --build app-ui/build-ci --parallel
 
+  ui-e2e-linux:
+    name: ui-e2e-linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux UI/E2E dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libmpv-dev \
+            qt6-base-dev \
+            qt6-base-dev-tools \
+            qt6-declarative-dev \
+            qt6-declarative-dev-tools \
+            xvfb
+
+      - name: Configure UI E2E (Linux)
+        run: |
+          cmake -S app-ui -B app-ui/build-e2e-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DNICONEON_BUILD_UI_E2E=ON
+
+      - name: Build UI E2E (Linux)
+        run: cmake --build app-ui/build-e2e-ci --parallel
+
+      - name: Run UI E2E (Linux)
+        run: |
+          xvfb-run -a env \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+            ctest --test-dir app-ui/build-e2e-ci --output-on-failure -R rendernode_alignment_e2e
+
   ui-build-windows:
     name: ui-build-windows
     runs-on: windows-latest
