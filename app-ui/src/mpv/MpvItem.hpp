@@ -13,6 +13,7 @@ class MpvItem : public QQuickFramebufferObject {
     Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
     Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY speedChanged)
+    Q_PROPERTY(double videoFps READ videoFps NOTIFY videoFpsChanged)
 
 public:
     explicit MpvItem(QQuickItem *parent = nullptr);
@@ -30,6 +31,7 @@ public:
     bool paused() const;
     double volume() const;
     double speed() const;
+    double videoFps() const;
 
 public slots:
     void setVolume(double volume);
@@ -41,6 +43,7 @@ signals:
     void pausedChanged();
     void volumeChanged();
     void speedChanged();
+    void videoFpsChanged();
 
 private slots:
     void pollProperties();
@@ -60,4 +63,5 @@ private:
     bool m_paused = true;
     double m_volume = 100.0;
     double m_speed = 1.0;
+    double m_videoFps = 0.0;
 };

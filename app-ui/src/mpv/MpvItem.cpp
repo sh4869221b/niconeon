@@ -2,6 +2,7 @@
 
 #include <clocale>
 #include <algorithm>
+#include <cmath>
 
 #include <QDebug>
 #include <QDir>
@@ -220,6 +221,10 @@ double MpvItem::speed() const {
     return m_speed;
 }
 
+double MpvItem::videoFps() const {
+    return m_videoFps;
+}
+
 void MpvItem::setVolume(double volume) {
     if (!m_mpv) {
         return;
@@ -290,6 +295,19 @@ void MpvItem::pollProperties() {
             m_speed = speedValue;
             emit speedChanged();
         }
+    }
+
+    // UI 表示用途のため、無効な値を取得した場合は直前の値を保持する。
+    double fpsValue = 0.0;
+    int fpsStatus = mpv_get_property(m_mpv, "estimated-vf-fps", MPV_FORMAT_DOUBLE, &fpsValue);
+    if (fpsStatus < 0 || !std::isfinite(fpsValue) || fpsValue <= 0.0) {
+        fpsValue = 0.0;
+        fpsStatus = mpv_get_property(m_mpv, "container-fps", MPV_FORMAT_DOUBLE, &fpsValue);
+    }
+    if (fpsStatus >= 0 && std::isfinite(fpsValue) && fpsValue > 0.0
+        && !qFuzzyCompare(fpsValue + 1.0, m_videoFps + 1.0)) {
+        m_videoFps = fpsValue;
+        emit videoFpsChanged();
     }
 }
 
