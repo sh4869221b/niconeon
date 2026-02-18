@@ -47,6 +47,10 @@ ApplicationWindow {
     property string autoVideoPath: ""
     property bool autoPerfLogStart: false
     property int autoExitMs: 0
+    property int totalComments: 0
+    property real videoFps: 0
+    property real commentFps: 0
+    property int activeCommentCount: 0
 
     Settings {
         id: speedSettings
@@ -374,6 +378,20 @@ ApplicationWindow {
         toastTimer.restart()
     }
 
+    function resetCommentSessionState() {
+        root.sessionId = ""
+        root.totalComments = 0
+        root.pendingSeek = false
+    }
+
+    function shouldResetCommentSessionForError(method, errorMessage) {
+        if (method === "open_video") {
+            return true
+        }
+        const message = String(errorMessage || "").toLowerCase()
+        return message.indexOf("unknown session") >= 0
+    }
+
     function startPlaybackFromPath(path) {
         const candidatePath = String(path || "").trim()
         if (candidatePath === "") {
@@ -391,7 +409,7 @@ ApplicationWindow {
                 return
             }
             root.applyPlaybackRate(speedSettings.rate, false)
-            root.sessionId = ""
+            root.resetCommentSessionState()
             showToast("動画IDが見つからないためコメント取得をスキップしました")
             return
         }
@@ -402,6 +420,7 @@ ApplicationWindow {
         }
 
         root.applyPlaybackRate(speedSettings.rate, false)
+        root.resetCommentSessionState()
         coreClient.openVideo(root.selectedVideoPath, videoId)
     }
 
@@ -703,6 +722,10 @@ ApplicationWindow {
                 anchors.fill: parent
                 controller: danmakuController
                 visible: root.commentsVisible
+                totalComments: root.totalComments
+                videoFps: root.videoFps
+                commentFps: root.commentFps
+                activeCommentCount: root.activeCommentCount
             }
 
             onWidthChanged: danmakuController.setViewportSize(width, height)
@@ -715,6 +738,9 @@ ApplicationWindow {
 
         function onResponseReceived(method, result, error) {
             if (error && error !== "") {
+                if (root.shouldResetCommentSessionForError(method, error)) {
+                    root.resetCommentSessionState()
+                }
                 if (method === "add_regex_filter") {
                     showToast("正規表現が不正です")
                 } else if (method === "open_video") {
@@ -729,6 +755,7 @@ ApplicationWindow {
 
             if (method === "open_video") {
                 root.sessionId = result.session_id
+                root.totalComments = Number(result.total_comments || 0)
                 root.pendingSeek = false
                 danmakuController.resetGlyphSession()
                 showToast("コメント取得: " + result.comment_source + " / " + result.total_comments + "件")
@@ -790,6 +817,7 @@ ApplicationWindow {
         }
 
         function onCoreCrashed(reason) {
+            root.resetCommentSessionState()
             showToast(reason)
         }
     }
