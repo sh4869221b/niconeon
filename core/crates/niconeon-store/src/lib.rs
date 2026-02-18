@@ -11,6 +11,12 @@ pub struct Store {
     conn: Connection,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StorePaths {
+    db_path: PathBuf,
+    cache_dir: PathBuf,
+}
+
 impl Store {
     pub fn open_default() -> Result<Self> {
         let path = db_path().ok_or_else(|| anyhow!("failed to determine data directory"))?;
@@ -26,10 +32,12 @@ impl Store {
 
     pub fn open_with_path(path: PathBuf) -> Result<Self> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create dir {}", parent.display()))?;
         }
 
-        let conn = Connection::open(&path).with_context(|| format!("open sqlite {}", path.display()))?;
+        let conn =
+            Connection::open(&path).with_context(|| format!("open sqlite {}", path.display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .context("set WAL mode")?;
 
@@ -162,9 +170,10 @@ impl Store {
     }
 
     pub fn remove_regex_filter(&self, filter_id: i64) -> Result<bool> {
-        let changed = self
-            .conn
-            .execute("DELETE FROM regex_filters WHERE id = ?1", params![filter_id])?;
+        let changed = self.conn.execute(
+            "DELETE FROM regex_filters WHERE id = ?1",
+            params![filter_id],
+        )?;
         Ok(changed > 0)
     }
 
@@ -201,7 +210,14 @@ impl Store {
 
 pub fn db_path() -> Option<PathBuf> {
     let dirs = ProjectDirs::from("com", "sh4869221b", "niconeon")?;
-    Some(dirs.data_dir().join("niconeon.db"))
+    Some(resolve_store_paths(&dirs).db_path)
+}
+
+fn resolve_store_paths(dirs: &ProjectDirs) -> StorePaths {
+    StorePaths {
+        db_path: dirs.data_dir().join("niconeon.db"),
+        cache_dir: dirs.cache_dir().to_path_buf(),
+    }
 }
 
 pub fn extract_video_id_from_path(path: &Path) -> Option<String> {
@@ -215,11 +231,45 @@ pub fn extract_video_id_from_path(path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock};
 
+    use directories::ProjectDirs;
     use niconeon_domain::CommentEvent;
 
-    use super::{extract_video_id_from_path, Store};
+    use super::{db_path, extract_video_id_from_path, resolve_store_paths, Store};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn with_env_var<K, V>(key: K, value: Option<V>, f: impl FnOnce())
+    where
+        K: AsRef<std::ffi::OsStr>,
+        V: AsRef<std::ffi::OsStr>,
+    {
+        let key = key.as_ref().to_os_string();
+        let original = std::env::var_os(&key);
+        if let Some(value) = value {
+            std::env::set_var(&key, value);
+        } else {
+            std::env::remove_var(&key);
+        }
+
+        f();
+
+        if let Some(original) = original {
+            std::env::set_var(&key, original);
+        } else {
+            std::env::remove_var(&key);
+        }
+    }
+
+    fn unique_temp_path(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock before epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("niconeon-store-{label}-{nanos}"))
+    }
 
     #[test]
     fn extract_video_id() {
@@ -231,7 +281,10 @@ mod tests {
             extract_video_id_from_path(Path::new("/tmp/SO1234.mkv")),
             Some("so1234".to_string())
         );
-        assert_eq!(extract_video_id_from_path(Path::new("/tmp/no-id.mp4")), None);
+        assert_eq!(
+            extract_video_id_from_path(Path::new("/tmp/no-id.mp4")),
+            None
+        );
     }
 
     #[test]
@@ -253,5 +306,47 @@ mod tests {
             .expect("exists");
 
         assert_eq!(loaded, comments);
+    }
+
+    #[test]
+    fn resolve_paths_split_data_and_cache_roots_with_xdg_env() {
+        let _guard = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned");
+
+        let data_home = unique_temp_path("data");
+        let cache_home = unique_temp_path("cache");
+
+        with_env_var("XDG_DATA_HOME", Some(data_home.as_os_str()), || {
+            with_env_var("XDG_CACHE_HOME", Some(cache_home.as_os_str()), || {
+                let dirs =
+                    ProjectDirs::from("com", "sh4869221b", "niconeon").expect("project dirs");
+                let paths = resolve_store_paths(&dirs);
+
+                assert!(paths.db_path.starts_with(&data_home));
+                assert!(paths.cache_dir.starts_with(&cache_home));
+                assert_ne!(paths.db_path, paths.cache_dir);
+            });
+        });
+    }
+
+    #[test]
+    fn db_path_returns_valid_path_without_xdg_env() {
+        let _guard = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned");
+
+        with_env_var::<_, &std::ffi::OsStr>("XDG_DATA_HOME", None, || {
+            with_env_var::<_, &std::ffi::OsStr>("XDG_CACHE_HOME", None, || {
+                let path = db_path().expect("db path should resolve without xdg env vars");
+                assert!(path.is_absolute());
+                assert_eq!(
+                    path.file_name().and_then(|name| name.to_str()),
+                    Some("niconeon.db")
+                );
+            });
+        });
     }
 }
