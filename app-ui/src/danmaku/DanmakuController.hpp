@@ -25,6 +25,9 @@ class DanmakuController : public QObject {
     Q_PROPERTY(bool perfLogEnabled READ perfLogEnabled WRITE setPerfLogEnabled NOTIFY perfLogEnabledChanged)
     Q_PROPERTY(bool glyphWarmupEnabled READ glyphWarmupEnabled WRITE setGlyphWarmupEnabled NOTIFY glyphWarmupEnabledChanged)
     Q_PROPERTY(QString glyphWarmupText READ glyphWarmupText NOTIFY glyphWarmupTextChanged)
+    Q_PROPERTY(double commentRenderFps READ commentRenderFps NOTIFY commentRenderFpsChanged)
+    Q_PROPERTY(int activeCommentCount READ activeCommentCountMetric NOTIFY activeCommentCountChanged)
+    Q_PROPERTY(qint64 overlayMetricsUpdatedAtMs READ overlayMetricsUpdatedAtMs NOTIFY overlayMetricsUpdatedAtMsChanged)
 
 public:
     struct RenderItem {
@@ -67,6 +70,9 @@ public:
     bool perfLogEnabled() const;
     bool glyphWarmupEnabled() const;
     QString glyphWarmupText() const;
+    double commentRenderFps() const;
+    int activeCommentCountMetric() const;
+    qint64 overlayMetricsUpdatedAtMs() const;
 
 signals:
     void ngDropZoneVisibleChanged();
@@ -76,6 +82,9 @@ signals:
     void perfLogEnabledChanged();
     void glyphWarmupEnabledChanged();
     void glyphWarmupTextChanged();
+    void commentRenderFpsChanged();
+    void activeCommentCountChanged();
+    void overlayMetricsUpdatedAtMsChanged();
     void ngDropRequested(const QString &userId);
     void renderSnapshotChanged();
 
@@ -126,6 +135,7 @@ private:
     void queueGlyphSeedCharacters();
     void dispatchGlyphWarmupIfDue(qint64 nowMs);
     void clearGlyphWarmupText();
+    void updateOverlayMetrics(qint64 nowMs);
     void maybeWritePerfLog(qint64 nowMs);
     void runFrameSingleThread(int elapsedMs, qint64 nowMs);
     void rebuildSpatialIndex();
@@ -227,4 +237,9 @@ private:
     int m_perfSpatialRowUpdateCount = 0;
     int m_perfSnapshotFullRebuildCount = 0;
     int m_perfSnapshotRowUpdateCount = 0;
+    qint64 m_overlayMetricWindowStartMs = 0;
+    int m_overlayMetricFrameCount = 0;
+    double m_commentRenderFps = 0.0;
+    int m_activeCommentCount = 0;
+    qint64 m_overlayMetricsUpdatedAtMs = 0;
 };
