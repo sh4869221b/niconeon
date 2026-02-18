@@ -5,6 +5,10 @@ import Niconeon
 Item {
     id: root
     property var controller
+    property int totalComments: 0
+    property real videoFps: 0
+    property real commentFps: 0
+    property int activeCommentCount: 0
     property bool sceneDragging: false
     property double videoFps: NaN
     property double commentFps: NaN
