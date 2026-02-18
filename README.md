@@ -23,6 +23,7 @@ Niconeon は、ローカル動画を再生しながらニコニココメント�
 - `app-ui/` : Qt 6 + QML + libmpv 埋め込み UI
 - `core/` : Rust 製コア（取得、キャッシュ、フィルタ、永続化、JSON-RPC）
 - `docs/` : 設計・プロトコル・テスト計画
+- `docs/ui-design.md` : UI画面レイアウト設計書（主画面構成、配置方針、操作導線）
 - `docs/licensing.md` : ライセンス方針と再生成手順
 
 ## 開発要件
