@@ -72,3 +72,8 @@
 - `just perf-dummy` で #24 前後を比較し、`updates` 同等条件で `avg_ms` または `p95_ms` が悪化していない。
 - 連続シーク（10回以上）+ 連続ドラッグ（10回以上）を行っても、worker有効時にクラッシュしない。
 - Runtime profile を `high` / `balanced` / `low_spec` に切り替えて、`set_runtime_profile` 応答と挙動（emit cap/coalesce）が一致する。
+- 動画再生中に `Video FPS` が 0 以外で更新される。
+- コメント流量がある区間で `Comment FPS` が更新される。
+- シーク・一時停止・コメント非表示切替時に FPS/統計値が破綻しない。
+- `Comments active/total` が `open_video` 直後と再生中で整合する。
+- ドラッグ/NGドロップ中も stats パネル表示が操作を妨げない。
