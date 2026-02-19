@@ -6,7 +6,27 @@ Item {
     id: root
     property var controller
     property bool sceneDragging: false
+    property double videoFps: NaN
+    property double commentFps: NaN
+    property int totalComments: -1
+    property int activeCommentCount: -1
     clip: true
+
+    function formatFps(value) {
+        const number = Number(value)
+        if (!isFinite(number) || number < 0) {
+            return "--"
+        }
+        return number.toFixed(1)
+    }
+
+    function formatCount(value) {
+        const number = Number(value)
+        if (!isFinite(number) || number < 0) {
+            return "--"
+        }
+        return Math.round(number).toString()
+    }
 
     function syncNgZoneRect() {
         if (!root.controller) {
@@ -50,6 +70,39 @@ Item {
     DanmakuRenderNodeItem {
         anchors.fill: parent
         controller: root.controller
+    }
+
+    Rectangle {
+        id: statsPanel
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 12
+        radius: 6
+        color: "#66000000"
+        border.color: "#55ffffff"
+        border.width: 1
+        z: 10
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 8
+            spacing: 4
+
+            Label {
+                color: "white"
+                text: "Video FPS: %1".arg(root.formatFps(root.videoFps))
+            }
+
+            Label {
+                color: "white"
+                text: "Comment FPS: %1".arg(root.formatFps(root.commentFps))
+            }
+
+            Label {
+                color: "white"
+                text: "Comments: %1 / %2".arg(root.formatCount(root.activeCommentCount)).arg(root.formatCount(root.totalComments))
+            }
+        }
     }
 
     MouseArea {
