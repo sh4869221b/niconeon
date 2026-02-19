@@ -68,6 +68,8 @@ DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
 
     m_lastTickMs = QDateTime::currentMSecsSinceEpoch();
     m_perfLogWindowStartMs = m_lastTickMs;
+    m_overlayMetricWindowStartMs = m_lastTickMs;
+    m_overlayMetricsUpdatedAtMs = m_lastTickMs;
     const QString workerMode = qEnvironmentVariable("NICONEON_DANMAKU_WORKER").trimmed().toLower();
     if (workerMode == QStringLiteral("off") || workerMode == QStringLiteral("0") || workerMode == QStringLiteral("false")) {
         m_workerEnabled = false;
@@ -506,6 +508,18 @@ QString DanmakuController::glyphWarmupText() const {
     return m_glyphWarmupText;
 }
 
+double DanmakuController::commentRenderFps() const {
+    return m_commentRenderFps;
+}
+
+int DanmakuController::activeCommentCountMetric() const {
+    return m_activeCommentCount;
+}
+
+qint64 DanmakuController::overlayMetricsUpdatedAtMs() const {
+    return m_overlayMetricsUpdatedAtMs;
+}
+
 QSharedPointer<const QVector<DanmakuController::RenderItem>> DanmakuController::renderSnapshot() const {
     QMutexLocker locker(&m_renderSnapshotMutex);
     return m_renderSnapshot;
@@ -519,10 +533,12 @@ void DanmakuController::onFrame() {
     if (elapsedMs <= 0) {
         return;
     }
+    ++m_overlayMetricFrameCount;
     if (m_perfLogEnabled) {
         ++m_perfLogFrameCount;
         m_perfFrameSamplesMs.push_back(elapsedMs);
     }
+    updateOverlayMetrics(now);
     dispatchGlyphWarmupIfDue(now);
 
     if (activeItemCount() == 0) {
@@ -1522,6 +1538,35 @@ void DanmakuController::flushPendingDiffs(bool emitSnapshotSignal) {
 
     if (snapshotChanged && emitSnapshotSignal) {
         emit renderSnapshotChanged();
+    }
+}
+
+void DanmakuController::updateOverlayMetrics(qint64 nowMs) {
+    if (m_overlayMetricWindowStartMs <= 0) {
+        m_overlayMetricWindowStartMs = nowMs;
+        m_overlayMetricFrameCount = 0;
+    }
+
+    const qint64 elapsedMs = nowMs - m_overlayMetricWindowStartMs;
+    if (elapsedMs >= 2000) {
+        const double fps = elapsedMs > 0 ? (m_overlayMetricFrameCount * 1000.0 / elapsedMs) : 0.0;
+        if (std::abs(m_commentRenderFps - fps) > 0.05) {
+            m_commentRenderFps = fps;
+            emit commentRenderFpsChanged();
+        }
+        m_overlayMetricWindowStartMs = nowMs;
+        m_overlayMetricFrameCount = 0;
+    }
+
+    const int count = activeItemCount();
+    if (m_activeCommentCount != count) {
+        m_activeCommentCount = count;
+        emit activeCommentCountChanged();
+    }
+
+    if (m_overlayMetricsUpdatedAtMs != nowMs) {
+        m_overlayMetricsUpdatedAtMs = nowMs;
+        emit overlayMetricsUpdatedAtMsChanged();
     }
 }
 
