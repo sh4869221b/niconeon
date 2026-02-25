@@ -51,6 +51,8 @@ ApplicationWindow {
     property real videoFps: 0
     property real commentFps: 0
     property int activeCommentCount: 0
+    property int fontSizeLevel: 1
+    property int appFontPixelSize: 14
 
     Settings {
         id: speedSettings
@@ -68,7 +70,10 @@ ApplicationWindow {
         property int targetFps: 30
         property int maxEmitPerTick: 48
         property bool coalesceSameContent: true
+        property int fontSizeLevel: 1
     }
+
+    font.pixelSize: root.appFontPixelSize
 
     function extractVideoId(path) {
         const match = path.toLowerCase().match(/(sm|nm|so)\d+/)
@@ -371,6 +376,47 @@ ApplicationWindow {
         applyRuntimeProfile(next, defaults.targetFps, defaults.maxEmitPerTick, defaults.coalesceSameContent, true)
     }
 
+    function normalizeFontSizeLevel(level) {
+        const parsed = Number(level)
+        if (!isFinite(parsed)) {
+            return 1
+        }
+        const rounded = Math.round(parsed)
+        return Math.max(0, Math.min(2, rounded))
+    }
+
+    function fontPixelSizeForLevel(level) {
+        const normalized = normalizeFontSizeLevel(level)
+        if (normalized === 0) {
+            return 12
+        }
+        if (normalized === 2) {
+            return 16
+        }
+        return 14
+    }
+
+    function fontSizeLabel(level) {
+        const normalized = normalizeFontSizeLevel(level)
+        if (normalized === 0) {
+            return "小"
+        }
+        if (normalized === 2) {
+            return "大"
+        }
+        return "標準"
+    }
+
+    function applyFontSizeLevel(level, notify) {
+        const normalized = normalizeFontSizeLevel(level)
+        root.fontSizeLevel = normalized
+        root.appFontPixelSize = fontPixelSizeForLevel(normalized)
+        uiSettings.fontSizeLevel = normalized
+        if (notify) {
+            showToast("フォントサイズ: " + fontSizeLabel(normalized))
+        }
+    }
+
     function showToast(message, actionText) {
         toast.message = message
         toast.actionText = actionText || ""
@@ -381,6 +427,8 @@ ApplicationWindow {
     function resetCommentSessionState() {
         root.sessionId = ""
         root.totalComments = 0
+        root.commentFps = 0
+        root.activeCommentCount = 0
         root.pendingSeek = false
     }
 
@@ -452,6 +500,16 @@ ApplicationWindow {
         id: danmakuController
         onNgDropRequested: function(userId) {
             coreClient.addNgUser(userId)
+        }
+    }
+
+    Connections {
+        target: danmakuController
+        function onCommentRenderFpsChanged() {
+            root.commentFps = Number(danmakuController.commentRenderFps || 0)
+        }
+        function onActiveCommentCountChanged() {
+            root.activeCommentCount = Math.max(0, Number(danmakuController.activeCommentCount || 0))
         }
     }
 
@@ -566,6 +624,22 @@ ApplicationWindow {
         id: aboutDialog
     }
 
+    FontSizeDialog {
+        id: fontSizeDialog
+        currentLevel: root.fontSizeLevel
+        onFontSizeSelected: function(level) {
+            root.applyFontSizeLevel(level, true)
+        }
+    }
+
+    SettingsDialog {
+        id: settingsDialog
+        fontSizeLabel: root.fontSizeLabel(root.fontSizeLevel)
+        onOpenAboutRequested: aboutDialog.open()
+        onOpenSpeedPresetRequested: playbackSpeedDialog.open()
+        onOpenFontSizeRequested: fontSizeDialog.open()
+    }
+
     Toast {
         id: toast
         anchors.horizontalCenter: parent.horizontalCenter
@@ -605,11 +679,6 @@ ApplicationWindow {
             }
 
             AppButton {
-                text: "速度設定"
-                onClicked: playbackSpeedDialog.open()
-            }
-
-            AppButton {
                 text: root.commentsVisible ? "コメント非表示" : "コメント表示"
                 onClicked: root.applyCommentVisibility(!root.commentsVisible, true)
             }
@@ -633,8 +702,8 @@ ApplicationWindow {
             }
 
             AppButton {
-                text: "About"
-                onClicked: aboutDialog.open()
+                text: "設定"
+                onClicked: settingsDialog.open()
             }
         }
 
@@ -831,6 +900,9 @@ ApplicationWindow {
             danmakuController.setPlaybackRate(mpv.speed)
             speedSettings.rate = root.nearestPreset(mpv.speed)
         }
+        function onVideoFpsChanged() {
+            root.videoFps = Number(mpv.videoFps || 0)
+        }
     }
 
     Component.onCompleted: {
@@ -841,6 +913,7 @@ ApplicationWindow {
         root.targetFps = Math.max(10, Math.min(120, Number(uiSettings.targetFps || 30)))
         root.maxEmitPerTick = Math.max(0, Math.min(2000, Number(uiSettings.maxEmitPerTick || 48)))
         root.coalesceSameContent = !!uiSettings.coalesceSameContent
+        root.applyFontSizeLevel(uiSettings.fontSizeLevel, false)
         coreClient.startDefault()
         danmakuController.setViewportSize(playerArea.width, playerArea.height)
         danmakuController.setLaneMetrics(36, 6)
@@ -849,6 +922,9 @@ ApplicationWindow {
         danmakuController.setTargetFps(root.targetFps)
         danmakuController.setPerfLogEnabled(root.perfLogEnabled)
         danmakuController.setGlyphWarmupEnabled(true)
+        root.videoFps = Number(mpv.videoFps || 0)
+        root.commentFps = Number(danmakuController.commentRenderFps || 0)
+        root.activeCommentCount = Math.max(0, Number(danmakuController.activeCommentCount || 0))
         coreClient.setRuntimeProfile(
             root.perfProfile,
             root.targetFps,
