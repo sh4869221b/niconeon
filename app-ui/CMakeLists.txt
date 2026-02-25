@@ -67,6 +67,8 @@ qt_add_qml_module(niconeon-ui
     qml/components/FilterDialog.qml
     qml/components/PlaybackSpeedDialog.qml
     qml/components/AboutDialog.qml
+    qml/components/SettingsDialog.qml
+    qml/components/FontSizeDialog.qml
 )
 
 set(app_license_file "${CMAKE_SOURCE_DIR}/../LICENSE")
