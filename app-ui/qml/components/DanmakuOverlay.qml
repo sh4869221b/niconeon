@@ -77,6 +77,10 @@ Item {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 12
+        implicitWidth: statsColumn.implicitWidth + 16
+        implicitHeight: statsColumn.implicitHeight + 16
+        width: implicitWidth
+        height: implicitHeight
         radius: 6
         color: "#66000000"
         border.color: "#55ffffff"
@@ -84,6 +88,7 @@ Item {
         z: 10
 
         Column {
+            id: statsColumn
             anchors.fill: parent
             anchors.margins: 8
             spacing: 4
