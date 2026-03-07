@@ -559,7 +559,7 @@ fn generate_synthetic_comments_ramp(video_id: &str) -> Vec<CommentEvent> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::{cell::RefCell, fs, path::PathBuf};
 
     use anyhow::Result;
     use niconeon_domain::CommentEvent;
@@ -567,7 +567,9 @@ mod tests {
         JsonRpcRequest, OpenVideoParams, PlaybackTickBatchParams, PlaybackTickSample,
     };
     use niconeon_store::Store;
+    use rusqlite::Connection;
     use serde_json::json;
+    use uuid::Uuid;
 
     use super::{AppCore, CommentFetcher};
 
@@ -585,16 +587,26 @@ mod tests {
     }
 
     fn open_video_req() -> JsonRpcRequest {
+        open_video_req_with("movie_sm9.mp4", "sm9", 1)
+    }
+
+    fn open_video_req_with(video_path: &str, video_id: &str, id: i64) -> JsonRpcRequest {
         JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: json!(1),
+            id: json!(id),
             method: "open_video".to_string(),
             params: serde_json::to_value(OpenVideoParams {
-                video_path: "movie_sm9.mp4".to_string(),
-                video_id: "sm9".to_string(),
+                video_path: video_path.to_string(),
+                video_id: video_id.to_string(),
             })
             .expect("params"),
         }
+    }
+
+    fn temp_db_path(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("niconeon-core-{name}-{}.db", Uuid::new_v4()));
+        path
     }
 
     #[test]
@@ -674,6 +686,65 @@ mod tests {
     }
 
     #[test]
+    fn tick_emits_zero_ms_comment_on_first_tick() {
+        let comments = vec![
+            CommentEvent {
+                comment_id: "zero".to_string(),
+                at_ms: 0,
+                user_id: "u1".to_string(),
+                text: "zero".to_string(),
+            },
+            CommentEvent {
+                comment_id: "later".to_string(),
+                at_ms: 100,
+                user_id: "u2".to_string(),
+                text: "later".to_string(),
+            },
+        ];
+
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(comments)),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+
+        let open = app.handle_request(open_video_req());
+        let session_id = open
+            .result
+            .as_ref()
+            .and_then(|v| v.get("session_id"))
+            .and_then(|v| v.as_str())
+            .expect("session id")
+            .to_string();
+
+        let res = app.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(2),
+            method: "playback_tick_batch".to_string(),
+            params: json!({
+                "session_id": session_id,
+                "ticks": [{
+                    "position_ms": 150,
+                    "paused": false,
+                    "is_seek": false
+                }]
+            }),
+        });
+        let emitted = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("emit_comments"))
+            .and_then(|v| v.as_array())
+            .expect("emit comments");
+
+        assert_eq!(emitted.len(), 2);
+        assert_eq!(
+            emitted[0].get("comment_id").and_then(|v| v.as_str()),
+            Some("zero")
+        );
+    }
+
+    #[test]
     fn falls_back_to_cache() {
         let store = Store::open_memory().expect("store");
         let cached = vec![CommentEvent {
@@ -707,6 +778,44 @@ mod tests {
 
         assert_eq!(src, "cache");
         assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn broken_cache_falls_back_to_none() {
+        let path = temp_db_path("broken-cache");
+        let store = Store::open_with_path(path.clone()).expect("store");
+        drop(store);
+
+        let conn = Connection::open(&path).expect("sqlite");
+        conn.execute(
+            "INSERT INTO comment_cache(video_id, fetched_at, payload_json) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["sm9", "2026-03-07T00:00:00Z", "{not-json}"],
+        )
+        .expect("insert invalid cache");
+        drop(conn);
+
+        let fetcher = MockFetcher {
+            data: RefCell::new(Err("network error".to_string())),
+        };
+        let mut app = AppCore::new(Store::open_with_path(path.clone()).expect("store"), fetcher).expect("app");
+        let open = app.handle_request(open_video_req());
+
+        let src = open
+            .result
+            .as_ref()
+            .and_then(|v| v.get("comment_source"))
+            .and_then(|v| v.as_str())
+            .expect("source");
+        let total = open
+            .result
+            .as_ref()
+            .and_then(|v| v.get("total_comments"))
+            .and_then(|v| v.as_u64())
+            .expect("total");
+
+        assert_eq!(src, "none");
+        assert_eq!(total, 0);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -858,6 +967,106 @@ mod tests {
     }
 
     #[test]
+    fn emit_budget_is_applied_per_tick() {
+        let comments = vec![
+            CommentEvent {
+                comment_id: "a".to_string(),
+                at_ms: 100,
+                user_id: "u1".to_string(),
+                text: "a".to_string(),
+            },
+            CommentEvent {
+                comment_id: "b".to_string(),
+                at_ms: 110,
+                user_id: "u2".to_string(),
+                text: "b".to_string(),
+            },
+            CommentEvent {
+                comment_id: "c".to_string(),
+                at_ms: 300,
+                user_id: "u3".to_string(),
+                text: "c".to_string(),
+            },
+            CommentEvent {
+                comment_id: "d".to_string(),
+                at_ms: 310,
+                user_id: "u4".to_string(),
+                text: "d".to_string(),
+            },
+        ];
+
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(comments)),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+        let open = app.handle_request(open_video_req());
+        let session_id = open
+            .result
+            .as_ref()
+            .and_then(|v| v.get("session_id"))
+            .and_then(|v| v.as_str())
+            .expect("session id")
+            .to_string();
+
+        let _ = app.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(2),
+            method: "set_runtime_profile".to_string(),
+            params: json!({
+                "profile": "low_spec",
+                "max_emit_per_tick": 1,
+                "coalesce_same_content": false
+            }),
+        });
+
+        let res = app.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(3),
+            method: "playback_tick_batch".to_string(),
+            params: json!({
+                "session_id": session_id,
+                "ticks": [
+                    {
+                        "position_ms": 150,
+                        "paused": false,
+                        "is_seek": false
+                    },
+                    {
+                        "position_ms": 350,
+                        "paused": false,
+                        "is_seek": false
+                    }
+                ]
+            }),
+        });
+
+        let emitted = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("emit_comments"))
+            .and_then(|v| v.as_array())
+            .expect("emit comments");
+        let dropped = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("dropped_comments"))
+            .and_then(|v| v.as_u64())
+            .expect("dropped comments");
+
+        assert_eq!(emitted.len(), 2);
+        assert_eq!(dropped, 2);
+        assert_eq!(
+            emitted[0].get("comment_id").and_then(|v| v.as_str()),
+            Some("a")
+        );
+        assert_eq!(
+            emitted[1].get("comment_id").and_then(|v| v.as_str()),
+            Some("c")
+        );
+    }
+
+    #[test]
     fn runtime_profile_can_coalesce_comments() {
         let comments = vec![
             CommentEvent {
@@ -936,6 +1145,77 @@ mod tests {
 
         assert_eq!(emitted.len(), 2);
         assert_eq!(coalesced, 1);
+    }
+
+    #[test]
+    fn seek_re_emits_comment_at_exact_position() {
+        let comments = vec![CommentEvent {
+            comment_id: "seek".to_string(),
+            at_ms: 500,
+            user_id: "u1".to_string(),
+            text: "seek".to_string(),
+        }];
+
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(comments)),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+        let open = app.handle_request(open_video_req());
+        let session_id = open
+            .result
+            .as_ref()
+            .and_then(|v| v.get("session_id"))
+            .and_then(|v| v.as_str())
+            .expect("session id")
+            .to_string();
+
+        let seek_res = app.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(2),
+            method: "playback_tick_batch".to_string(),
+            params: json!({
+                "session_id": session_id,
+                "ticks": [{
+                    "position_ms": 500,
+                    "paused": false,
+                    "is_seek": true
+                }]
+            }),
+        });
+        let seek_emitted = seek_res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("emit_comments"))
+            .and_then(|v| v.as_array())
+            .expect("seek emitted");
+        assert!(seek_emitted.is_empty());
+
+        let res = app.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(3),
+            method: "playback_tick_batch".to_string(),
+            params: json!({
+                "session_id": session_id,
+                "ticks": [{
+                    "position_ms": 500,
+                    "paused": false,
+                    "is_seek": false
+                }]
+            }),
+        });
+        let emitted = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("emit_comments"))
+            .and_then(|v| v.as_array())
+            .expect("emit comments");
+
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            emitted[0].get("comment_id").and_then(|v| v.as_str()),
+            Some("seek")
+        );
     }
 
     #[test]
@@ -1023,5 +1303,58 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("ng users");
         assert!(ng_users.is_empty());
+    }
+
+    #[test]
+    fn opening_new_video_evicts_previous_session() {
+        let comments = vec![CommentEvent {
+            comment_id: "c1".to_string(),
+            at_ms: 100,
+            user_id: "u1".to_string(),
+            text: "hello".to_string(),
+        }];
+
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(comments)),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+
+        let first = app.handle_request(open_video_req_with("movie_sm9.mp4", "sm9", 1));
+        let first_session_id = first
+            .result
+            .as_ref()
+            .and_then(|v| v.get("session_id"))
+            .and_then(|v| v.as_str())
+            .expect("first session")
+            .to_string();
+
+        let second = app.handle_request(open_video_req_with("movie_sm10.mp4", "sm10", 2));
+        let second_session_id = second
+            .result
+            .as_ref()
+            .and_then(|v| v.get("session_id"))
+            .and_then(|v| v.as_str())
+            .expect("second session")
+            .to_string();
+
+        assert_ne!(first_session_id, second_session_id);
+
+        let res = app.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(3),
+            method: "playback_tick_batch".to_string(),
+            params: json!({
+                "session_id": first_session_id,
+                "ticks": [{
+                    "position_ms": 100,
+                    "paused": false,
+                    "is_seek": false
+                }]
+            }),
+        });
+
+        let message = res.error.as_ref().map(|e| e.message.as_str()).unwrap_or("");
+        assert!(message.contains("unknown session"));
     }
 }

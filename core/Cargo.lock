@@ -602,6 +602,7 @@ dependencies = [
  "niconeon-protocol",
  "niconeon-store",
  "regex",
+ "rusqlite",
  "serde",
  "serde_json",
  "uuid",
