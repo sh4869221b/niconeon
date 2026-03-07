@@ -839,7 +839,9 @@ ApplicationWindow {
                     root.perfEmitOverBudgetCount += 1
                 }
                 if (root.commentsVisible) {
-                    danmakuController.appendFromCore(result.emit_comments || [], mpv.positionMs)
+                    danmakuController.appendFromCore(
+                        result.emit_comments || [],
+                        Number(result.last_position_ms || 0))
                 }
             } else if (method === "set_runtime_profile") {
                 if (result && typeof result === "object") {
