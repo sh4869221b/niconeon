@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{anyhow, Context, Result};
 use niconeon_domain::CommentEvent;
 use reqwest::blocking::Client;
@@ -12,7 +14,11 @@ pub struct NiconicoFetcher {
 
 impl NiconicoFetcher {
     pub fn new(cookie: Option<String>) -> Result<Self> {
-        let client = Client::builder().build().context("build reqwest client")?;
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(15))
+            .build()
+            .context("build reqwest client")?;
         Ok(Self { client, cookie })
     }
 
