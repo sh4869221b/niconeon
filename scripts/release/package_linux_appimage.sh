@@ -111,7 +111,7 @@ APPIMAGE_EXTRACT_AND_RUN=1 \
   -d "${app_dir}/usr/share/applications/niconeon.desktop" \
   -i "${app_dir}/usr/share/icons/hicolor/256x256/apps/niconeon.png" \
   --plugin qt \
-  --deploy-deps-only
+  --deploy-deps-only "${app_dir}/usr/bin"
 
 out_appimage="${out_dir}/${base}.AppImage"
 APPIMAGE_EXTRACT_AND_RUN=1 "${appimagetool_img}" "${app_dir}" "${out_appimage}"
