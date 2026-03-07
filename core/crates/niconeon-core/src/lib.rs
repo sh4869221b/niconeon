@@ -212,6 +212,7 @@ impl<F: CommentFetcher> AppCore<F> {
 
         let session_id = Uuid::new_v4().to_string();
         let cursor = cursor_for_position(&comments, 0);
+        self.sessions.clear();
         self.sessions.insert(
             session_id.clone(),
             Session {
