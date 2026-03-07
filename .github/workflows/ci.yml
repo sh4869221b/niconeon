@@ -118,8 +118,8 @@ jobs:
       - name: Run UI unit tests (Linux)
         run: ctest --test-dir app-ui/build-test-ci --output-on-failure
 
-  ui-e2e-linux:
-    name: ui-e2e-linux
+  ui-e2e-linux-best-effort:
+    name: ui-e2e-linux-best-effort
     runs-on: ubuntu-latest
 
     steps:
@@ -151,7 +151,7 @@ jobs:
       - name: Build UI E2E (Linux)
         run: cmake --build app-ui/build-e2e-ci --parallel
 
-      - name: Run UI E2E (Linux)
+      - name: Run UI E2E (Linux, best effort)
         run: |
           xvfb-run -a env \
             LIBGL_ALWAYS_SOFTWARE=1 \
