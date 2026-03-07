@@ -133,6 +133,8 @@
 
 - `DanmakuOverlay` は `playerArea` 全域に `anchors.fill` で配置する。
 - `visible` は `commentsVisible` に連動し、コメント非表示時は描画負荷を抑える。
+- 通常のコメント表示は文字のみとし、背景パネルや外枠は持たない。
+- NG ドロップ hover 中のコメントは枠ではなく文字色で強調する。
 
 ### 5.2 NG Drop Zone
 

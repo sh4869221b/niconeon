@@ -39,6 +39,7 @@
 - playback controls update position and volume.
 - drag freezes only grabbed comment.
 - NG drop zone appears only while dragging.
+- コメントは背景・枠なしの文字のみで描画され、NG ドロップ hover 中は枠ではなく文字色変化で状態が分かる。
 - dropping in zone registers NG and fades matching comments in ~300ms.
 - dropping outside zone returns comment using same-lane-first behavior.
 - undo restores last NG user.

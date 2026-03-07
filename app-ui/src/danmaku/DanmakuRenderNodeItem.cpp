@@ -29,7 +29,6 @@
 #include <cstddef>
 
 namespace {
-constexpr int kDenseRenderThreshold = 80;
 constexpr int kUltraDenseRenderThreshold = 140;
 
 QImage renderSnapshotImage(
@@ -45,19 +44,15 @@ QImage renderSnapshotImage(
     image.fill(Qt::transparent);
 
     QPainter painter(&image);
-    const bool dense = items.size() >= kDenseRenderThreshold;
     const bool ultraDense = items.size() >= kUltraDenseRenderThreshold;
-    painter.setRenderHint(QPainter::Antialiasing, !dense);
     painter.setRenderHint(QPainter::TextAntialiasing, !ultraDense);
 
     QFont font;
     font.setPixelSize(DanmakuRenderStyle::kTextPixelSize);
     painter.setFont(font);
 
-    const QColor fillColor(QStringLiteral("#88000000"));
-    const QColor normalBorder(QStringLiteral("#AAFFFFFF"));
-    const QColor ngBorder(QStringLiteral("#FFFF4466"));
     const QColor textColor(Qt::white);
+    const QColor ngHoverTextColor(QStringLiteral("#FFFF6677"));
 
     for (const DanmakuController::RenderItem &item : items) {
         if (item.alpha <= 0.0) {
@@ -70,20 +65,8 @@ QImage renderSnapshotImage(
             item.y,
             item.widthEstimate,
             static_cast<qreal>(DanmakuRenderStyle::kItemHeightPx));
-        const bool drawBody = !ultraDense || item.ngDropHovered;
-        if (drawBody) {
-            painter.setBrush(fillColor);
-            painter.setPen(QPen(item.ngDropHovered ? ngBorder : normalBorder, item.ngDropHovered ? 2.0 : 1.0));
-            if (dense) {
-                painter.drawRect(rect);
-            } else {
-                painter.drawRoundedRect(rect, 8.0, 8.0);
-            }
-        }
-
-        painter.setPen(textColor);
-        const qreal textPadding = static_cast<qreal>(DanmakuRenderStyle::kHorizontalPaddingPx);
-        const QRectF textRect = rect.adjusted(textPadding, 0.0, -textPadding, 0.0);
+        painter.setPen(item.ngDropHovered ? ngHoverTextColor : textColor);
+        const QRectF textRect = rect;
         painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignHCenter, item.text);
     }
 
