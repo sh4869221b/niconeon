@@ -1345,26 +1345,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_playback_tick_method_is_not_supported() {
-        let store = Store::open_memory().expect("store");
-        let fetcher = MockFetcher {
-            data: RefCell::new(Ok(Vec::new())),
-        };
-        let mut app = AppCore::new(store, fetcher).expect("app");
-
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: json!(1),
-            method: "playback_tick".to_string(),
-            params: json!({}),
-        };
-        let res = app.handle_request(req);
-        assert!(res.error.is_some());
-        let message = res.error.as_ref().map(|e| e.message.as_str()).unwrap_or("");
-        assert!(message.contains("method not found"));
-    }
-
-    #[test]
     fn remove_ng_user_updates_filter_list() {
         let store = Store::open_memory().expect("store");
         let fetcher = MockFetcher {

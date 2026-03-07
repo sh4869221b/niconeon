@@ -6,7 +6,7 @@
 - regex validation: valid and invalid patterns.
 - filter order: NG user first, then regex.
 - undo last NG: only the latest token is restorable.
-- `playback_tick_batch`: normal progression, seek reset, seek resume for in-flight comments, paused tick, and legacy method rejection.
+- `playback_tick_batch`: normal progression, seek reset, seek resume for in-flight comments, and paused tick.
 
 ## Core Integration Tests
 

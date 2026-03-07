@@ -5,10 +5,6 @@
 LicenseProvider::LicenseProvider(QObject *parent) : QObject(parent) {}
 
 QString LicenseProvider::readText(const QString &resourcePath, const QString &fallbackText) const {
-    if (!resourcePath.startsWith(":/")) {
-        return fallbackText;
-    }
-
     QFile file(resourcePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return fallbackText;

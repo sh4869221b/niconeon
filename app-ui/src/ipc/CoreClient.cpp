@@ -100,17 +100,25 @@ QString CoreClient::resolveCoreProgram(QStringList *triedCandidates) const {
     return QString();
 }
 
-void CoreClient::startDefault() {
-    if (m_process.state() != QProcess::NotRunning) {
-        return;
-    }
-    m_expectedStop = false;
-    ++m_requestGeneration;
+void CoreClient::resetPendingRequestState() {
     m_pendingRequests.clear();
     m_pendingTickSessionId.clear();
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
     m_inFlightPlaybackTickRequestIds.clear();
+}
+
+void CoreClient::invalidatePendingRequestState() {
+    ++m_requestGeneration;
+    resetPendingRequestState();
+}
+
+void CoreClient::startDefault() {
+    if (m_process.state() != QProcess::NotRunning) {
+        return;
+    }
+    m_expectedStop = false;
+    invalidatePendingRequestState();
 
     QStringList triedCandidates;
     const QString program = resolveCoreProgram(&triedCandidates);
@@ -131,12 +139,7 @@ void CoreClient::stop() {
         return;
     }
     m_expectedStop = true;
-    ++m_requestGeneration;
-    m_pendingRequests.clear();
-    m_pendingTickSessionId.clear();
-    m_pendingTicks.clear();
-    m_playbackTickBatchInFlight = false;
-    m_inFlightPlaybackTickRequestIds.clear();
+    invalidatePendingRequestState();
     m_process.terminate();
     if (!m_process.waitForFinished(1000)) {
         m_process.kill();
@@ -145,11 +148,7 @@ void CoreClient::stop() {
 }
 
 void CoreClient::openVideo(const QString &videoPath, const QString &videoId) {
-    ++m_requestGeneration;
-    m_pendingTickSessionId.clear();
-    m_pendingTicks.clear();
-    m_playbackTickBatchInFlight = false;
-    m_inFlightPlaybackTickRequestIds.clear();
+    invalidatePendingRequestState();
     sendRequest("open_video", {
                                  {"video_path", videoPath},
                                  {"video_id", videoId},
@@ -311,12 +310,7 @@ void CoreClient::onProcessFinished(int exitCode, QProcess::ExitStatus status) {
     }
 
     emit runningChanged();
-    ++m_requestGeneration;
-    m_pendingRequests.clear();
-    m_pendingTickSessionId.clear();
-    m_pendingTicks.clear();
-    m_playbackTickBatchInFlight = false;
-    m_inFlightPlaybackTickRequestIds.clear();
+    invalidatePendingRequestState();
 
     const bool expectedStop = m_expectedStop;
     m_expectedStop = false;
@@ -339,12 +333,7 @@ void CoreClient::onProcessFinished(int exitCode, QProcess::ExitStatus status) {
 void CoreClient::onProcessErrorOccurred(QProcess::ProcessError error) {
     const QString message = QStringLiteral("core process error (%1): %2")
                                 .arg(processErrorName(error), m_process.errorString());
-    m_pendingTickSessionId.clear();
-    m_pendingTicks.clear();
-    m_playbackTickBatchInFlight = false;
-    m_inFlightPlaybackTickRequestIds.clear();
-    ++m_requestGeneration;
-    m_pendingRequests.clear();
+    invalidatePendingRequestState();
     m_expectedStop = false;
     emit coreCrashed(message);
 }

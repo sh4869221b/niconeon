@@ -60,6 +60,8 @@ private:
 
     static QString executableName(const QString &baseName);
     QString resolveCoreProgram(QStringList *triedCandidates = nullptr) const;
+    void resetPendingRequestState();
+    void invalidatePendingRequestState();
     qint64 sendRequest(const QString &method, const QVariantMap &params);
     void flushPlaybackTickBatch();
 

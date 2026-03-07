@@ -109,7 +109,7 @@ void CoreClientTest::stderrOnlyDoesNotEmitCrash() {
 
 void CoreClientTest::stalePlaybackTickResponseIsDroppedAfterOpenVideo() {
     ScopedEnvVar fakeBin("NICONEON_CORE_BIN", fakeCorePath().toUtf8());
-    ScopedEnvVar scenario("NICONEON_FAKE_CORE_SCENARIO", "delay_playback_tick");
+    ScopedEnvVar scenario("NICONEON_FAKE_CORE_SCENARIO", "delay_playback_tick_batch");
 
     CoreClient client;
     ScopedClientStop stopClient(client);
@@ -142,7 +142,7 @@ void CoreClientTest::stalePlaybackTickResponseIsDroppedAfterOpenVideo() {
 
 void CoreClientTest::jsonRpcErrorObjectIsExposedAsMessage() {
     ScopedEnvVar fakeBin("NICONEON_CORE_BIN", fakeCorePath().toUtf8());
-    ScopedEnvVar scenario("NICONEON_FAKE_CORE_SCENARIO", "playback_tick_error");
+    ScopedEnvVar scenario("NICONEON_FAKE_CORE_SCENARIO", "playback_tick_batch_error");
     ScopedEnvVar message(
         "NICONEON_FAKE_CORE_ERROR_MESSAGE", "unknown session from fake core");
 

@@ -97,7 +97,7 @@ private:
         }
 
         if (method == QStringLiteral("playback_tick_batch")) {
-            if (m_flags.contains(QStringLiteral("playback_tick_error"))) {
+            if (m_flags.contains(QStringLiteral("playback_tick_batch_error"))) {
                 sendError(
                     id,
                     -32000,
@@ -117,7 +117,7 @@ private:
                                });
             };
 
-            if (m_flags.contains(QStringLiteral("delay_playback_tick"))) {
+            if (m_flags.contains(QStringLiteral("delay_playback_tick_batch"))) {
                 QTimer::singleShot(m_delayMs > 0 ? m_delayMs : 200, this, sendTickResult);
             } else {
                 sendTickResult();
