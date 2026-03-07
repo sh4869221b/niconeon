@@ -61,6 +61,7 @@ public:
     Q_INVOKABLE void setNgDropZoneRect(qreal x, qreal y, qreal width, qreal height);
 
     Q_INVOKABLE void applyNgUserFade(const QString &userId);
+    Q_INVOKABLE void rollbackPendingNgUserFade(const QString &userId);
     QSharedPointer<const QVector<RenderItem>> renderSnapshot() const;
 
     bool ngDropZoneVisible() const;
@@ -111,6 +112,8 @@ private:
         bool ngDropHovered = false;
         bool active = false;
         int fadeRemainingMs = 0;
+        bool pendingNgFade = false;
+        bool pendingNgDraggedOrigin = false;
     };
 
     void onFrame();

@@ -411,7 +411,22 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
 
     if (resolvedInNgZone) {
         const QString userId = item.userId;
-        releaseRow(index);
+        item.dragging = false;
+        item.frozen = true;
+        item.ngDropHovered = false;
+        item.pendingNgDraggedOrigin = true;
+        QVector<int> changedRows;
+        for (int row = 0; row < m_items.size(); ++row) {
+            Item &candidate = m_items[row];
+            if (!candidate.active || candidate.userId != userId) {
+                continue;
+            }
+            candidate.pendingNgFade = true;
+            candidate.fading = true;
+            candidate.fadeRemainingMs = 300;
+            changedRows.push_back(row);
+        }
+        queueSnapshotUpsertRows(changedRows);
         emit ngDropRequested(userId);
     } else {
         item.dragging = false;
@@ -435,14 +450,55 @@ void DanmakuController::applyNgUserFade(const QString &userId) {
     for (int row = 0; row < m_items.size(); ++row) {
         Item &item = m_items[row];
         if (item.active && item.userId == userId) {
-            item.fading = true;
-            item.fadeRemainingMs = 300;
+            if (item.pendingNgFade) {
+                item.pendingNgFade = false;
+                item.pendingNgDraggedOrigin = false;
+            } else {
+                item.fading = true;
+                item.fadeRemainingMs = 300;
+            }
             changedRows.push_back(row);
             changed = true;
         }
     }
     if (changed) {
         queueSnapshotUpsertRows(changedRows);
+        flushPendingDiffs(true);
+    }
+}
+
+void DanmakuController::rollbackPendingNgUserFade(const QString &userId) {
+    invalidateWorkerGeneration();
+    QVector<int> snapshotRows;
+    QVector<int> spatialRows;
+    for (int row = 0; row < m_items.size(); ++row) {
+        Item &item = m_items[row];
+        if (!item.active || item.userId != userId || !item.pendingNgFade) {
+            continue;
+        }
+
+        item.pendingNgFade = false;
+        item.fading = false;
+        item.fadeRemainingMs = 0;
+        item.alpha = 1.0;
+        item.ngDropHovered = false;
+
+        if (item.pendingNgDraggedOrigin) {
+            item.pendingNgDraggedOrigin = false;
+            item.frozen = false;
+            recoverToLane(item);
+            spatialRows.push_back(row);
+        }
+
+        snapshotRows.push_back(row);
+    }
+
+    updateNgZoneVisibility();
+    if (!spatialRows.isEmpty()) {
+        queueSpatialUpsertRows(spatialRows);
+    }
+    if (!snapshotRows.isEmpty()) {
+        queueSnapshotUpsertRows(snapshotRows);
         flushPendingDiffs(true);
     }
 }
@@ -849,6 +905,8 @@ void DanmakuController::releaseRow(int row) {
     item.fading = false;
     item.ngDropHovered = false;
     item.fadeRemainingMs = 0;
+    item.pendingNgFade = false;
+    item.pendingNgDraggedOrigin = false;
     item.alpha = 1.0;
     item.commentId.clear();
     item.userId.clear();

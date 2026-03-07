@@ -26,6 +26,7 @@ ApplicationWindow {
     property string selectedVideoPath: ""
     property string sessionId: ""
     property string undoToken: ""
+    property string pendingNgUserId: ""
     property var regexFilters: []
     property var ngUsers: []
     property var speedPresets: [1.0, 1.5, 2.0]
@@ -427,6 +428,7 @@ ApplicationWindow {
     function resetCommentSessionState() {
         root.sessionId = ""
         root.undoToken = ""
+        root.pendingNgUserId = ""
         root.totalComments = 0
         root.commentFps = 0
         root.activeCommentCount = 0
@@ -501,6 +503,7 @@ ApplicationWindow {
     DanmakuController {
         id: danmakuController
         onNgDropRequested: function(userId) {
+            root.pendingNgUserId = userId
             coreClient.addNgUser(userId)
         }
     }
@@ -809,6 +812,10 @@ ApplicationWindow {
 
         function onResponseReceived(method, result, error) {
             if (error && error !== "") {
+                if (method === "add_ng_user" && root.pendingNgUserId !== "") {
+                    danmakuController.rollbackPendingNgUserFade(root.pendingNgUserId)
+                    root.pendingNgUserId = ""
+                }
                 if (root.shouldResetCommentSessionForError(method, error)) {
                     root.resetCommentSessionState()
                 }
@@ -856,7 +863,11 @@ ApplicationWindow {
                     danmakuController.setTargetFps(root.targetFps)
                 }
             } else if (method === "add_ng_user") {
-                danmakuController.applyNgUserFade(result.hidden_user_id)
+                const hiddenUserId = String(result.hidden_user_id || root.pendingNgUserId || "")
+                if (hiddenUserId !== "") {
+                    danmakuController.applyNgUserFade(hiddenUserId)
+                }
+                root.pendingNgUserId = ""
                 if (result.applied) {
                     root.undoToken = result.undo_token
                     showToast("NGユーザーを登録しました", "Undo")
