@@ -33,6 +33,11 @@ ui-configure:
 ui-build:
     cd app-ui && cmake --build build -j
 
+ui-test:
+    cd app-ui && cmake -S . -B build-test -DBUILD_TESTING=ON
+    cd app-ui && cmake --build build-test -j
+    cd app-ui && ctest --test-dir build-test --output-on-failure
+
 ui-e2e:
     cd app-ui && cmake -S . -B build-e2e -DBUILD_TESTING=ON -DNICONEON_BUILD_UI_E2E=ON
     cd app-ui && cmake --build build-e2e -j

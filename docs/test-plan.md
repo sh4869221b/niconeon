@@ -16,12 +16,15 @@
 ## UI Unit Tests (Automated)
 
 - `spatial_grid_incremental_test`: `DanmakuSpatialGrid` の `upsert/remove` 差分更新が `rebuild` と同等の検索結果になることを検証する。
+- `core_client_test`: fake core を使い、`stderr` が crash 扱いされないこと、generation 切替後の stale `playback_tick_batch` が破棄されること、JSON-RPC `error.message` が文字列として届くことを検証する。
 - `danmaku_text_width_test`: 全角文字/日本語文字列を含むコメントで `widthEstimate` が `QFontMetrics` 実測幅 + 左右余白以上になることを検証する。
+- `danmaku_ng_drop_test`: NG ドロップ失敗時に pending fade が rollback され、ドラッグ起点コメントが同一レーン優先で復帰することを検証する。
 - 実行コマンド例:
+  - `just ui-test`
   - `cd app-ui && cmake -S . -B build-test -DBUILD_TESTING=ON`
   - `cd app-ui && cmake --build build-test -j`
-  - `cd app-ui && ctest --test-dir build-test --output-on-failure -R spatial_grid_incremental_test`
-  - `cd app-ui && ctest --test-dir build-test --output-on-failure -R danmaku_text_width_test`
+  - `cd app-ui && ctest --test-dir build-test --output-on-failure`
+  - GUI を使う unit test は CTest 側で `QT_QPA_PLATFORM=offscreen` を固定する。
 
 ## UI E2E Tests (Automated)
 

@@ -162,6 +162,9 @@ if(BUILD_TESTING)
   )
 
   add_test(NAME danmaku_text_width_test COMMAND niconeon-ui-unit-danmaku-text-width)
+  set_tests_properties(danmaku_text_width_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+  )
 
   qt_add_executable(niconeon-ui-unit-danmaku-ng-drop
     tests/unit/danmaku_ng_drop_test.cpp
@@ -182,6 +185,9 @@ if(BUILD_TESTING)
   )
 
   add_test(NAME danmaku_ng_drop_test COMMAND niconeon-ui-unit-danmaku-ng-drop)
+  set_tests_properties(danmaku_ng_drop_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+  )
 endif()
 
 if(BUILD_TESTING AND NICONEON_BUILD_UI_E2E)
