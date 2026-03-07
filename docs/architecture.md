@@ -37,7 +37,7 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
   1. NG user ID
   2. Regex filters
 - Resolve tick windows to emitted comments.
-- Shape emitted comment burst by runtime profile (`max_emit_per_tick`, optional coalescing) and return drop/coalesce metrics.
+- Shape emitted comment burst per tick window by runtime profile (`max_emit_per_tick`, optional coalescing) and return drop/coalesce metrics.
 
 ## Failure Handling
 

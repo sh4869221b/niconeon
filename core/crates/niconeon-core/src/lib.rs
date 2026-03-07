@@ -245,9 +245,16 @@ impl<F: CommentFetcher> AppCore<F> {
             .with_context(|| format!("unknown session: {}", params.session_id))?;
 
         let mut emit_comments = Vec::new();
+        let mut dropped_comments = 0usize;
+        let mut emit_over_budget = false;
         let filter_engine = &self.filter_engine;
         for tick in &params.ticks {
-            emit_comments.extend(Self::apply_playback_tick(session, tick, filter_engine));
+            let tick_comments = Self::apply_playback_tick(session, tick, filter_engine);
+            let (tick_comments, tick_dropped_comments, tick_emit_over_budget) =
+                Self::apply_emit_budget(tick_comments, self.runtime_profile.max_emit_per_tick);
+            emit_comments.extend(tick_comments);
+            dropped_comments += tick_dropped_comments;
+            emit_over_budget |= tick_emit_over_budget;
         }
 
         let (emit_comments, coalesced_comments) = if self.runtime_profile.coalesce_same_content {
@@ -255,9 +262,6 @@ impl<F: CommentFetcher> AppCore<F> {
         } else {
             (emit_comments, 0)
         };
-
-        let (emit_comments, dropped_comments, emit_over_budget) =
-            Self::apply_emit_budget(emit_comments, self.runtime_profile.max_emit_per_tick);
 
         Ok(PlaybackTickBatchResult {
             emit_comments,

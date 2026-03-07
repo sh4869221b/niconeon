@@ -33,7 +33,7 @@ Each line is one JSON-RPC 2.0 message.
 - params:
   - `profile: "high" | "balanced" | "low_spec"`
   - `target_fps?: number` (10..120)
-  - `max_emit_per_tick?: number` (`0` は無制限)
+  - `max_emit_per_tick?: number` (`0` は無制限, 各 tick ごとに適用)
   - `coalesce_same_content?: boolean`
 - result:
   - `profile: string`
