@@ -95,6 +95,18 @@ qt_add_resources(niconeon-ui "license_resources"
 if(BUILD_TESTING)
   find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
 
+  qt_add_executable(niconeon-ui-fake-core
+    tests/support/fake_core.cpp
+  )
+
+  target_link_libraries(niconeon-ui-fake-core PRIVATE
+    Qt6::Core
+  )
+
+  set_target_properties(niconeon-ui-fake-core PROPERTIES
+    OUTPUT_NAME niconeon-fake-core
+  )
+
   qt_add_executable(niconeon-ui-unit
     tests/unit/spatial_grid_incremental_test.cpp
     src/danmaku/DanmakuSpatialGrid.cpp
@@ -110,6 +122,26 @@ if(BUILD_TESTING)
   )
 
   add_test(NAME spatial_grid_incremental_test COMMAND niconeon-ui-unit)
+
+  qt_add_executable(niconeon-ui-unit-core-client
+    tests/unit/core_client_test.cpp
+    src/ipc/CoreClient.cpp
+  )
+
+  target_include_directories(niconeon-ui-unit-core-client PRIVATE
+    src
+  )
+
+  target_link_libraries(niconeon-ui-unit-core-client PRIVATE
+    Qt6::Core
+    Qt6::Test
+  )
+
+  add_dependencies(niconeon-ui-unit-core-client niconeon-ui-fake-core)
+  add_test(NAME core_client_test COMMAND niconeon-ui-unit-core-client)
+  set_tests_properties(core_client_test PROPERTIES
+    ENVIRONMENT "NICONEON_FAKE_CORE_BIN=$<TARGET_FILE:niconeon-ui-fake-core>"
+  )
 
   qt_add_executable(niconeon-ui-unit-danmaku-text-width
     tests/unit/danmaku_text_width_test.cpp
@@ -130,6 +162,26 @@ if(BUILD_TESTING)
   )
 
   add_test(NAME danmaku_text_width_test COMMAND niconeon-ui-unit-danmaku-text-width)
+
+  qt_add_executable(niconeon-ui-unit-danmaku-ng-drop
+    tests/unit/danmaku_ng_drop_test.cpp
+    src/danmaku/DanmakuController.cpp
+    src/danmaku/DanmakuSimdUpdater.cpp
+    src/danmaku/DanmakuUpdateWorker.cpp
+    src/danmaku/DanmakuSpatialGrid.cpp
+  )
+
+  target_include_directories(niconeon-ui-unit-danmaku-ng-drop PRIVATE
+    src
+  )
+
+  target_link_libraries(niconeon-ui-unit-danmaku-ng-drop PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+  )
+
+  add_test(NAME danmaku_ng_drop_test COMMAND niconeon-ui-unit-danmaku-ng-drop)
 endif()
 
 if(BUILD_TESTING AND NICONEON_BUILD_UI_E2E)
