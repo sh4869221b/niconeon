@@ -87,6 +87,8 @@ void CoreClient::startDefault() {
         return;
     }
     m_expectedStop = false;
+    ++m_requestGeneration;
+    m_pendingRequests.clear();
     m_pendingTickSessionId.clear();
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
@@ -111,6 +113,8 @@ void CoreClient::stop() {
         return;
     }
     m_expectedStop = true;
+    ++m_requestGeneration;
+    m_pendingRequests.clear();
     m_pendingTickSessionId.clear();
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
@@ -123,6 +127,7 @@ void CoreClient::stop() {
 }
 
 void CoreClient::openVideo(const QString &videoPath, const QString &videoId) {
+    ++m_requestGeneration;
     m_pendingTickSessionId.clear();
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
@@ -227,7 +232,13 @@ void CoreClient::onReadyReadStandardOutput() {
 
         const QJsonObject obj = doc.object();
         const qint64 id = obj.value("id").toInteger(-1);
-        const QString method = m_pendingMethods.take(id);
+        auto pendingIt = m_pendingRequests.find(id);
+        if (pendingIt == m_pendingRequests.end()) {
+            continue;
+        }
+        const PendingRequest pending = pendingIt.value();
+        m_pendingRequests.erase(pendingIt);
+        const QString method = pending.method;
 
         QVariant result;
         QVariant error;
@@ -241,7 +252,13 @@ void CoreClient::onReadyReadStandardOutput() {
         if (method == QStringLiteral("playback_tick_batch")
             && m_inFlightPlaybackTickRequestIds.remove(id) > 0) {
             m_playbackTickBatchInFlight = false;
-            flushPlaybackTickBatch();
+            if (pending.generation == m_requestGeneration) {
+                flushPlaybackTickBatch();
+            }
+        }
+
+        if (pending.generation != m_requestGeneration) {
+            continue;
         }
 
         emit responseReceived(method, result, error);
@@ -276,6 +293,8 @@ void CoreClient::onProcessFinished(int exitCode, QProcess::ExitStatus status) {
     }
 
     emit runningChanged();
+    ++m_requestGeneration;
+    m_pendingRequests.clear();
     m_pendingTickSessionId.clear();
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
@@ -306,6 +325,8 @@ void CoreClient::onProcessErrorOccurred(QProcess::ProcessError error) {
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
     m_inFlightPlaybackTickRequestIds.clear();
+    ++m_requestGeneration;
+    m_pendingRequests.clear();
     m_expectedStop = false;
     emit coreCrashed(message);
 }
@@ -317,7 +338,10 @@ qint64 CoreClient::sendRequest(const QString &method, const QVariantMap &params)
     }
 
     const qint64 id = m_nextRequestId++;
-    m_pendingMethods.insert(id, method);
+    m_pendingRequests.insert(id, PendingRequest {
+                                     method,
+                                     m_requestGeneration,
+                                 });
 
     QJsonObject payload;
     payload.insert("jsonrpc", "2.0");

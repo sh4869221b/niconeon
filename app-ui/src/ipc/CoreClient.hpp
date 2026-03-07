@@ -53,6 +53,11 @@ private:
         bool isSeek = false;
     };
 
+    struct PendingRequest {
+        QString method;
+        quint64 generation = 0;
+    };
+
     static QString executableName(const QString &baseName);
     QString resolveCoreProgram(QStringList *triedCandidates = nullptr) const;
     qint64 sendRequest(const QString &method, const QVariantMap &params);
@@ -62,10 +67,11 @@ private:
     QByteArray m_stdoutBuffer;
     QByteArray m_stderrBuffer;
     qint64 m_nextRequestId = 1;
-    QHash<qint64, QString> m_pendingMethods;
+    QHash<qint64, PendingRequest> m_pendingRequests;
     QString m_pendingTickSessionId;
     QVector<PendingPlaybackTick> m_pendingTicks;
     bool m_playbackTickBatchInFlight = false;
     QSet<qint64> m_inFlightPlaybackTickRequestIds;
+    quint64 m_requestGeneration = 1;
     bool m_expectedStop = false;
 };
