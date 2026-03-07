@@ -53,6 +53,8 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
     - License notice generation consistency (`THIRD_PARTY_NOTICES.txt`).
     - Rust core tests (`cargo test` on `core` workspace).
     - UI release build on Linux (Qt6 + libmpv).
+    - UI unit tests on Linux (`ui-unit-linux`, headless/offscreen).
+    - UI E2E best-effort run on Linux (`ui-e2e-linux-best-effort`; local `just ui-e2e` remains authoritative for rendernode pixel assertions).
     - UI release build on Windows (MSYS2 + Qt6 + libmpv).
 - Release (`.github/workflows/release.yml`)
   - Trigger: `v*` tags and manual dispatch.
