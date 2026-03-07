@@ -340,6 +340,12 @@ ApplicationWindow {
     }
 
     function handleQosWindowFeedback(tickBacklog) {
+        if (root.maxEmitPerTick <= 0) {
+            root.qosOverBudgetStreak = 0
+            root.qosStableStreak = 0
+            return
+        }
+
         const backlog = Math.max(0, Number(tickBacklog) || 0)
         if (root.perfEmitOverBudgetCount > 0 || backlog >= 3) {
             root.qosOverBudgetStreak += 1
