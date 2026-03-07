@@ -217,7 +217,7 @@ impl<F: CommentFetcher> AppCore<F> {
             Session {
                 comments,
                 cursor,
-                last_position_ms: 0,
+                last_position_ms: -1,
             },
         );
 
@@ -312,7 +312,7 @@ impl<F: CommentFetcher> AppCore<F> {
     ) -> Vec<CommentEvent> {
         if tick.is_seek || tick.position_ms < session.last_position_ms {
             session.cursor = cursor_for_position(&session.comments, tick.position_ms);
-            session.last_position_ms = tick.position_ms;
+            session.last_position_ms = tick.position_ms.saturating_sub(1);
             return Vec::new();
         }
 
@@ -502,7 +502,7 @@ fn to_json_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value> {
 }
 
 fn cursor_for_position(comments: &[CommentEvent], position_ms: i64) -> usize {
-    comments.partition_point(|c| c.at_ms <= position_ms)
+    comments.partition_point(|c| c.at_ms < position_ms)
 }
 
 fn synthetic_comment_mode_enabled() -> bool {
