@@ -9,6 +9,7 @@
 #include <QVariantMap>
 
 #include <algorithm>
+#include <cmath>
 
 class DanmakuTextWidthTest : public QObject {
     Q_OBJECT
@@ -18,11 +19,15 @@ private slots:
     void wideFullwidthTextDoesNotUnderestimate();
     void japaneseTextDoesNotUnderestimate();
     void minimumWidthIsPreserved();
+    void seekResumeLagCompensationPlacesCommentMidScroll();
 
 private:
     static int requiredBubbleWidth(const QString &text);
     static QSharedPointer<const QVector<DanmakuController::RenderItem>> appendSingleComment(
-        const QString &text);
+        const QString &commentId,
+        const QString &text,
+        qint64 atMs = 0,
+        qint64 playbackPositionMs = 0);
 };
 
 void DanmakuTextWidthTest::initTestCase() {
@@ -32,7 +37,8 @@ void DanmakuTextWidthTest::initTestCase() {
 
 void DanmakuTextWidthTest::wideFullwidthTextDoesNotUnderestimate() {
     const QString text = QStringLiteral("ｗｗｗｗｗｗｗｗｗｗ");
-    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot = appendSingleComment(text);
+    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot =
+        appendSingleComment(QStringLiteral("width-test-fullwidth"), text);
     QVERIFY(snapshot);
     QVERIFY(!snapshot->isEmpty());
     QCOMPARE((*snapshot)[0].text, text);
@@ -44,7 +50,8 @@ void DanmakuTextWidthTest::wideFullwidthTextDoesNotUnderestimate() {
 
 void DanmakuTextWidthTest::japaneseTextDoesNotUnderestimate() {
     const QString text = QStringLiteral("これはテストコメントです");
-    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot = appendSingleComment(text);
+    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot =
+        appendSingleComment(QStringLiteral("width-test-japanese"), text);
     QVERIFY(snapshot);
     QVERIFY(!snapshot->isEmpty());
     QCOMPARE((*snapshot)[0].text, text);
@@ -56,12 +63,30 @@ void DanmakuTextWidthTest::japaneseTextDoesNotUnderestimate() {
 
 void DanmakuTextWidthTest::minimumWidthIsPreserved() {
     const QString text = QStringLiteral("a");
-    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot = appendSingleComment(text);
+    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot =
+        appendSingleComment(QStringLiteral("width-test-min"), text);
     QVERIFY(snapshot);
     QVERIFY(!snapshot->isEmpty());
     QCOMPARE((*snapshot)[0].text, text);
     const int actualWidth = (*snapshot)[0].widthEstimate;
     QCOMPARE(actualWidth, DanmakuRenderStyle::kMinWidthPx);
+}
+
+void DanmakuTextWidthTest::seekResumeLagCompensationPlacesCommentMidScroll() {
+    const QString commentId = QStringLiteral("seek-resume-mid-scroll");
+    const QString text = QStringLiteral("seek resume");
+    const qint64 playbackPositionMs = 6000;
+    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot =
+        appendSingleComment(commentId, text, 0, playbackPositionMs);
+    QVERIFY(snapshot);
+    QVERIFY(!snapshot->isEmpty());
+    QCOMPARE((*snapshot)[0].commentId, commentId);
+
+    const qreal expectedSpeed = 120.0 + (qHash(commentId) % 70);
+    const qreal expectedX = (1280.0 + 12.0) - expectedSpeed * (playbackPositionMs / 1000.0);
+    QVERIFY2(
+        std::abs((*snapshot)[0].x - expectedX) < 0.5,
+        "seek-resumed comment should be positioned as if it had been flowing before the seek");
 }
 
 int DanmakuTextWidthTest::requiredBubbleWidth(const QString &text) {
@@ -74,21 +99,25 @@ int DanmakuTextWidthTest::requiredBubbleWidth(const QString &text) {
 }
 
 QSharedPointer<const QVector<DanmakuController::RenderItem>> DanmakuTextWidthTest::appendSingleComment(
-    const QString &text) {
+    const QString &commentId,
+    const QString &text,
+    qint64 atMs,
+    qint64 playbackPositionMs) {
     DanmakuController controller;
+    controller.setGlyphWarmupEnabled(false);
     controller.setViewportSize(1280.0, 720.0);
     controller.setLaneMetrics(36, 6);
     controller.setPlaybackPaused(true);
 
     QVariantMap comment;
-    comment.insert(QStringLiteral("comment_id"), QStringLiteral("width-test-comment"));
+    comment.insert(QStringLiteral("comment_id"), commentId);
     comment.insert(QStringLiteral("user_id"), QStringLiteral("width-test-user"));
     comment.insert(QStringLiteral("text"), text);
-    comment.insert(QStringLiteral("at_ms"), 0);
+    comment.insert(QStringLiteral("at_ms"), atMs);
 
     QVariantList comments;
     comments.push_back(comment);
-    controller.appendFromCore(comments, 0);
+    controller.appendFromCore(comments, playbackPositionMs);
 
     QCoreApplication::processEvents();
 

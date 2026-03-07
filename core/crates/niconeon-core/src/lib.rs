@@ -14,6 +14,10 @@ use niconeon_protocol::{
 use niconeon_store::Store;
 use uuid::Uuid;
 
+// Keep this aligned with the UI lag compensation cap so seek-resumed comments
+// can be placed mid-scroll instead of respawning at the right edge.
+const SEEK_RESUME_LOOKBACK_MS: i64 = 15_000;
+
 pub trait CommentFetcher {
     fn fetch_comments(&self, video_id: &str) -> Result<Vec<CommentEvent>>;
 }
@@ -316,9 +320,10 @@ impl<F: CommentFetcher> AppCore<F> {
         filter_engine: &FilterEngine,
     ) -> Vec<CommentEvent> {
         if tick.is_seek || tick.position_ms < session.last_position_ms {
+            let emit_comments = Self::collect_seek_resume_comments(session, tick, filter_engine);
             session.cursor = cursor_for_position(&session.comments, tick.position_ms);
             session.last_position_ms = tick.position_ms.saturating_sub(1);
-            return Vec::new();
+            return emit_comments;
         }
 
         if tick.paused {
@@ -343,6 +348,24 @@ impl<F: CommentFetcher> AppCore<F> {
         }
 
         session.last_position_ms = to_ms;
+        emit_comments
+    }
+
+    fn collect_seek_resume_comments(
+        session: &Session,
+        tick: &PlaybackTickSample,
+        filter_engine: &FilterEngine,
+    ) -> Vec<CommentEvent> {
+        let from_ms = tick.position_ms.saturating_sub(SEEK_RESUME_LOOKBACK_MS);
+        let start = cursor_for_position(&session.comments, from_ms);
+        let end = cursor_for_position(&session.comments, tick.position_ms);
+
+        let mut emit_comments = Vec::new();
+        for comment in &session.comments[start..end] {
+            if !filter_engine.should_hide(comment) {
+                emit_comments.push(comment.clone());
+            }
+        }
         emit_comments
     }
 
@@ -1215,6 +1238,89 @@ mod tests {
         assert_eq!(
             emitted[0].get("comment_id").and_then(|v| v.as_str()),
             Some("seek")
+        );
+    }
+
+    #[test]
+    fn seek_emits_comments_that_are_already_in_flight() {
+        let comments = vec![
+            CommentEvent {
+                comment_id: "earlier".to_string(),
+                at_ms: 3500,
+                user_id: "u1".to_string(),
+                text: "earlier".to_string(),
+            },
+            CommentEvent {
+                comment_id: "exact".to_string(),
+                at_ms: 5000,
+                user_id: "u2".to_string(),
+                text: "exact".to_string(),
+            },
+        ];
+
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(comments)),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+        let open = app.handle_request(open_video_req());
+        let session_id = open
+            .result
+            .as_ref()
+            .and_then(|v| v.get("session_id"))
+            .and_then(|v| v.as_str())
+            .expect("session id")
+            .to_string();
+
+        let seek_res = app.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(2),
+            method: "playback_tick_batch".to_string(),
+            params: json!({
+                "session_id": session_id,
+                "ticks": [{
+                    "position_ms": 5000,
+                    "paused": false,
+                    "is_seek": true
+                }]
+            }),
+        });
+        let seek_emitted = seek_res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("emit_comments"))
+            .and_then(|v| v.as_array())
+            .expect("seek emitted");
+        assert_eq!(seek_emitted.len(), 1);
+        assert_eq!(
+            seek_emitted[0].get("comment_id").and_then(|v| v.as_str()),
+            Some("earlier")
+        );
+
+        let res = app.handle_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(3),
+            method: "playback_tick_batch".to_string(),
+            params: json!({
+                "session_id": session_id,
+                "ticks": [{
+                    "position_ms": 5000,
+                    "paused": false,
+                    "is_seek": false
+                }]
+            }),
+        });
+        let emitted = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("emit_comments"))
+            .and_then(|v| v.as_array())
+            .expect("emit comments");
+
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            emitted[0].get("comment_id").and_then(|v| v.as_str()),
+            Some("exact")
         );
     }
 

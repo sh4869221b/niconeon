@@ -103,3 +103,6 @@ PlaybackTickSample {
   "is_seek": false
 }
 ```
+
+`is_seek: true` の tick では、core は再生位置直前のコメントを短い lookback 窓で再送し、
+UI がシーク直後でも「流れている途中」の弾幕を復元できるようにする。

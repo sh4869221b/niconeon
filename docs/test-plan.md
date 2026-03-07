@@ -6,7 +6,7 @@
 - regex validation: valid and invalid patterns.
 - filter order: NG user first, then regex.
 - undo last NG: only the latest token is restorable.
-- `playback_tick_batch`: normal progression, seek reset, paused tick, and legacy method rejection.
+- `playback_tick_batch`: normal progression, seek reset, seek resume for in-flight comments, paused tick, and legacy method rejection.
 
 ## Core Integration Tests
 
@@ -17,7 +17,7 @@
 
 - `spatial_grid_incremental_test`: `DanmakuSpatialGrid` の `upsert/remove` 差分更新が `rebuild` と同等の検索結果になることを検証する。
 - `core_client_test`: fake core を使い、`stderr` が crash 扱いされないこと、generation 切替後の stale `playback_tick_batch` が破棄されること、JSON-RPC `error.message` が文字列として届くことを検証する。
-- `danmaku_text_width_test`: 全角文字/日本語文字列を含むコメントで `widthEstimate` が `QFontMetrics` 実測幅 + 左右余白以上になることを検証する。
+- `danmaku_text_width_test`: 全角文字/日本語文字列を含むコメントで `widthEstimate` が `QFontMetrics` 実測幅 + 左右余白以上になること、およびシーク復帰時の長めの lag compensation でシーク前から流れていたコメントが途中位置に再配置されることを検証する。
 - `danmaku_ng_drop_test`: NG ドロップ失敗時に pending fade が rollback され、ドラッグ起点コメントが同一レーン優先で復帰することを検証する。
 - 実行コマンド例:
   - `just ui-test`
@@ -45,6 +45,7 @@
 - removing an NG user from filter dialog updates list and future filtering.
 - regex invalid input shows error and is not registered.
 - コメント非表示時は弾幕描画が停止し、再度表示に戻すと現在再生位置から再同期する。
+- シーク直後に、シーク位置より前に投稿されたコメントのうち本来まだ流れている途中のものが、右端から再出現せず途中位置で再表示される。
 - 計測ログ有効化時に、2秒ごとに `[perf-ui]` が標準出力へ出力され、`tick_sent`/`tick_result`/`tick_backlog` を含む。
 - 計測ログ有効化時に、`[perf-ui]` が `dropped_comments` / `coalesced_comments` / `emit_over_budget` を含む。
 - 計測ログ有効化時に、2秒ごとに `[perf-danmaku]` が標準出力へ出力され、`avg_ms`/`p50_ms`/`p95_ms`/`p99_ms`/`max_ms` を含む。
