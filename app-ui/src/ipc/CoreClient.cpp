@@ -86,6 +86,7 @@ void CoreClient::startDefault() {
     if (m_process.state() != QProcess::NotRunning) {
         return;
     }
+    m_expectedStop = false;
     m_pendingTickSessionId.clear();
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
@@ -109,6 +110,7 @@ void CoreClient::stop() {
     if (m_process.state() == QProcess::NotRunning) {
         return;
     }
+    m_expectedStop = true;
     m_pendingTickSessionId.clear();
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
@@ -263,18 +265,14 @@ void CoreClient::onReadyReadStandardError() {
 
         const QString message = QString::fromUtf8(line);
         qWarning().noquote() << "core stderr:" << message;
-        emit coreCrashed(QStringLiteral("core stderr: %1").arg(message));
     }
 }
 
 void CoreClient::onProcessFinished(int exitCode, QProcess::ExitStatus status) {
-    Q_UNUSED(status)
-
     const QString tail = QString::fromUtf8(m_stderrBuffer).trimmed();
     m_stderrBuffer.clear();
     if (!tail.isEmpty()) {
         qWarning().noquote() << "core stderr:" << tail;
-        emit coreCrashed(QStringLiteral("core stderr: %1").arg(tail));
     }
 
     emit runningChanged();
@@ -282,7 +280,23 @@ void CoreClient::onProcessFinished(int exitCode, QProcess::ExitStatus status) {
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
     m_inFlightPlaybackTickRequestIds.clear();
-    emit coreCrashed(QStringLiteral("core exited with code %1").arg(exitCode));
+
+    const bool expectedStop = m_expectedStop;
+    m_expectedStop = false;
+    if (expectedStop) {
+        return;
+    }
+
+    QString reason;
+    if (status == QProcess::CrashExit) {
+        reason = QStringLiteral("core crashed");
+    } else {
+        reason = QStringLiteral("core exited unexpectedly with code %1").arg(exitCode);
+    }
+    if (!tail.isEmpty()) {
+        reason += QStringLiteral(": %1").arg(tail);
+    }
+    emit coreCrashed(reason);
 }
 
 void CoreClient::onProcessErrorOccurred(QProcess::ProcessError error) {
@@ -292,6 +306,7 @@ void CoreClient::onProcessErrorOccurred(QProcess::ProcessError error) {
     m_pendingTicks.clear();
     m_playbackTickBatchInFlight = false;
     m_inFlightPlaybackTickRequestIds.clear();
+    m_expectedStop = false;
     emit coreCrashed(message);
 }
 

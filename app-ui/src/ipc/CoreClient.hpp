@@ -67,4 +67,5 @@ private:
     QVector<PendingPlaybackTick> m_pendingTicks;
     bool m_playbackTickBatchInFlight = false;
     QSet<qint64> m_inFlightPlaybackTickRequestIds;
+    bool m_expectedStop = false;
 };
