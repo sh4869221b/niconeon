@@ -9,10 +9,21 @@ fi
 version="$1"
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 out_dir="${repo_root}/dist"
-base="niconeon-${version}-linux-x86_64"
+ui_build_dir="${NICONEON_UI_BUILD_DIR:-app-ui/build-release}"
+core_build_dir="${NICONEON_CORE_BUILD_DIR:-core/target/release}"
+
+if [[ "${ui_build_dir}" != /* ]]; then
+  ui_build_dir="${repo_root}/${ui_build_dir}"
+fi
+
+if [[ "${core_build_dir}" != /* ]]; then
+  core_build_dir="${repo_root}/${core_build_dir}"
+fi
+
+base="${NICONEON_RELEASE_BASENAME:-niconeon-${version}-linux-x86_64}"
 out_zip="${out_dir}/${base}-binaries.zip"
-ui_bin="${repo_root}/app-ui/build-release/niconeon-ui"
-core_bin="${repo_root}/core/target/release/niconeon-core"
+ui_bin="${ui_build_dir}/niconeon-ui"
+core_bin="${core_build_dir}/niconeon-core"
 license_file="${repo_root}/LICENSE"
 gpl_file="${repo_root}/COPYING"
 source_code_file="${repo_root}/SOURCE_CODE.md"

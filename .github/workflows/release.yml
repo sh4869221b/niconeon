@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -12,6 +11,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,34 +24,8 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-license
-        run: cargo install --locked cargo-license
-
-      - name: Verify third-party notices are up to date
-        run: |
-          scripts/release/generate_third_party_notices.sh
-          git diff --exit-code -- THIRD_PARTY_NOTICES.txt
-
-      - name: Verify required license metadata files
-        run: |
-          test -f LICENSE
-          test -f COPYING
-          test -f SOURCE_CODE.md
-
       - name: Validate release tag format
         run: |
-          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
-            exit 0
-          fi
-
           if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "release tags must match vX.Y.Z: ${GITHUB_REF_NAME}" >&2
             exit 1
@@ -60,14 +34,65 @@ jobs:
       - name: Resolve version metadata
         id: meta
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            raw="${GITHUB_REF_NAME}"
-          else
-            raw="v0.0.0-dev-$(git rev-parse --short HEAD)"
-          fi
-          version="${raw#v}"
+          version="${GITHUB_REF_NAME#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "version=${version}"
+
+  wait-for-main-ci:
+    name: wait-for-main-ci
+    runs-on: ubuntu-latest
+    needs: prepare
+    outputs:
+      run_id: ${{ steps.wait.outputs.run_id }}
+      run_url: ${{ steps.wait.outputs.run_url }}
+
+    steps:
+      - name: Wait for matching main CI run
+        id: wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deadline=$(( $(date +%s) + 900 ))
+
+          while true; do
+            match="$(
+              gh run list \
+                --workflow CI \
+                --commit "${GITHUB_SHA}" \
+                --limit 20 \
+                --json databaseId,event,headBranch,status,conclusion,url \
+                --jq 'map(select(.event=="push" and .headBranch=="main")) | sort_by(.databaseId) | reverse | .[0] | select(.) | [(.databaseId|tostring), .status, (.conclusion // ""), .url] | @tsv' \
+                || true
+            )"
+
+            if [[ -n "${match}" ]]; then
+              IFS=$'\t' read -r run_id run_status run_conclusion run_url <<<"${match}"
+              echo "Found matching CI run: ${run_id} (${run_status}/${run_conclusion:-pending})"
+              echo "CI run URL: ${run_url}"
+
+              if [[ "${run_status}" == "completed" ]]; then
+                if [[ "${run_conclusion}" == "success" ]]; then
+                  echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+                  echo "run_url=${run_url}" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+
+                echo "Matching main CI run did not succeed: ${run_conclusion}" >&2
+                echo "Fallback: run the manual release-rebuild workflow for ${GITHUB_REF_NAME}." >&2
+                exit 1
+              fi
+            else
+              echo "Matching main CI run for ${GITHUB_SHA} is not visible yet."
+            fi
+
+            if (( $(date +%s) >= deadline )); then
+              echo "Timed out waiting for a successful main CI run for ${GITHUB_SHA}." >&2
+              echo "Fallback: run the manual release-rebuild workflow for ${GITHUB_REF_NAME}." >&2
+              exit 1
+            fi
+
+            sleep 30
+          done
 
   package-source:
     name: package-source
@@ -89,206 +114,85 @@ jobs:
           name: source-zip
           path: dist/niconeon-${{ needs.prepare.outputs.version }}-source.zip
 
-  package-linux:
-    name: package-linux
+  promote-artifacts:
+    name: promote-artifacts
     runs-on: ubuntu-latest
-    needs: prepare
+    needs:
+      - prepare
+      - wait-for-main-ci
+      - package-source
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
         with:
-          workspaces: core
+          fetch-depth: 0
 
-      - name: Install Linux build dependencies
+      - name: Download source artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: source-zip
+          path: dist
+
+      - name: Download prebuilt platform artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
-            pkg-config \
-            libmpv-dev \
-            qt6-base-dev \
-            qt6-base-dev-tools \
-            qt6-declarative-dev \
-            qt6-declarative-dev-tools \
-            zip
+          rm -rf dist/from-ci
+          mkdir -p dist/from-ci
+          gh run download "${{ needs.wait-for-main-ci.outputs.run_id }}" \
+            --dir dist/from-ci \
+            --name release-linux-binaries \
+            --name release-linux-appimage \
+            --name release-windows-binaries
 
-      - name: Build core (release)
-        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
-
-      - name: Build UI (release)
+      - name: Promote downloaded artifacts
         run: |
-          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build app-ui/build-release --parallel
+          version="${{ needs.prepare.outputs.version }}"
 
-      - name: Package Linux binaries zip
-        run: scripts/release/package_linux.sh "${{ needs.prepare.outputs.version }}"
+          linux_zip_src="dist/from-ci/release-linux-binaries/niconeon-linux-x86_64-binaries.zip"
+          linux_appimage_src="dist/from-ci/release-linux-appimage/niconeon-linux-x86_64.AppImage"
+          windows_zip_src="dist/from-ci/release-windows-binaries/niconeon-windows-x86_64-binaries.zip"
 
-      - name: Verify Linux binaries license bundle
-        run: scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64-binaries.zip"
+          for required in "${linux_zip_src}" "${linux_appimage_src}" "${windows_zip_src}"; do
+            if [[ ! -f "${required}" ]]; then
+              echo "missing prebuilt artifact: ${required}" >&2
+              echo "Fallback: run the manual release-rebuild workflow for ${GITHUB_REF_NAME}." >&2
+              exit 1
+            fi
+          done
 
-      - name: Upload Linux binaries artifact
+          mv "${linux_zip_src}" "dist/niconeon-${version}-linux-x86_64-binaries.zip"
+          mv "${linux_appimage_src}" "dist/niconeon-${version}-linux-x86_64.AppImage"
+          mv "${windows_zip_src}" "dist/niconeon-${version}-windows-x86_64-binaries.zip"
+
+      - name: Verify promoted binary artifacts
+        run: |
+          version="${{ needs.prepare.outputs.version }}"
+          scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${version}-linux-x86_64-binaries.zip"
+          scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${version}-linux-x86_64.AppImage"
+          scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${version}-windows-x86_64-binaries.zip"
+
+      - name: Generate release metadata
+        run: |
+          scripts/release/write_checksums.sh "${{ needs.prepare.outputs.version }}"
+          scripts/release/generate_commit_changelog.sh \
+            "${GITHUB_REF_NAME}" \
+            dist/release-commit-changelog.md
+
+      - name: Show promoted artifact list
+        run: ls -lh dist
+
+      - name: Upload promoted release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: linux-binaries-zip
-          path: dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64-binaries.zip
-
-  package-linux-appimage:
-    name: package-linux-appimage
-    runs-on: ubuntu-latest
-    needs: prepare
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core
-
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
-            pkg-config \
-            libmpv-dev \
-            qt6-base-dev \
-            qt6-base-dev-tools \
-            qt6-declarative-dev \
-            qt6-declarative-dev-tools \
-            zip \
-            patchelf \
-            desktop-file-utils
-
-      - name: Build core (release)
-        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
-
-      - name: Build UI (release)
-        run: |
-          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build app-ui/build-release --parallel
-
-      - name: Package Linux AppImage
-        run: scripts/release/package_linux_appimage.sh "${{ needs.prepare.outputs.version }}"
-
-      - name: Verify Linux AppImage license bundle
-        run: scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage"
-
-      - name: Upload Linux AppImage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-appimage
-          path: dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage
-
-  package-windows:
-    name: package-windows
-    runs-on: windows-latest
-    needs: prepare
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core
-
-      - name: Build core (release, MSVC)
-        shell: pwsh
-        run: |
-          $start = Get-Date
-          echo "::notice title=timing::package-windows core build started $($start.ToUniversalTime().ToString('o'))"
-          cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
-          $elapsed = [int]((Get-Date) - $start).TotalSeconds
-          echo "::notice title=timing::package-windows core build finished (${elapsed}s)"
-
-      - name: Setup MSYS2 (Qt6 + mpv)
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          cache: true
-          update: true
-          install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-ccache
-            mingw-w64-x86_64-qt6-base
-            mingw-w64-x86_64-qt6-declarative
-            mingw-w64-x86_64-qt6-tools
-            mingw-w64-x86_64-mpv
-            unzip
-            zip
-
-      - name: Cache ccache (Windows release)
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}\\.ccache
-          key: ccache-windows-release-${{ runner.os }}-${{ hashFiles('app-ui/CMakeLists.txt', 'app-ui/src/**', 'app-ui/qml/**') }}
-          restore-keys: |
-            ccache-windows-release-${{ runner.os }}-
-
-      - name: Show MSYS2 package versions
-        shell: msys2 {0}
-        run: pacman -Q | grep -E '^mingw-w64-x86_64-(gcc|cmake|ninja|pkgconf|ccache|qt6-base|qt6-declarative|qt6-tools|mpv)( |$)' || true
-
-      - name: Build UI (release, MSYS2)
-        shell: msys2 {0}
-        run: |
-          start_epoch="$(date +%s)"
-          echo "::notice title=timing::package-windows ui build started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
-          ccache -z || true
-          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build app-ui/build-release --parallel
-          ccache -s || true
-          end_epoch="$(date +%s)"
-          echo "::notice title=timing::package-windows ui build finished ($((end_epoch - start_epoch))s)"
-
-      - name: Package Windows binaries zip
-        shell: msys2 {0}
-        run: |
-          start_epoch="$(date +%s)"
-          echo "::notice title=timing::package-windows packaging started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          scripts/release/package_windows_msys2.sh "${{ needs.prepare.outputs.version }}"
-          end_epoch="$(date +%s)"
-          echo "::notice title=timing::package-windows packaging finished ($((end_epoch - start_epoch))s)"
-
-      - name: Verify Windows binaries license bundle
-        shell: msys2 {0}
-        run: scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip"
-
-      - name: Verify Windows bundle includes qt.conf
-        shell: msys2 {0}
-        run: |
-          unzip -Z1 "dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip" \
-            | grep -E '/qt\.conf$'
-
-      - name: Upload Windows binaries artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-binaries-zip
-          path: dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip
+          name: release-promotion-bundle
+          path: |
+            dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64-binaries.zip
+            dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage
+            dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip
+            dist/niconeon-${{ needs.prepare.outputs.version }}-sha256sums.txt
+            dist/release-commit-changelog.md
 
   publish-release:
     name: publish-release
@@ -296,9 +200,7 @@ jobs:
     needs:
       - prepare
       - package-source
-      - package-linux
-      - package-linux-appimage
-      - package-windows
+      - promote-artifacts
 
     steps:
       - name: Checkout
@@ -313,21 +215,10 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Generate SHA256 checksums
-        run: scripts/release/write_checksums.sh "${{ needs.prepare.outputs.version }}"
-
-      - name: Generate commit changelog body (tag only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          scripts/release/generate_commit_changelog.sh \
-            "${GITHUB_REF_NAME}" \
-            dist/release-commit-changelog.md
-
       - name: Show artifact list
         run: ls -lh dist
 
-      - name: Publish GitHub release (tag only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           body_path: dist/release-commit-changelog.md
@@ -339,21 +230,8 @@ jobs:
             dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip
             dist/niconeon-${{ needs.prepare.outputs.version }}-sha256sums.txt
 
-      - name: Update repository CHANGELOG.md (tag only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Update repository CHANGELOG.md
         run: |
           scripts/release/update_repo_changelog.sh \
             "${GITHUB_REF_NAME}" \
             "${{ github.event.repository.default_branch }}"
-
-      - name: Upload manual-dispatch bundle
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-bundle-${{ needs.prepare.outputs.version }}
-          path: |
-            dist/niconeon-${{ needs.prepare.outputs.version }}-source.zip
-            dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64-binaries.zip
-            dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage
-            dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip
-            dist/niconeon-${{ needs.prepare.outputs.version }}-sha256sums.txt

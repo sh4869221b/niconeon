@@ -13,6 +13,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   license-check:
     name: license-check
@@ -84,6 +87,68 @@ jobs:
 
       - name: Build UI (Linux)
         run: cmake --build app-ui/build-ci --parallel
+
+      - name: Setup Rust
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Install Linux release packaging dependencies
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            zip \
+            patchelf \
+            desktop-file-utils
+
+      - name: Build core (release)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+
+      - name: Package Linux binaries zip
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          NICONEON_UI_BUILD_DIR: app-ui/build-ci
+          NICONEON_CORE_BUILD_DIR: core/target/release
+          NICONEON_RELEASE_BASENAME: niconeon-linux-x86_64
+        run: scripts/release/package_linux.sh ci
+
+      - name: Verify Linux binaries license bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-linux-x86_64-binaries.zip
+
+      - name: Package Linux AppImage
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          NICONEON_UI_BUILD_DIR: app-ui/build-ci
+          NICONEON_CORE_BUILD_DIR: core/target/release
+          NICONEON_RELEASE_BASENAME: niconeon-linux-x86_64
+        run: scripts/release/package_linux_appimage.sh ci
+
+      - name: Verify Linux AppImage license bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-linux-x86_64.AppImage
+
+      - name: Upload Linux binaries artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-binaries
+          path: dist/niconeon-linux-x86_64-binaries.zip
+          retention-days: 14
+
+      - name: Upload Linux AppImage artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-appimage
+          path: dist/niconeon-linux-x86_64.AppImage
+          retention-days: 14
 
   ui-unit-linux:
     name: ui-unit-linux
@@ -182,6 +247,8 @@ jobs:
             mingw-w64-x86_64-qt6-declarative
             mingw-w64-x86_64-qt6-tools
             mingw-w64-x86_64-mpv
+            unzip
+            zip
 
       - name: Cache ccache (Windows UI)
         uses: actions/cache@v4
@@ -206,3 +273,45 @@ jobs:
           export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
           cmake --build app-ui/build-ci --parallel
           ccache -s || true
+
+      - name: Setup Rust
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Build core (release, MSVC)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+
+      - name: Package Windows binaries zip
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: msys2 {0}
+        env:
+          NICONEON_UI_BUILD_DIR: app-ui/build-ci
+          NICONEON_CORE_BUILD_DIR: core/target/release
+          NICONEON_RELEASE_BASENAME: niconeon-windows-x86_64
+        run: scripts/release/package_windows_msys2.sh ci
+
+      - name: Verify Windows binaries license bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: msys2 {0}
+        run: scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-windows-x86_64-binaries.zip
+
+      - name: Verify Windows bundle includes qt.conf
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: msys2 {0}
+        run: unzip -Z1 dist/niconeon-windows-x86_64-binaries.zip | grep -E '/qt\.conf$'
+
+      - name: Upload Windows binaries artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-binaries
+          path: dist/niconeon-windows-x86_64-binaries.zip
+          retention-days: 14

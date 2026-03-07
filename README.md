@@ -94,14 +94,20 @@ GitHub Actions で以下を実行します。
 
 - `core-test`（Rust core のテスト）
 - `ui-build-linux`（Linux で UI リリースビルド）
-- `ui-e2e-linux`（Linux + Xvfb で UI E2E テスト）
+- `ui-unit-linux`（Linux で UI unit test）
+- `ui-e2e-linux-best-effort`（Linux + Xvfb で UI E2E テスト）
 - `ui-build-windows`（Windows/MSYS2 で UI リリースビルド）
 
 `main` への PR と `main` への push で実行され、`main` マージ時は必須チェックとして扱います。
+`main` への push では、加えて release-ready artifact を事前生成し、以下を workflow artifact として 14 日保持します。
+
+- `release-linux-binaries`
+- `release-linux-appimage`
+- `release-windows-binaries`
 
 ## リリース成果物
 
-`vX.Y.Z` タグを push すると、Release ワークフローが以下を生成・公開します。
+`vX.Y.Z` タグを push すると、Release ワークフローが同一 SHA の `main` CI artifact を昇格し、以下を公開します。
 
 - `niconeon-X.Y.Z-source.zip`
 - `niconeon-X.Y.Z-linux-x86_64-binaries.zip`
@@ -112,7 +118,8 @@ GitHub Actions で以下を実行します。
 GitHub Release 本文には、前回 `v*` タグから今回タグまでのコミットメッセージ（merge commit 除外）を自動で追加し、続けて GitHub 自動生成のリリースノートを併記します。
 全バージョン履歴はリポジトリ直下の `CHANGELOG.md` に配置し、タグリリース時にワークフローが自動更新して `main`（既定ブランチ）へ反映します。
 
-手動実行（`workflow_dispatch`）時は GitHub Release は作成せず、同名成果物を workflow artifact として保存します。
+通常の tag release では Linux/Windows の再ビルドは行わず、`main` CI 側で検証済みの成果物を再検証して GitHub Release に載せます。
+artifact の欠落・期限切れ・promotion 失敗時は、`Release Rebuild` workflow を手動実行して full rebuild + publish を行います。
 
 ## 制約
 

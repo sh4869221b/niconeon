@@ -9,8 +9,20 @@ fi
 version="$1"
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 out_dir="${repo_root}/dist"
-ui_bin="${repo_root}/app-ui/build-release/niconeon-ui"
-core_bin="${repo_root}/core/target/release/niconeon-core"
+ui_build_dir="${NICONEON_UI_BUILD_DIR:-app-ui/build-release}"
+core_build_dir="${NICONEON_CORE_BUILD_DIR:-core/target/release}"
+
+if [[ "${ui_build_dir}" != /* ]]; then
+  ui_build_dir="${repo_root}/${ui_build_dir}"
+fi
+
+if [[ "${core_build_dir}" != /* ]]; then
+  core_build_dir="${repo_root}/${core_build_dir}"
+fi
+
+base="${NICONEON_RELEASE_BASENAME:-niconeon-${version}-linux-x86_64}"
+ui_bin="${ui_build_dir}/niconeon-ui"
+core_bin="${core_build_dir}/niconeon-core"
 desktop_file="${repo_root}/packaging/appimage/niconeon.desktop"
 icon_file="${repo_root}/packaging/appimage/niconeon.png"
 license_file="${repo_root}/LICENSE"
@@ -101,7 +113,7 @@ APPIMAGE_EXTRACT_AND_RUN=1 \
   --plugin qt \
   --deploy-deps-only
 
-out_appimage="${out_dir}/niconeon-${version}-linux-x86_64.AppImage"
+out_appimage="${out_dir}/${base}.AppImage"
 APPIMAGE_EXTRACT_AND_RUN=1 "${appimagetool_img}" "${app_dir}" "${out_appimage}"
 chmod 755 "${out_appimage}"
 

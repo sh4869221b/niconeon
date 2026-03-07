@@ -58,14 +58,14 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
     - UI unit tests on Linux (`ui-unit-linux`, headless/offscreen).
     - UI E2E best-effort run on Linux (`ui-e2e-linux-best-effort`; local `just ui-e2e` remains authoritative for rendernode pixel assertions).
     - UI release build on Windows (MSYS2 + Qt6 + libmpv).
+  - On pushes to `main`, additionally produces prebuilt release artifacts (`release-linux-binaries`, `release-linux-appimage`, `release-windows-binaries`) for 14-day retention.
 - Release (`.github/workflows/release.yml`)
-  - Trigger: `v*` tags and manual dispatch.
-  - Packages:
-    - source zip.
-    - Linux binaries zip (`niconeon-ui`, `niconeon-core`).
-    - Linux AppImage (with wrapper setting `NICONEON_CORE_BIN`).
-    - Windows binaries zip (Qt runtime + `libmpv` and its dependent MinGW DLLs bundled).
-    - `LICENSE`, `COPYING`, `SOURCE_CODE.md`, and `THIRD_PARTY_NOTICES.txt` bundled in distributable binaries.
+  - Trigger: `v*` tags.
+  - Waits for the matching successful `main` CI run for the same SHA, downloads the prebuilt Linux/Windows artifacts, re-verifies bundled licenses, writes `sha256` checksums, and publishes the GitHub Release.
+  - Builds only the source zip at release time.
   - Repository:
     - Full changelog markdown (`CHANGELOG.md`, generated from commit subjects and auto-updated on tag releases).
-  - Publishes GitHub Release assets on tag builds and writes `sha256` checksums.
+  - Publishes GitHub Release assets from promoted artifacts instead of rebuilding them.
+- Manual rebuild (`.github/workflows/release-rebuild.yml`)
+  - Trigger: `workflow_dispatch`.
+  - Re-runs the full Linux/Windows packaging pipeline when promoted artifacts are unavailable or stale, then publishes the same release asset set as the normal release workflow.
