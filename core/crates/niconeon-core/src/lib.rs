@@ -198,13 +198,13 @@ impl<F: CommentFetcher> AppCore<F> {
                 }
                 Err(err) => {
                     eprintln!("comment fetch failed for {}: {err:#}", params.video_id);
-                    match self
-                        .store
-                        .load_comment_cache(&params.video_id)
-                        .context("load cache")?
-                    {
-                        Some(cached) => (cached, CommentSource::Cache),
-                        None => (Vec::new(), CommentSource::None),
+                    match self.store.load_comment_cache(&params.video_id) {
+                        Ok(Some(cached)) => (cached, CommentSource::Cache),
+                        Ok(None) => (Vec::new(), CommentSource::None),
+                        Err(cache_err) => {
+                            eprintln!("comment cache load failed for {}: {cache_err:#}", params.video_id);
+                            (Vec::new(), CommentSource::None)
+                        }
                     }
                 }
             }
