@@ -417,11 +417,18 @@ impl<F: CommentFetcher> AppCore<F> {
         }
 
         let user_id = last.user_id.clone();
-        self.filter_engine.remove_ng_user(&user_id);
-        let _ = self
+        let removed = self
             .store
             .remove_ng_user(&user_id)
             .context("remove ng user")?;
+        if !removed {
+            return Ok(UndoLastNgResult {
+                restored: false,
+                user_id: None,
+            });
+        }
+
+        self.filter_engine.remove_ng_user(&user_id);
         self.last_undo = None;
 
         Ok(UndoLastNgResult {
