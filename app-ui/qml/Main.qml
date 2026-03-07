@@ -35,7 +35,7 @@ ApplicationWindow {
     property bool commentsVisible: true
     property bool perfLogEnabled: false
     property string perfProfile: "low_spec"
-    property int targetFps: 30
+    property int targetFps: 60
     property int maxEmitPerTick: 48
     property bool coalesceSameContent: true
     property int perfTickSentCount: 0
@@ -54,6 +54,7 @@ ApplicationWindow {
     property int activeCommentCount: 0
     property int fontSizeLevel: 1
     property int appFontPixelSize: 14
+    property bool pendingFileDialogOpen: false
 
     Settings {
         id: speedSettings
@@ -68,7 +69,7 @@ ApplicationWindow {
         property bool commentsVisible: true
         property bool perfLogEnabled: false
         property string perfProfile: "low_spec"
-        property int targetFps: 30
+        property int targetFps: 60
         property int maxEmitPerTick: 48
         property bool coalesceSameContent: true
         property int fontSizeLevel: 1
@@ -194,6 +195,16 @@ ApplicationWindow {
         applyPlaybackRate(restored, false)
     }
 
+    function openFileDialog() {
+        if (fileDialogLoader.item) {
+            fileDialogLoader.item.open()
+            return
+        }
+
+        pendingFileDialogOpen = true
+        fileDialogLoader.active = true
+    }
+
     function handleAddSpeedPreset(rawValue) {
         const rate = normalizeRate(rawValue)
         if (isNaN(rate)) {
@@ -290,20 +301,20 @@ ApplicationWindow {
         const normalized = sanitizePerfProfile(profile)
         if (normalized === "high") {
             return {
-                targetFps: 30,
+                targetFps: 60,
                 maxEmitPerTick: 0,
                 coalesceSameContent: false
             }
         }
         if (normalized === "balanced") {
             return {
-                targetFps: 30,
+                targetFps: 60,
                 maxEmitPerTick: 96,
                 coalesceSameContent: false
             }
         }
         return {
-            targetFps: 30,
+            targetFps: 60,
             maxEmitPerTick: 48,
             coalesceSameContent: true
         }
@@ -311,7 +322,7 @@ ApplicationWindow {
 
     function applyRuntimeProfile(profile, targetFps, maxEmitPerTick, coalesceSameContent, notify) {
         const normalizedProfile = sanitizePerfProfile(profile)
-        const normalizedTargetFps = Math.max(10, Math.min(120, Number(targetFps) || 30))
+        const normalizedTargetFps = Math.max(10, Math.min(120, Number(targetFps) || 60))
         const normalizedMaxEmit = Math.max(0, Math.min(2000, Number(maxEmitPerTick) || 0))
         const normalizedCoalesce = !!coalesceSameContent
 
@@ -591,12 +602,28 @@ ApplicationWindow {
         onTriggered: Qt.quit()
     }
 
-    FileDialog {
-        id: fileDialog
-        title: "動画ファイルを選択"
-        onAccepted: {
-            const path = fileUrlToLocalPath(selectedFile)
-            root.startPlaybackFromPath(path)
+    Component {
+        id: fileDialogComponent
+
+        FileDialog {
+            title: "動画ファイルを選択"
+            onAccepted: {
+                const path = fileUrlToLocalPath(selectedFile)
+                root.startPlaybackFromPath(path)
+            }
+        }
+    }
+
+    Loader {
+        id: fileDialogLoader
+        active: false
+        sourceComponent: fileDialogComponent
+        onLoaded: {
+            if (!root.pendingFileDialogOpen || !item) {
+                return
+            }
+            root.pendingFileDialogOpen = false
+            item.open()
         }
     }
 
@@ -676,7 +703,7 @@ ApplicationWindow {
 
             AppButton {
                 text: "動画を開く"
-                onClicked: fileDialog.open()
+                onClicked: root.openFileDialog()
             }
 
             AppButton {
@@ -931,7 +958,7 @@ ApplicationWindow {
         root.commentsVisible = uiSettings.commentsVisible
         root.perfLogEnabled = uiSettings.perfLogEnabled
         root.perfProfile = root.sanitizePerfProfile(uiSettings.perfProfile)
-        root.targetFps = Math.max(10, Math.min(120, Number(uiSettings.targetFps || 30)))
+        root.targetFps = Math.max(10, Math.min(120, Number(uiSettings.targetFps || 60)))
         root.maxEmitPerTick = Math.max(0, Math.min(2000, Number(uiSettings.maxEmitPerTick || 48)))
         root.coalesceSameContent = !!uiSettings.coalesceSameContent
         root.applyFontSizeLevel(uiSettings.fontSizeLevel, false)

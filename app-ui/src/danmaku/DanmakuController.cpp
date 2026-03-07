@@ -78,6 +78,7 @@ DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
     const DanmakuSimdMode resolvedSimdMode = DanmakuSimdUpdater::resolveMode(requestedSimdMode);
     m_simdModeName = DanmakuSimdUpdater::modeName(resolvedSimdMode);
 
+    m_frameTimer.setTimerType(Qt::PreciseTimer);
     updateFrameTimerInterval();
     connect(&m_frameTimer, &QTimer::timeout, this, &DanmakuController::onFrame);
     m_frameTimer.start();
@@ -576,6 +577,16 @@ qint64 DanmakuController::overlayMetricsUpdatedAtMs() const {
     return m_overlayMetricsUpdatedAtMs;
 }
 
+void DanmakuController::recordPresentedCommentFrame(qint64 presentedAtMs) {
+    if (presentedAtMs <= 0) {
+        presentedAtMs = QDateTime::currentMSecsSinceEpoch();
+    }
+    if (m_overlayMetricWindowStartMs <= 0) {
+        m_overlayMetricWindowStartMs = presentedAtMs;
+    }
+    ++m_presentedCommentFrameCount;
+}
+
 QSharedPointer<const QVector<DanmakuController::RenderItem>> DanmakuController::renderSnapshot() const {
     QMutexLocker locker(&m_renderSnapshotMutex);
     return m_renderSnapshot;
@@ -589,7 +600,6 @@ void DanmakuController::onFrame() {
     if (elapsedMs <= 0) {
         return;
     }
-    ++m_overlayMetricFrameCount;
     if (m_perfLogEnabled) {
         ++m_perfLogFrameCount;
         m_perfFrameSamplesMs.push_back(elapsedMs);
@@ -1602,18 +1612,18 @@ void DanmakuController::flushPendingDiffs(bool emitSnapshotSignal) {
 void DanmakuController::updateOverlayMetrics(qint64 nowMs) {
     if (m_overlayMetricWindowStartMs <= 0) {
         m_overlayMetricWindowStartMs = nowMs;
-        m_overlayMetricFrameCount = 0;
+        m_presentedCommentFrameCount = 0;
     }
 
     const qint64 elapsedMs = nowMs - m_overlayMetricWindowStartMs;
     if (elapsedMs >= 2000) {
-        const double fps = elapsedMs > 0 ? (m_overlayMetricFrameCount * 1000.0 / elapsedMs) : 0.0;
+        const double fps = elapsedMs > 0 ? (m_presentedCommentFrameCount * 1000.0 / elapsedMs) : 0.0;
         if (std::abs(m_commentRenderFps - fps) > 0.05) {
             m_commentRenderFps = fps;
             emit commentRenderFpsChanged();
         }
         m_overlayMetricWindowStartMs = nowMs;
-        m_overlayMetricFrameCount = 0;
+        m_presentedCommentFrameCount = 0;
     }
 
     const int count = activeItemCount();

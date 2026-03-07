@@ -22,7 +22,7 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
   - SIMD mode for position update:
     - `NICONEON_SIMD_MODE=auto|avx2|scalar` (default: `auto`).
 - Provide danmaku visibility toggle for low-spec environments.
-- Apply runtime profile (`high` / `balanced` / `low_spec`) and target FPS to keep playback stable on low-end CPUs.
+- Apply runtime profile (`high` / `balanced` / `low_spec`) and target FPS (`60` by default) to keep playback stable on low-end CPUs.
 - Emit periodic UI/danmaku performance logs when enabled.
 - Show NG drop zone only during drag.
 - Show toast notifications and Undo actions.

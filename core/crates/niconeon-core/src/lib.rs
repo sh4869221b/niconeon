@@ -84,19 +84,19 @@ impl RuntimeProfileConfig {
         match profile {
             RuntimeProfile::High => Self {
                 profile,
-                target_fps: 30,
+                target_fps: 60,
                 max_emit_per_tick: 0,
                 coalesce_same_content: false,
             },
             RuntimeProfile::Balanced => Self {
                 profile,
-                target_fps: 30,
+                target_fps: 60,
                 max_emit_per_tick: 96,
                 coalesce_same_content: false,
             },
             RuntimeProfile::LowSpec => Self {
                 profile,
-                target_fps: 30,
+                target_fps: 60,
                 max_emit_per_tick: 48,
                 coalesce_same_content: true,
             },
@@ -1342,6 +1342,32 @@ mod tests {
         };
         let res = app.handle_request(req);
         assert!(res.error.is_some());
+    }
+
+    #[test]
+    fn runtime_profile_defaults_to_60_fps() {
+        let store = Store::open_memory().expect("store");
+        let fetcher = MockFetcher {
+            data: RefCell::new(Ok(Vec::new())),
+        };
+        let mut app = AppCore::new(store, fetcher).expect("app");
+
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(1),
+            method: "set_runtime_profile".to_string(),
+            params: json!({
+                "profile": "balanced"
+            }),
+        };
+        let res = app.handle_request(req);
+        let target_fps = res
+            .result
+            .as_ref()
+            .and_then(|v| v.get("target_fps"))
+            .and_then(|v| v.as_u64())
+            .expect("target_fps");
+        assert_eq!(target_fps, 60);
     }
 
     #[test]

@@ -2,10 +2,13 @@
 
 #include "danmaku/DanmakuController.hpp"
 
+#include <atomic>
+#include <QMetaObject>
 #include <QPointer>
 #include <QQuickItem>
 
 class QSGNode;
+class QQuickWindow;
 
 class DanmakuRenderNodeItem : public QQuickItem {
     Q_OBJECT
@@ -25,6 +28,10 @@ protected:
 
 private:
     void handleControllerRenderSnapshotChanged();
+    void handleWindowChanged(QQuickWindow *window);
+    void handleWindowFrameSwapped();
 
     QPointer<DanmakuController> m_controller;
+    QMetaObject::Connection m_frameSwappedConnection;
+    std::atomic_bool m_pendingPresentedFrame = false;
 };

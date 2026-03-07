@@ -74,6 +74,7 @@ public:
     double commentRenderFps() const;
     int activeCommentCountMetric() const;
     qint64 overlayMetricsUpdatedAtMs() const;
+    void recordPresentedCommentFrame(qint64 presentedAtMs = 0);
 
 signals:
     void ngDropZoneVisibleChanged();
@@ -187,7 +188,7 @@ private:
     bool m_ngDropZoneVisible = false;
     bool m_playbackPaused = true;
     double m_playbackRate = 1.0;
-    int m_targetFps = 30;
+    int m_targetFps = 60;
     qreal m_ngZoneX = 0;
     qreal m_ngZoneY = 0;
     qreal m_ngZoneWidth = 0;
@@ -241,7 +242,7 @@ private:
     int m_perfSnapshotFullRebuildCount = 0;
     int m_perfSnapshotRowUpdateCount = 0;
     qint64 m_overlayMetricWindowStartMs = 0;
-    int m_overlayMetricFrameCount = 0;
+    int m_presentedCommentFrameCount = 0;
     double m_commentRenderFps = 0.0;
     int m_activeCommentCount = 0;
     qint64 m_overlayMetricsUpdatedAtMs = 0;

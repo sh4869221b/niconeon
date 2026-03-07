@@ -2,6 +2,7 @@
 #include "danmaku/DanmakuRenderStyle.hpp"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QFontMetrics>
 #include <QTest>
@@ -16,6 +17,8 @@ class DanmakuTextWidthTest : public QObject {
 
 private slots:
     void initTestCase();
+    void defaultTargetFpsIs60();
+    void commentFpsTracksPresentedFramesOnly();
     void wideFullwidthTextDoesNotUnderestimate();
     void japaneseTextDoesNotUnderestimate();
     void minimumWidthIsPreserved();
@@ -33,6 +36,28 @@ private:
 void DanmakuTextWidthTest::initTestCase() {
     qputenv("NICONEON_DANMAKU_WORKER", "off");
     qputenv("NICONEON_SIMD_MODE", "scalar");
+}
+
+void DanmakuTextWidthTest::defaultTargetFpsIs60() {
+    DanmakuController controller;
+    QCOMPARE(controller.targetFps(), 60);
+}
+
+void DanmakuTextWidthTest::commentFpsTracksPresentedFramesOnly() {
+    DanmakuController controller;
+
+    QTest::qWait(2200);
+    QCOMPARE(controller.commentRenderFps(), 0.0);
+
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 1000) {
+        controller.recordPresentedCommentFrame();
+        QCoreApplication::processEvents();
+        QTest::qWait(16);
+    }
+
+    QTRY_VERIFY_WITH_TIMEOUT(controller.commentRenderFps() > 5.0, 2500);
 }
 
 void DanmakuTextWidthTest::wideFullwidthTextDoesNotUnderestimate() {

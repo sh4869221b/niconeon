@@ -4,6 +4,7 @@
 #include "danmaku/DanmakuRenderStyle.hpp"
 
 #include <QColor>
+#include <QDateTime>
 #include <QFont>
 #include <QImage>
 #include <QOpenGLBuffer>
@@ -385,6 +386,7 @@ private:
 
 DanmakuRenderNodeItem::DanmakuRenderNodeItem(QQuickItem *parent) : QQuickItem(parent) {
     setFlag(QQuickItem::ItemHasContents, true);
+    connect(this, &QQuickItem::windowChanged, this, &DanmakuRenderNodeItem::handleWindowChanged);
 }
 
 DanmakuController *DanmakuRenderNodeItem::controller() const {
@@ -401,6 +403,7 @@ void DanmakuRenderNodeItem::setController(DanmakuController *controller) {
     }
 
     m_controller = controller;
+    m_pendingPresentedFrame.store(false, std::memory_order_release);
 
     if (m_controller) {
         connect(
@@ -426,6 +429,7 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
     const int itemWidth = static_cast<int>(std::ceil(width()));
     const int itemHeight = static_cast<int>(std::ceil(height()));
     if (itemWidth <= 0 || itemHeight <= 0 || !window()) {
+        m_pendingPresentedFrame.store(false, std::memory_order_release);
         node->setFrame({}, QSize(1, 1), 1.0);
         return node;
     }
@@ -434,6 +438,7 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
     if (m_controller) {
         snapshot = m_controller->renderSnapshot();
     }
+    m_pendingPresentedFrame.store(snapshot && !snapshot->isEmpty(), std::memory_order_release);
 
     if (snapshot) {
         node->setFrame(*snapshot, QSize(itemWidth, itemHeight), window()->effectiveDevicePixelRatio());
@@ -445,4 +450,40 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
 
 void DanmakuRenderNodeItem::handleControllerRenderSnapshotChanged() {
     update();
+}
+
+void DanmakuRenderNodeItem::handleWindowChanged(QQuickWindow *window) {
+    if (m_frameSwappedConnection) {
+        disconnect(m_frameSwappedConnection);
+        m_frameSwappedConnection = {};
+    }
+    m_pendingPresentedFrame.store(false, std::memory_order_release);
+    if (!window) {
+        return;
+    }
+    m_frameSwappedConnection = connect(
+        window,
+        &QQuickWindow::frameSwapped,
+        this,
+        &DanmakuRenderNodeItem::handleWindowFrameSwapped,
+        Qt::DirectConnection);
+}
+
+void DanmakuRenderNodeItem::handleWindowFrameSwapped() {
+    if (!m_pendingPresentedFrame.exchange(false, std::memory_order_acq_rel)) {
+        return;
+    }
+    const QPointer<DanmakuController> controller = m_controller;
+    if (!controller) {
+        return;
+    }
+    const qint64 presentedAtMs = QDateTime::currentMSecsSinceEpoch();
+    QMetaObject::invokeMethod(
+        this,
+        [controller, presentedAtMs]() {
+            if (controller) {
+                controller->recordPresentedCommentFrame(presentedAtMs);
+            }
+        },
+        Qt::QueuedConnection);
 }
