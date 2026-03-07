@@ -5,8 +5,6 @@
 #include "danmaku/DanmakuUpdateWorker.hpp"
 
 #include <QDateTime>
-#include <QFont>
-#include <QFontMetrics>
 #include <QMetaType>
 #include <QMutexLocker>
 #include <QPointF>
@@ -219,9 +217,6 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
     invalidateWorkerGeneration();
     ensureLaneStateSize();
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    QFont textFont;
-    textFont.setPixelSize(DanmakuRenderStyle::kTextPixelSize);
-    QFontMetrics textMetrics(textFont);
     QVector<int> appendedRows;
     appendedRows.reserve(comments.size());
     bool appendedAny = false;
@@ -237,9 +232,13 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
         observeGlyphText(item.text);
 
         const qint64 atMs = map.value("at_ms").toLongLong();
-        const int textWidth = textMetrics.horizontalAdvance(item.text);
-        const int paddedWidth = textWidth + DanmakuRenderStyle::kHorizontalPaddingPx * 2;
-        item.widthEstimate = std::max(DanmakuRenderStyle::kMinWidthPx, paddedWidth);
+        const DanmakuTextSpriteCache::EnsureResult spriteResult =
+            m_textSpriteCache.ensureSprite(item.text, DanmakuRenderStyle::kTextPixelSize, m_renderDevicePixelRatio);
+        item.spriteId = spriteResult.spriteId;
+        item.widthEstimate = spriteResult.widthEstimate;
+        if (spriteResult.createdUpload) {
+            enqueueSpriteUpload(spriteResult.upload);
+        }
         item.speedPxPerSec = 120 + (qHash(item.commentId) % 70);
         item.active = true;
 
@@ -531,10 +530,30 @@ void DanmakuController::resetGlyphSession() {
     m_queuedGlyphCodepoints.clear();
     m_glyphWarmupQueue.clear();
     m_lastGlyphWarmupDispatchMs = 0;
+    m_textSpriteCache.clear();
+    {
+        QMutexLocker locker(&m_pendingSpriteUploadsMutex);
+        m_pendingSpriteUploads.clear();
+    }
     clearGlyphWarmupText();
     if (m_glyphWarmupEnabled) {
         queueGlyphSeedCharacters();
     }
+}
+
+void DanmakuController::setRenderDevicePixelRatio(qreal devicePixelRatio) {
+    const qreal normalized = std::max<qreal>(1.0, devicePixelRatio);
+    if (qFuzzyCompare(m_renderDevicePixelRatio, normalized)) {
+        return;
+    }
+
+    m_renderDevicePixelRatio = normalized;
+    m_textSpriteCache.clear();
+    {
+        QMutexLocker locker(&m_pendingSpriteUploadsMutex);
+        m_pendingSpriteUploads.clear();
+    }
+    refreshActiveSpriteIds();
 }
 
 bool DanmakuController::ngDropZoneVisible() const {
@@ -587,9 +606,20 @@ void DanmakuController::recordPresentedCommentFrame(qint64 presentedAtMs) {
     ++m_presentedCommentFrameCount;
 }
 
-QSharedPointer<const QVector<DanmakuController::RenderItem>> DanmakuController::renderSnapshot() const {
+DanmakuRenderFrameConstPtr DanmakuController::renderSnapshot() const {
     QMutexLocker locker(&m_renderSnapshotMutex);
     return m_renderSnapshot;
+}
+
+QVector<DanmakuSpriteUpload> DanmakuController::takePendingSpriteUploads() {
+    QMutexLocker locker(&m_pendingSpriteUploadsMutex);
+    QVector<DanmakuSpriteUpload> uploads = m_pendingSpriteUploads;
+    m_pendingSpriteUploads.clear();
+    return uploads;
+}
+
+int DanmakuController::widthMeasurementCountForTesting() const {
+    return m_textSpriteCache.widthMeasurementCountForTesting();
 }
 
 void DanmakuController::onFrame() {
@@ -921,6 +951,7 @@ void DanmakuController::releaseRow(int row) {
     item.commentId.clear();
     item.userId.clear();
     item.text.clear();
+    item.spriteId = 0;
 
     m_freeRows.push_back(row);
     if (m_activeDragRow == row) {
@@ -930,6 +961,38 @@ void DanmakuController::releaseRow(int row) {
     }
     queueSpatialRemoveRow(row);
     queueSnapshotRemoveRow(row);
+}
+
+void DanmakuController::refreshActiveSpriteIds() {
+    QVector<int> changedRows;
+    changedRows.reserve(activeItemCount());
+    for (int row = 0; row < m_items.size(); ++row) {
+        Item &item = m_items[row];
+        if (!item.active) {
+            continue;
+        }
+        const DanmakuTextSpriteCache::EnsureResult spriteResult =
+            m_textSpriteCache.ensureSprite(item.text, DanmakuRenderStyle::kTextPixelSize, m_renderDevicePixelRatio);
+        item.spriteId = spriteResult.spriteId;
+        item.widthEstimate = spriteResult.widthEstimate;
+        if (spriteResult.createdUpload) {
+            enqueueSpriteUpload(spriteResult.upload);
+        }
+        changedRows.push_back(row);
+    }
+    if (!changedRows.isEmpty()) {
+        queueSpatialUpsertRows(changedRows);
+        queueSnapshotUpsertRows(changedRows);
+        flushPendingDiffs(true);
+    }
+}
+
+void DanmakuController::enqueueSpriteUpload(const DanmakuSpriteUpload &upload) {
+    if (upload.spriteId == 0 || upload.image.isNull()) {
+        return;
+    }
+    QMutexLocker locker(&m_pendingSpriteUploadsMutex);
+    m_pendingSpriteUploads.push_back(upload);
 }
 
 void DanmakuController::releaseRowsDescending(const QVector<int> &rowsDescending) {
@@ -1326,16 +1389,16 @@ void DanmakuController::updateFrameTimerInterval() {
     m_frameTimer.setInterval(intervalMs);
 }
 
-DanmakuController::RenderItem DanmakuController::buildRenderItem(const Item &item) const {
-    RenderItem renderItem;
-    renderItem.commentId = item.commentId;
-    renderItem.text = item.text;
-    renderItem.x = item.x;
-    renderItem.y = item.y;
-    renderItem.alpha = item.alpha;
-    renderItem.widthEstimate = item.widthEstimate;
-    renderItem.ngDropHovered = item.ngDropHovered;
-    return renderItem;
+DanmakuRenderInstance DanmakuController::buildRenderInstance(const Item &item) const {
+    DanmakuRenderInstance instance;
+    instance.commentId = item.commentId;
+    instance.spriteId = item.spriteId;
+    instance.x = item.x;
+    instance.y = item.y;
+    instance.alpha = item.alpha;
+    instance.widthEstimate = item.widthEstimate;
+    instance.ngDropHovered = item.ngDropHovered;
+    return instance;
 }
 
 void DanmakuController::queueSpatialUpsertRow(int row) {
@@ -1453,7 +1516,7 @@ void DanmakuController::rebuildRenderSnapshot() {
 
         m_rowToRenderIndex[row] = m_renderCache.size();
         m_renderRows.push_back(row);
-        m_renderCache.push_back(buildRenderItem(item));
+        m_renderCache.push_back(buildRenderInstance(item));
     }
     publishRenderSnapshot();
 }
@@ -1481,14 +1544,14 @@ bool DanmakuController::applySnapshotRowUpsert(int row) {
 
     const int existingIndex = (row < m_rowToRenderIndex.size()) ? m_rowToRenderIndex[row] : -1;
     if (existingIndex >= 0 && existingIndex < m_renderCache.size() && existingIndex < m_renderRows.size()) {
-        m_renderCache[existingIndex] = buildRenderItem(item);
+        m_renderCache[existingIndex] = buildRenderInstance(item);
         return true;
     }
 
     const auto it = std::lower_bound(m_renderRows.begin(), m_renderRows.end(), row);
     const int insertIndex = static_cast<int>(std::distance(m_renderRows.begin(), it));
     m_renderRows.insert(insertIndex, row);
-    m_renderCache.insert(insertIndex, buildRenderItem(item));
+    m_renderCache.insert(insertIndex, buildRenderInstance(item));
     m_rowToRenderIndex[row] = insertIndex;
     for (int i = insertIndex + 1; i < m_renderRows.size(); ++i) {
         const int remappedRow = m_renderRows[i];
@@ -1522,7 +1585,8 @@ bool DanmakuController::applySnapshotRowRemoval(int row) {
 }
 
 void DanmakuController::publishRenderSnapshot() {
-    auto newSnapshot = QSharedPointer<QVector<RenderItem>>::create(m_renderCache);
+    DanmakuRenderFramePtr newSnapshot = DanmakuRenderFramePtr::create();
+    newSnapshot->instances = m_renderCache;
     QMutexLocker locker(&m_renderSnapshotMutex);
     m_renderSnapshot = newSnapshot;
 }

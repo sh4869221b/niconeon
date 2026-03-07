@@ -15,7 +15,9 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
 - Control playback (play/pause/seek/volume).
 - Enqueue periodic playback ticks (`50ms`) and send them to core as `playback_tick_batch`.
 - Render danmaku overlays and drag/drop interactions.
-  - Backend: `QSGRenderNode` aggregate renderer (`DanmakuRenderNodeItem`).
+  - Backend: `QSGRenderNode` atlas/sprite renderer (`DanmakuRenderNodeItem`).
+    - Default: `NICONEON_DANMAKU_RENDERER=atlas`
+    - Fallback: `NICONEON_DANMAKU_RENDERER=frame_image`
   - Simulation update path:
     - Default: worker-thread simulation (`NICONEON_DANMAKU_WORKER=on`).
     - Fallback: single-thread simulation (`NICONEON_DANMAKU_WORKER=off`).
@@ -23,7 +25,7 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
     - `NICONEON_SIMD_MODE=auto|avx2|scalar` (default: `auto`).
 - Provide danmaku visibility toggle for low-spec environments.
 - Apply runtime profile (`high` / `balanced` / `low_spec`) and target FPS (`60` by default) to keep playback stable on low-end CPUs.
-- Emit periodic UI/danmaku performance logs when enabled.
+- Emit periodic UI/danmaku/render performance logs when enabled.
 - Show NG drop zone only during drag.
 - Show toast notifications and Undo actions.
 

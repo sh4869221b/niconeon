@@ -24,6 +24,7 @@ Issue `#4` の目的は、同一条件で再現可能なログを取り、ボト
 
 - UI: `tick_sent`, `tick_result`, `tick_backlog`, `dropped_comments`, `coalesced_comments`, `emit_over_budget`, `profile`, `target_fps`, `emit_cap`
 - Danmaku: `fps`, `avg_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`, `updates`, `removed`
+- Render: `instances`, `sprite_upload_count`, `sprite_upload_bytes`, `atlas_pages`, `draw_calls`
 - Pool状態: `rows_total`, `rows_active`, `rows_free`, `compacted`
 - Lane状態: `lane_pick_count`, `lane_ready_count`, `lane_forced_count`, `lane_wait_ms_avg`, `lane_wait_ms_max`
 - Scene Graph: batch/upload 関連ログ
@@ -102,6 +103,15 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 ./app-ui/build/niconeon-ui 2>&1 | tee perf-worker-on-avx2.log
 ```
 
+### 7) renderer fallback comparison
+
+```bash
+LC_NUMERIC=C \
+NICONEON_DANMAKU_RENDERER=frame_image \
+NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
+./app-ui/build/niconeon-ui 2>&1 | tee perf-renderer-frame-image.log
+```
+
 ## CLI-only Dummy Profile
 
 ダミー動画 + ダミーコメント（秒ごとにコメント数が増加する ramp）で、手操作なしに計測できます。
@@ -122,6 +132,8 @@ just perf-dummy perf-dummy.log 60
 - `NICONEON_AUTO_VIDEO_PATH` で UI 起動時に自動再生
 - `NICONEON_AUTO_PERF_LOG=1` で計測ログを自動有効化
 - 指定秒数後に自動終了し、`perf-dummy.log` へ出力
+
+比較時は必要に応じて `NICONEON_DANMAKU_RENDERER=atlas|frame_image` を付与してください。
 
 主要な調整パラメータ（任意）:
 
@@ -253,6 +265,7 @@ NICONEON_SYNTHETIC_USER_SPAN=200
 
 - `[perf-ui] ...`
 - `[perf-danmaku] ...`
+- `[perf-render] ...`
 - `[perf-glyph] ...`
 - `QSG_RENDERER_DEBUG=render` 由来の renderer ログ
 - `qt.scenegraph.time.glyph` 由来の glyph ログ

@@ -1,12 +1,13 @@
 #pragma once
 
+#include "danmaku/DanmakuRenderFrame.hpp"
 #include "danmaku/DanmakuSoAState.hpp"
 #include "danmaku/DanmakuSpatialGrid.hpp"
+#include "danmaku/DanmakuTextSpriteCache.hpp"
 
 #include <QObject>
 #include <QMutex>
 #include <QQueue>
-#include <QSharedPointer>
 #include <QSet>
 #include <QString>
 #include <QThread>
@@ -30,16 +31,6 @@ class DanmakuController : public QObject {
     Q_PROPERTY(qint64 overlayMetricsUpdatedAtMs READ overlayMetricsUpdatedAtMs NOTIFY overlayMetricsUpdatedAtMsChanged)
 
 public:
-    struct RenderItem {
-        QString commentId;
-        QString text;
-        qreal x = 0;
-        qreal y = 0;
-        qreal alpha = 1.0;
-        int widthEstimate = 120;
-        bool ngDropHovered = false;
-    };
-
     explicit DanmakuController(QObject *parent = nullptr);
     ~DanmakuController() override;
 
@@ -53,6 +44,7 @@ public:
     Q_INVOKABLE void appendFromCore(const QVariantList &comments, qint64 playbackPositionMs);
     Q_INVOKABLE void resetForSeek();
     Q_INVOKABLE void resetGlyphSession();
+    Q_INVOKABLE void setRenderDevicePixelRatio(qreal devicePixelRatio);
 
     Q_INVOKABLE bool beginDragAt(qreal x, qreal y);
     Q_INVOKABLE void moveActiveDrag(qreal x, qreal y);
@@ -62,7 +54,8 @@ public:
 
     Q_INVOKABLE void applyNgUserFade(const QString &userId);
     Q_INVOKABLE void rollbackPendingNgUserFade(const QString &userId);
-    QSharedPointer<const QVector<RenderItem>> renderSnapshot() const;
+    DanmakuRenderFrameConstPtr renderSnapshot() const;
+    QVector<DanmakuSpriteUpload> takePendingSpriteUploads();
 
     bool ngDropZoneVisible() const;
     bool playbackPaused() const;
@@ -75,6 +68,7 @@ public:
     int activeCommentCountMetric() const;
     qint64 overlayMetricsUpdatedAtMs() const;
     void recordPresentedCommentFrame(qint64 presentedAtMs = 0);
+    int widthMeasurementCountForTesting() const;
 
 signals:
     void ngDropZoneVisibleChanged();
@@ -100,6 +94,7 @@ private:
         QString commentId;
         QString userId;
         QString text;
+        DanmakuSpriteId spriteId = 0;
         qreal x = 0;
         qreal y = 0;
         qreal speedPxPerSec = 120;
@@ -144,7 +139,7 @@ private:
     void runFrameSingleThread(int elapsedMs, qint64 nowMs);
     void rebuildSpatialIndex();
     void rebuildRenderSnapshot();
-    RenderItem buildRenderItem(const Item &item) const;
+    DanmakuRenderInstance buildRenderInstance(const Item &item) const;
     void queueSpatialUpsertRow(int row);
     void queueSpatialUpsertRows(const QVector<int> &rows);
     void queueSpatialRemoveRow(int row);
@@ -168,6 +163,9 @@ private:
     bool beginDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void moveDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void dropDragInternal(int index, bool inNgZone);
+    void refreshActiveSpriteIds();
+    void enqueueSpriteUpload(const DanmakuSpriteUpload &upload);
+
     QVector<Item> m_items;
     QVector<LaneState> m_laneStates;
     QVector<int> m_freeRows;
@@ -222,10 +220,14 @@ private:
     qreal m_activeDragOffsetX = 0;
     qreal m_activeDragOffsetY = 0;
     mutable QMutex m_renderSnapshotMutex;
-    QVector<RenderItem> m_renderCache;
+    QMutex m_pendingSpriteUploadsMutex;
+    QVector<DanmakuRenderInstance> m_renderCache;
     QVector<int> m_renderRows;
     QVector<int> m_rowToRenderIndex;
-    QSharedPointer<const QVector<RenderItem>> m_renderSnapshot;
+    QVector<DanmakuSpriteUpload> m_pendingSpriteUploads;
+    DanmakuRenderFrameConstPtr m_renderSnapshot;
+    DanmakuTextSpriteCache m_textSpriteCache;
+    qreal m_renderDevicePixelRatio = 1.0;
     bool m_workerEnabled = true;
     bool m_workerBusy = false;
     qint64 m_workerSeq = 0;

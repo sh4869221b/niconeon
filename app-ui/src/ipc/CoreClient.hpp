@@ -15,6 +15,7 @@ class CoreClient : public QObject {
 
 public:
     explicit CoreClient(QObject *parent = nullptr);
+    ~CoreClient() override;
 
     Q_INVOKABLE void startDefault();
     Q_INVOKABLE void stop();

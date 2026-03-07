@@ -33,7 +33,9 @@ qt_add_executable(niconeon-ui
   src/mpv/MpvItem.cpp
   src/ipc/CoreClient.cpp
   src/danmaku/DanmakuController.cpp
+  src/danmaku/DanmakuAtlasPacker.cpp
   src/danmaku/DanmakuSimdUpdater.cpp
+  src/danmaku/DanmakuTextSpriteCache.cpp
   src/danmaku/DanmakuUpdateWorker.cpp
   src/danmaku/DanmakuSpatialGrid.cpp
   src/danmaku/DanmakuRenderNodeItem.cpp
@@ -145,10 +147,12 @@ if(BUILD_TESTING)
 
   qt_add_executable(niconeon-ui-unit-danmaku-text-width
     tests/unit/danmaku_text_width_test.cpp
+    src/danmaku/DanmakuAtlasPacker.cpp
     src/danmaku/DanmakuController.cpp
     src/danmaku/DanmakuSimdUpdater.cpp
     src/danmaku/DanmakuUpdateWorker.cpp
     src/danmaku/DanmakuSpatialGrid.cpp
+    src/danmaku/DanmakuTextSpriteCache.cpp
   )
 
   target_include_directories(niconeon-ui-unit-danmaku-text-width PRIVATE
@@ -168,10 +172,12 @@ if(BUILD_TESTING)
 
   qt_add_executable(niconeon-ui-unit-danmaku-ng-drop
     tests/unit/danmaku_ng_drop_test.cpp
+    src/danmaku/DanmakuAtlasPacker.cpp
     src/danmaku/DanmakuController.cpp
     src/danmaku/DanmakuSimdUpdater.cpp
     src/danmaku/DanmakuUpdateWorker.cpp
     src/danmaku/DanmakuSpatialGrid.cpp
+    src/danmaku/DanmakuTextSpriteCache.cpp
   )
 
   target_include_directories(niconeon-ui-unit-danmaku-ng-drop PRIVATE
@@ -188,14 +194,37 @@ if(BUILD_TESTING)
   set_tests_properties(danmaku_ng_drop_test PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
   )
+
+  qt_add_executable(niconeon-ui-unit-danmaku-sprite-cache
+    tests/unit/danmaku_sprite_cache_test.cpp
+    src/danmaku/DanmakuAtlasPacker.cpp
+    src/danmaku/DanmakuTextSpriteCache.cpp
+  )
+
+  target_include_directories(niconeon-ui-unit-danmaku-sprite-cache PRIVATE
+    src
+  )
+
+  target_link_libraries(niconeon-ui-unit-danmaku-sprite-cache PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+  )
+
+  add_test(NAME danmaku_sprite_cache_test COMMAND niconeon-ui-unit-danmaku-sprite-cache)
+  set_tests_properties(danmaku_sprite_cache_test PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+  )
 endif()
 
 if(BUILD_TESTING AND NICONEON_BUILD_UI_E2E)
 
   qt_add_executable(niconeon-ui-e2e
     tests/e2e/rendernode_alignment_e2e.cpp
+    src/danmaku/DanmakuAtlasPacker.cpp
     src/danmaku/DanmakuController.cpp
     src/danmaku/DanmakuSimdUpdater.cpp
+    src/danmaku/DanmakuTextSpriteCache.cpp
     src/danmaku/DanmakuUpdateWorker.cpp
     src/danmaku/DanmakuSpatialGrid.cpp
     src/danmaku/DanmakuRenderNodeItem.cpp

@@ -19,6 +19,7 @@ private slots:
     void initTestCase();
     void defaultTargetFpsIs60();
     void commentFpsTracksPresentedFramesOnly();
+    void repeatedTextUsesWidthCache();
     void wideFullwidthTextDoesNotUnderestimate();
     void japaneseTextDoesNotUnderestimate();
     void minimumWidthIsPreserved();
@@ -26,7 +27,7 @@ private slots:
 
 private:
     static int requiredBubbleWidth(const QString &text);
-    static QSharedPointer<const QVector<DanmakuController::RenderItem>> appendSingleComment(
+    static DanmakuRenderFrameConstPtr appendSingleComment(
         const QString &commentId,
         const QString &text,
         qint64 atMs = 0,
@@ -60,14 +61,39 @@ void DanmakuTextWidthTest::commentFpsTracksPresentedFramesOnly() {
     QTRY_VERIFY_WITH_TIMEOUT(controller.commentRenderFps() > 5.0, 2500);
 }
 
+void DanmakuTextWidthTest::repeatedTextUsesWidthCache() {
+    DanmakuController controller;
+    controller.setGlyphWarmupEnabled(false);
+    controller.setViewportSize(1280.0, 720.0);
+    controller.setLaneMetrics(36, 6);
+    controller.setPlaybackPaused(true);
+
+    QVariantMap first;
+    first.insert(QStringLiteral("comment_id"), QStringLiteral("cache-1"));
+    first.insert(QStringLiteral("user_id"), QStringLiteral("user-1"));
+    first.insert(QStringLiteral("text"), QStringLiteral("same text"));
+    first.insert(QStringLiteral("at_ms"), 0);
+
+    QVariantMap second = first;
+    second.insert(QStringLiteral("comment_id"), QStringLiteral("cache-2"));
+
+    controller.appendFromCore(QVariantList {first}, 0);
+    const int afterFirst = controller.widthMeasurementCountForTesting();
+    controller.appendFromCore(QVariantList {second}, 0);
+    const int afterSecond = controller.widthMeasurementCountForTesting();
+
+    QCOMPARE(afterFirst, 1);
+    QCOMPARE(afterSecond, afterFirst);
+}
+
 void DanmakuTextWidthTest::wideFullwidthTextDoesNotUnderestimate() {
     const QString text = QStringLiteral("ｗｗｗｗｗｗｗｗｗｗ");
-    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot =
+    const DanmakuRenderFrameConstPtr snapshot =
         appendSingleComment(QStringLiteral("width-test-fullwidth"), text);
     QVERIFY(snapshot);
-    QVERIFY(!snapshot->isEmpty());
-    QCOMPARE((*snapshot)[0].text, text);
-    const int actualWidth = (*snapshot)[0].widthEstimate;
+    QVERIFY(!snapshot->instances.isEmpty());
+    QVERIFY(snapshot->instances[0].spriteId != 0);
+    const int actualWidth = snapshot->instances[0].widthEstimate;
     QVERIFY2(
         actualWidth >= requiredBubbleWidth(text),
         "widthEstimate should be at least measured text width + horizontal padding");
@@ -75,12 +101,12 @@ void DanmakuTextWidthTest::wideFullwidthTextDoesNotUnderestimate() {
 
 void DanmakuTextWidthTest::japaneseTextDoesNotUnderestimate() {
     const QString text = QStringLiteral("これはテストコメントです");
-    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot =
+    const DanmakuRenderFrameConstPtr snapshot =
         appendSingleComment(QStringLiteral("width-test-japanese"), text);
     QVERIFY(snapshot);
-    QVERIFY(!snapshot->isEmpty());
-    QCOMPARE((*snapshot)[0].text, text);
-    const int actualWidth = (*snapshot)[0].widthEstimate;
+    QVERIFY(!snapshot->instances.isEmpty());
+    QVERIFY(snapshot->instances[0].spriteId != 0);
+    const int actualWidth = snapshot->instances[0].widthEstimate;
     QVERIFY2(
         actualWidth >= requiredBubbleWidth(text),
         "widthEstimate should be at least measured text width + horizontal padding");
@@ -88,12 +114,11 @@ void DanmakuTextWidthTest::japaneseTextDoesNotUnderestimate() {
 
 void DanmakuTextWidthTest::minimumWidthIsPreserved() {
     const QString text = QStringLiteral("a");
-    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot =
+    const DanmakuRenderFrameConstPtr snapshot =
         appendSingleComment(QStringLiteral("width-test-min"), text);
     QVERIFY(snapshot);
-    QVERIFY(!snapshot->isEmpty());
-    QCOMPARE((*snapshot)[0].text, text);
-    const int actualWidth = (*snapshot)[0].widthEstimate;
+    QVERIFY(!snapshot->instances.isEmpty());
+    const int actualWidth = snapshot->instances[0].widthEstimate;
     QCOMPARE(actualWidth, DanmakuRenderStyle::kMinWidthPx);
 }
 
@@ -101,16 +126,16 @@ void DanmakuTextWidthTest::seekResumeLagCompensationPlacesCommentMidScroll() {
     const QString commentId = QStringLiteral("seek-resume-mid-scroll");
     const QString text = QStringLiteral("seek resume");
     const qint64 playbackPositionMs = 6000;
-    const QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot =
+    const DanmakuRenderFrameConstPtr snapshot =
         appendSingleComment(commentId, text, 0, playbackPositionMs);
     QVERIFY(snapshot);
-    QVERIFY(!snapshot->isEmpty());
-    QCOMPARE((*snapshot)[0].commentId, commentId);
+    QVERIFY(!snapshot->instances.isEmpty());
+    QCOMPARE(snapshot->instances[0].commentId, commentId);
 
     const qreal expectedSpeed = 120.0 + (qHash(commentId) % 70);
     const qreal expectedX = (1280.0 + 12.0) - expectedSpeed * (playbackPositionMs / 1000.0);
     QVERIFY2(
-        std::abs((*snapshot)[0].x - expectedX) < 0.5,
+        std::abs(snapshot->instances[0].x - expectedX) < 0.5,
         "seek-resumed comment should be positioned as if it had been flowing before the seek");
 }
 
@@ -123,7 +148,7 @@ int DanmakuTextWidthTest::requiredBubbleWidth(const QString &text) {
     return std::max(DanmakuRenderStyle::kMinWidthPx, paddedWidth);
 }
 
-QSharedPointer<const QVector<DanmakuController::RenderItem>> DanmakuTextWidthTest::appendSingleComment(
+DanmakuRenderFrameConstPtr DanmakuTextWidthTest::appendSingleComment(
     const QString &commentId,
     const QString &text,
     qint64 atMs,

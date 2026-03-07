@@ -53,6 +53,20 @@ CoreClient::CoreClient(QObject *parent) : QObject(parent) {
     connect(&m_process, &QProcess::errorOccurred, this, &CoreClient::onProcessErrorOccurred);
 }
 
+CoreClient::~CoreClient() {
+    disconnect(&m_process, nullptr, this, nullptr);
+    m_process.blockSignals(true);
+    if (m_process.state() != QProcess::NotRunning) {
+        m_expectedStop = true;
+        invalidatePendingRequestState();
+        m_process.terminate();
+        if (!m_process.waitForFinished(1000)) {
+            m_process.kill();
+            m_process.waitForFinished(1000);
+        }
+    }
+}
+
 QString CoreClient::executableName(const QString &baseName) {
 #if defined(Q_OS_WIN)
     if (baseName.endsWith(QStringLiteral(".exe"), Qt::CaseInsensitive)) {

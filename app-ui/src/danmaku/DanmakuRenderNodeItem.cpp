@@ -1,12 +1,15 @@
 #include "danmaku/DanmakuRenderNodeItem.hpp"
 
+#include "danmaku/DanmakuAtlasPacker.hpp"
 #include "danmaku/DanmakuController.hpp"
+#include "danmaku/DanmakuRenderFrame.hpp"
 #include "danmaku/DanmakuRenderStyle.hpp"
 
 #include <QColor>
 #include <QDateTime>
-#include <QFont>
+#include <QHash>
 #include <QImage>
+#include <QMetaObject>
 #include <QOpenGLBuffer>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
@@ -15,62 +18,72 @@
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
 #include <QPainter>
-#include <QPen>
 #include <QQuickWindow>
 #include <QRectF>
 #include <QSGNode>
 #include <QSGRenderNode>
+#include <QSet>
 #include <QSharedPointer>
 #include <QSize>
-#include <QDebug>
+#include <QVector>
 #include <QtGlobal>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 
 namespace {
-constexpr int kUltraDenseRenderThreshold = 140;
+constexpr int kAtlasPagePixelSize = 2048;
+constexpr int kMaxAtlasPages = 8;
+constexpr qint64 kPerfLogWindowMs = 2000;
 
-QImage renderSnapshotImage(
-    const QVector<DanmakuController::RenderItem> &items,
-    const QSize &itemSize,
-    qreal devicePixelRatio) {
-    const QSize imageSize(
-        std::max(1, static_cast<int>(std::ceil(itemSize.width() * devicePixelRatio))),
-        std::max(1, static_cast<int>(std::ceil(itemSize.height() * devicePixelRatio))));
+enum class DanmakuRendererBackend {
+    Atlas,
+    FrameImage,
+};
 
-    QImage image(imageSize, QImage::Format_RGBA8888_Premultiplied);
-    image.setDevicePixelRatio(devicePixelRatio);
-    image.fill(Qt::transparent);
+DanmakuRendererBackend rendererBackendFromEnv() {
+    const QString raw = qEnvironmentVariable("NICONEON_DANMAKU_RENDERER").trimmed().toLower();
+    if (raw == QStringLiteral("frame_image")) {
+        return DanmakuRendererBackend::FrameImage;
+    }
+    return DanmakuRendererBackend::Atlas;
+}
 
-    QPainter painter(&image);
-    const bool ultraDense = items.size() >= kUltraDenseRenderThreshold;
-    painter.setRenderHint(QPainter::TextAntialiasing, !ultraDense);
+const char *rendererBackendName(DanmakuRendererBackend backend) {
+    switch (backend) {
+    case DanmakuRendererBackend::Atlas:
+        return "atlas";
+    case DanmakuRendererBackend::FrameImage:
+        return "frame_image";
+    }
+    return "atlas";
+}
 
-    QFont font;
-    font.setPixelSize(DanmakuRenderStyle::kTextPixelSize);
-    painter.setFont(font);
-
-    const QColor textColor(Qt::white);
-    const QColor ngHoverTextColor(QStringLiteral("#FFFF6677"));
-
-    for (const DanmakuController::RenderItem &item : items) {
-        if (item.alpha <= 0.0) {
-            continue;
-        }
-
-        painter.setOpacity(std::clamp(item.alpha, 0.0, 1.0));
-        const QRectF rect(
-            item.x,
-            item.y,
-            item.widthEstimate,
-            static_cast<qreal>(DanmakuRenderStyle::kItemHeightPx));
-        painter.setPen(item.ngDropHovered ? ngHoverTextColor : textColor);
-        const QRectF textRect = rect;
-        painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignHCenter, item.text);
+QImage normalizedImageForAtlas(const QImage &image) {
+    if (image.isNull()) {
+        return {};
     }
 
-    return image;
+    QImage normalized = image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+    normalized.setDevicePixelRatio(1.0);
+    return normalized;
+}
+
+QImage colorizeSpriteImage(const QImage &source, const QColor &color) {
+    if (source.isNull()) {
+        return {};
+    }
+
+    QImage tinted(source.size(), QImage::Format_RGBA8888_Premultiplied);
+    tinted.setDevicePixelRatio(source.devicePixelRatio());
+    tinted.fill(Qt::transparent);
+
+    QPainter painter(&tinted);
+    painter.drawImage(QPoint(0, 0), source);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(QRect(QPoint(0, 0), source.size()), color);
+    return tinted;
 }
 
 class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLFunctions {
@@ -82,13 +95,55 @@ public:
     }
 
     void setFrame(
-        const QVector<DanmakuController::RenderItem> &items,
+        const DanmakuRenderFrame &frame,
+        const QVector<DanmakuSpriteUpload> &uploads,
         const QSize &itemSize,
-        qreal devicePixelRatio) {
+        qreal devicePixelRatio,
+        DanmakuRendererBackend backend) {
         m_itemSize = itemSize;
-        m_image = renderSnapshotImage(items, itemSize, devicePixelRatio);
-        m_textureDirty = true;
-        m_geometryDirty = true;
+        m_devicePixelRatio = std::max(devicePixelRatio, 1.0);
+        m_backend = backend;
+        ++m_frameSequence;
+        ++m_perfFrameCount;
+        m_perfInstanceTotal += frame.instances.size();
+
+        for (const DanmakuSpriteUpload &upload : uploads) {
+            if (upload.spriteId == 0 || upload.image.isNull()) {
+                continue;
+            }
+
+            SpriteRecord &record = m_sprites[upload.spriteId];
+            record.spriteId = upload.spriteId;
+            record.logicalSize = upload.logicalSize;
+            record.image = normalizedImageForAtlas(upload.image);
+            record.hoverImage = {};
+            record.lastUsedFrame = m_frameSequence;
+            if (record.pageIndex >= 0) {
+                removeSpriteFromPage(upload.spriteId, record.pageIndex);
+            }
+            record.pageIndex = -1;
+            record.pixelRect = {};
+            ++m_perfSpriteUploadCount;
+            m_perfSpriteUploadBytes += static_cast<qulonglong>(record.image.sizeInBytes());
+        }
+
+        m_instances = frame.instances;
+        QSet<DanmakuSpriteId> activeSpriteIds;
+        activeSpriteIds.reserve(m_instances.size());
+        for (const DanmakuRenderInstance &instance : m_instances) {
+            activeSpriteIds.insert(instance.spriteId);
+            auto spriteIt = m_sprites.find(instance.spriteId);
+            if (spriteIt != m_sprites.end()) {
+                spriteIt->lastUsedFrame = m_frameSequence;
+            }
+        }
+
+        if (m_backend == DanmakuRendererBackend::Atlas) {
+            ensureActiveSpritesResident(activeSpriteIds);
+            buildAtlasVertices();
+        } else {
+            composeFrameImage();
+        }
     }
 
     RenderingFlags flags() const override {
@@ -110,15 +165,9 @@ public:
         if (!ensureGlResources()) {
             return;
         }
-        if (!updateTexture()) {
-            return;
-        }
-        if (!updateGeometry()) {
-            return;
-        }
 
         const QMatrix4x4 *projection = state ? state->projectionMatrix() : nullptr;
-        if (!projection || !m_program || !m_texture) {
+        if (!projection || !m_program) {
             return;
         }
 
@@ -144,29 +193,103 @@ public:
         m_program->bind();
         m_program->setUniformValue(m_matrixLoc, mvp);
         m_program->setUniformValue(m_textureLoc, 0);
-
-        m_texture->bind(0);
         m_vbo.bind();
         m_program->enableAttributeArray(m_positionLoc);
         m_program->enableAttributeArray(m_uvLoc);
+        m_program->enableAttributeArray(m_colorLoc);
         m_program->setAttributeBuffer(m_positionLoc, GL_FLOAT, offsetof(Vertex, x), 2, sizeof(Vertex));
         m_program->setAttributeBuffer(m_uvLoc, GL_FLOAT, offsetof(Vertex, u), 2, sizeof(Vertex));
+        m_program->setAttributeBuffer(m_colorLoc, GL_FLOAT, offsetof(Vertex, r), 4, sizeof(Vertex));
 
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        int drawCallsThisFrame = 0;
+        if (m_backend == DanmakuRendererBackend::Atlas) {
+            if (!updateAtlasTextures()) {
+                m_program->disableAttributeArray(m_positionLoc);
+                m_program->disableAttributeArray(m_uvLoc);
+                m_program->disableAttributeArray(m_colorLoc);
+                m_vbo.release();
+                m_program->release();
+                return;
+            }
+
+            for (int pageIndex = 0; pageIndex < m_pageVertices.size(); ++pageIndex) {
+                const QVector<Vertex> &vertices = m_pageVertices[pageIndex];
+                if (vertices.isEmpty()) {
+                    continue;
+                }
+                AtlasPage &page = m_atlasPages[pageIndex];
+                if (!page.texture) {
+                    continue;
+                }
+                page.texture->bind(0);
+                m_vbo.allocate(vertices.constData(), vertices.size() * static_cast<int>(sizeof(Vertex)));
+                glDrawArrays(GL_TRIANGLES, 0, vertices.size());
+                page.texture->release();
+                ++drawCallsThisFrame;
+            }
+        } else {
+            if (!updateFrameTexture() || !m_frameTexture || m_frameQuadVertices.isEmpty()) {
+                m_program->disableAttributeArray(m_positionLoc);
+                m_program->disableAttributeArray(m_uvLoc);
+                m_program->disableAttributeArray(m_colorLoc);
+                m_vbo.release();
+                m_program->release();
+                return;
+            }
+
+            m_frameTexture->bind(0);
+            m_vbo.allocate(
+                m_frameQuadVertices.constData(),
+                m_frameQuadVertices.size() * static_cast<int>(sizeof(Vertex)));
+            glDrawArrays(GL_TRIANGLES, 0, m_frameQuadVertices.size());
+            m_frameTexture->release();
+            drawCallsThisFrame = m_frameQuadVertices.isEmpty() ? 0 : 1;
+        }
 
         m_program->disableAttributeArray(m_positionLoc);
         m_program->disableAttributeArray(m_uvLoc);
+        m_program->disableAttributeArray(m_colorLoc);
         m_vbo.release();
-        m_texture->release();
         m_program->release();
+
+        m_perfDrawCalls += drawCallsThisFrame;
+        maybeWritePerfLog();
     }
 
 private:
     struct Vertex {
-        float x;
-        float y;
-        float u;
-        float v;
+        float x = 0.0f;
+        float y = 0.0f;
+        float u = 0.0f;
+        float v = 0.0f;
+        float r = 1.0f;
+        float g = 1.0f;
+        float b = 1.0f;
+        float a = 1.0f;
+    };
+
+    struct SpriteRecord {
+        DanmakuSpriteId spriteId = 0;
+        QSize logicalSize;
+        QImage image;
+        QImage hoverImage;
+        quint64 lastUsedFrame = 0;
+        int pageIndex = -1;
+        QRect pixelRect;
+    };
+
+    struct AtlasPage {
+        DanmakuAtlasPacker packer;
+        QImage image;
+        QOpenGLTexture *texture = nullptr;
+        bool textureDirty = true;
+        QSet<DanmakuSpriteId> residents;
+    };
+
+    struct PackCandidate {
+        DanmakuSpriteId spriteId = 0;
+        QSize size;
+        quint64 lastUsedFrame = 0;
     };
 
     bool ensureGlResources() {
@@ -186,10 +309,13 @@ private:
                     precision mediump float;
                     attribute vec2 a_position;
                     attribute vec2 a_uv;
+                    attribute vec4 a_color;
                     uniform mat4 u_matrix;
                     varying vec2 v_uv;
+                    varying vec4 v_color;
                     void main() {
                         v_uv = a_uv;
+                        v_color = a_color;
                         gl_Position = u_matrix * vec4(a_position, 0.0, 1.0);
                     }
                 )"
@@ -197,10 +323,13 @@ private:
                     #version 150
                     in vec2 a_position;
                     in vec2 a_uv;
+                    in vec4 a_color;
                     uniform mat4 u_matrix;
                     out vec2 v_uv;
+                    out vec4 v_color;
                     void main() {
                         v_uv = a_uv;
+                        v_color = a_color;
                         gl_Position = u_matrix * vec4(a_position, 0.0, 1.0);
                     }
                 )";
@@ -209,46 +338,45 @@ private:
                 ? R"(
                     precision mediump float;
                     varying vec2 v_uv;
+                    varying vec4 v_color;
                     uniform sampler2D u_texture;
                     void main() {
-                        gl_FragColor = texture2D(u_texture, v_uv);
+                        vec4 tex = texture2D(u_texture, v_uv);
+                        gl_FragColor = vec4(v_color.rgb * tex.a, tex.a * v_color.a);
                     }
                 )"
                 : R"(
                     #version 150
                     in vec2 v_uv;
+                    in vec4 v_color;
                     uniform sampler2D u_texture;
                     out vec4 fragColor;
                     void main() {
-                        fragColor = texture(u_texture, v_uv);
+                        vec4 tex = texture(u_texture, v_uv);
+                        fragColor = vec4(v_color.rgb * tex.a, tex.a * v_color.a);
                     }
                 )";
 
-            QOpenGLShaderProgram *program = new QOpenGLShaderProgram();
-            if (!program->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexSource)
-                || !program->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentSource)) {
-                delete program;
-                qWarning().noquote() << "danmaku rendernode shader compile failed backend=" << (isGles ? "gles" : "glcore");
-                return false;
-            }
-
-            program->bindAttributeLocation("a_position", 0);
-            program->bindAttributeLocation("a_uv", 1);
-            if (!program->link()) {
-                delete program;
-                qWarning().noquote() << "danmaku rendernode shader link failed backend=" << (isGles ? "gles" : "glcore");
-                return false;
-            }
-
-            m_program = program;
-            if (!m_program) {
-                qWarning().noquote() << "danmaku rendernode shader setup failed backend=" << (isGles ? "gles" : "glcore");
+            m_program = new QOpenGLShaderProgram();
+            if (!m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexSource)
+                || !m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentSource)) {
                 delete m_program;
                 m_program = nullptr;
                 return false;
             }
+
+            m_program->bindAttributeLocation("a_position", 0);
+            m_program->bindAttributeLocation("a_uv", 1);
+            m_program->bindAttributeLocation("a_color", 2);
+            if (!m_program->link()) {
+                delete m_program;
+                m_program = nullptr;
+                return false;
+            }
+
             m_positionLoc = 0;
             m_uvLoc = 1;
+            m_colorLoc = 2;
             m_matrixLoc = m_program->uniformLocation("u_matrix");
             m_textureLoc = m_program->uniformLocation("u_texture");
         }
@@ -256,89 +384,370 @@ private:
         if (!m_vbo.isCreated()) {
             m_vbo.create();
             m_vbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
-            m_geometryDirty = true;
         }
-
         return true;
     }
 
-    bool updateTexture() {
-        if (!m_textureDirty) {
-            return true;
-        }
-        if (m_image.isNull()) {
+    bool updateTextureFromImage(QOpenGLTexture *&texture, const QImage &image) {
+        if (image.isNull()) {
             return false;
         }
 
-        if (!m_texture) {
-            m_texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
-            m_texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
-            m_texture->setWrapMode(QOpenGLTexture::ClampToEdge);
-            m_texture->setMinificationFilter(QOpenGLTexture::Linear);
-            m_texture->setMagnificationFilter(QOpenGLTexture::Linear);
+        if (!texture) {
+            texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
+            texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+            texture->setWrapMode(QOpenGLTexture::ClampToEdge);
+            texture->setMinificationFilter(QOpenGLTexture::Linear);
+            texture->setMagnificationFilter(QOpenGLTexture::Linear);
         }
-
-        if (!m_texture->isCreated()) {
-            if (!m_texture->create()) {
-                qWarning() << "danmaku rendernode failed to create texture";
+        if (!texture->isCreated() && !texture->create()) {
+            return false;
+        }
+        if (texture->width() != image.width() || texture->height() != image.height()) {
+            texture->destroy();
+            if (!texture->create()) {
                 return false;
             }
+            texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+            texture->setSize(image.width(), image.height());
+            texture->setMipLevels(1);
+            texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
         }
 
-        if (m_texture->width() != m_image.width() || m_texture->height() != m_image.height() || !m_textureStorageReady) {
-            // Recreate storage only when size changes. Qt warns if setSize/setFormat are called on allocated storage.
-            m_texture->destroy();
-            if (!m_texture->create()) {
-                qWarning() << "danmaku rendernode failed to recreate texture";
-                return false;
-            }
-            m_texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
-            m_texture->setSize(m_image.width(), m_image.height());
-            m_texture->setMipLevels(1);
-            m_texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
-            m_textureStorageReady = true;
-        }
-
-        const QImage &glImage = m_image;
         QOpenGLPixelTransferOptions options;
         options.setAlignment(1);
-        options.setRowLength(glImage.bytesPerLine() / 4);
-        m_texture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, glImage.constBits(), &options);
-        m_textureDirty = false;
+        options.setRowLength(image.bytesPerLine() / 4);
+        texture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, image.constBits(), &options);
         return true;
     }
 
-    bool updateGeometry() {
-        if (!m_geometryDirty) {
+    bool updateAtlasTextures() {
+        for (AtlasPage &page : m_atlasPages) {
+            if (!page.textureDirty) {
+                continue;
+            }
+            if (!updateTextureFromImage(page.texture, page.image)) {
+                return false;
+            }
+            page.textureDirty = false;
+        }
+        return true;
+    }
+
+    bool updateFrameTexture() {
+        if (!m_frameTextureDirty) {
             return true;
         }
-        if (!m_vbo.isCreated()) {
+        if (!updateTextureFromImage(m_frameTexture, m_frameImage)) {
             return false;
+        }
+        m_frameTextureDirty = false;
+        return true;
+    }
+
+    void ensureActiveSpritesResident(const QSet<DanmakuSpriteId> &activeSpriteIds) {
+        for (const DanmakuRenderInstance &instance : m_instances) {
+            ensureSpriteResident(instance.spriteId, activeSpriteIds);
+        }
+    }
+
+    bool ensureSpriteResident(DanmakuSpriteId spriteId, const QSet<DanmakuSpriteId> &activeSpriteIds) {
+        auto spriteIt = m_sprites.find(spriteId);
+        if (spriteIt == m_sprites.end()) {
+            return false;
+        }
+        SpriteRecord &record = spriteIt.value();
+        if (record.pageIndex >= 0) {
+            return true;
+        }
+        if (record.image.isNull()) {
+            return false;
+        }
+
+        const QSize spriteSize = record.image.size();
+        for (int pageIndex = 0; pageIndex < m_atlasPages.size(); ++pageIndex) {
+            AtlasPage &page = m_atlasPages[pageIndex];
+            const QRect rect = page.packer.insert(spriteSize);
+            if (!rect.isValid()) {
+                continue;
+            }
+            placeSpriteOnPage(pageIndex, spriteId, rect);
+            return true;
+        }
+
+        if (m_atlasPages.size() < kMaxAtlasPages) {
+            createAtlasPage();
+            AtlasPage &page = m_atlasPages.last();
+            const QRect rect = page.packer.insert(spriteSize);
+            if (rect.isValid()) {
+                placeSpriteOnPage(m_atlasPages.size() - 1, spriteId, rect);
+                return true;
+            }
+        }
+
+        for (int pageIndex = 0; pageIndex < m_atlasPages.size(); ++pageIndex) {
+            if (repackPageForSprite(pageIndex, spriteId, activeSpriteIds)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void placeSpriteOnPage(int pageIndex, DanmakuSpriteId spriteId, const QRect &rect) {
+        if (pageIndex < 0 || pageIndex >= m_atlasPages.size()) {
+            return;
+        }
+        auto spriteIt = m_sprites.find(spriteId);
+        if (spriteIt == m_sprites.end()) {
+            return;
+        }
+
+        AtlasPage &page = m_atlasPages[pageIndex];
+        SpriteRecord &record = spriteIt.value();
+        QPainter painter(&page.image);
+        painter.drawImage(rect, record.image);
+        record.pageIndex = pageIndex;
+        record.pixelRect = rect;
+        page.residents.insert(spriteId);
+        page.textureDirty = true;
+    }
+
+    void removeSpriteFromPage(DanmakuSpriteId spriteId, int pageIndex) {
+        if (pageIndex < 0 || pageIndex >= m_atlasPages.size()) {
+            return;
+        }
+
+        AtlasPage &page = m_atlasPages[pageIndex];
+        if (!page.residents.contains(spriteId)) {
+            return;
+        }
+
+        page.residents.remove(spriteId);
+        page.textureDirty = true;
+    }
+
+    bool repackPageForSprite(int pageIndex, DanmakuSpriteId requestedSpriteId, const QSet<DanmakuSpriteId> &activeSpriteIds) {
+        if (pageIndex < 0 || pageIndex >= m_atlasPages.size()) {
+            return false;
+        }
+
+        AtlasPage &page = m_atlasPages[pageIndex];
+        QVector<DanmakuSpriteId> residents = page.residents.values();
+        QVector<DanmakuSpriteId> evictable;
+        evictable.reserve(residents.size());
+        for (const DanmakuSpriteId spriteId : residents) {
+            if (!activeSpriteIds.contains(spriteId)) {
+                evictable.push_back(spriteId);
+            }
+        }
+        std::sort(evictable.begin(), evictable.end(), [this](DanmakuSpriteId lhs, DanmakuSpriteId rhs) {
+            return m_sprites.value(lhs).lastUsedFrame < m_sprites.value(rhs).lastUsedFrame;
+        });
+        if (evictable.isEmpty()) {
+            return false;
+        }
+
+        for (int evictCount = 1; evictCount <= evictable.size(); ++evictCount) {
+            QSet<DanmakuSpriteId> survivors = page.residents;
+            for (int i = 0; i < evictCount; ++i) {
+                survivors.remove(evictable[i]);
+            }
+            survivors.insert(requestedSpriteId);
+
+            QVector<PackCandidate> candidates;
+            candidates.reserve(survivors.size());
+            for (const DanmakuSpriteId spriteId : std::as_const(survivors)) {
+                const auto spriteIt = m_sprites.constFind(spriteId);
+                if (spriteIt == m_sprites.constEnd() || spriteIt.value().image.isNull()) {
+                    candidates.clear();
+                    break;
+                }
+                candidates.push_back(PackCandidate {
+                    spriteId,
+                    spriteIt.value().image.size(),
+                    spriteIt.value().lastUsedFrame,
+                });
+            }
+            if (candidates.isEmpty()) {
+                continue;
+            }
+
+            std::sort(candidates.begin(), candidates.end(), [](const PackCandidate &lhs, const PackCandidate &rhs) {
+                if (lhs.size.height() != rhs.size.height()) {
+                    return lhs.size.height() > rhs.size.height();
+                }
+                if (lhs.size.width() != rhs.size.width()) {
+                    return lhs.size.width() > rhs.size.width();
+                }
+                return lhs.spriteId < rhs.spriteId;
+            });
+
+            DanmakuAtlasPacker packer(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize));
+            QHash<DanmakuSpriteId, QRect> rects;
+            bool packed = true;
+            for (const PackCandidate &candidate : std::as_const(candidates)) {
+                const QRect rect = packer.insert(candidate.size);
+                if (!rect.isValid()) {
+                    packed = false;
+                    break;
+                }
+                rects.insert(candidate.spriteId, rect);
+            }
+            if (!packed) {
+                continue;
+            }
+
+            page.packer = packer;
+            page.image.fill(Qt::transparent);
+            for (const DanmakuSpriteId spriteId : std::as_const(residents)) {
+                SpriteRecord &record = m_sprites[spriteId];
+                record.pageIndex = -1;
+                record.pixelRect = {};
+            }
+            page.residents.clear();
+
+            for (const PackCandidate &candidate : std::as_const(candidates)) {
+                const QRect rect = rects.value(candidate.spriteId);
+                placeSpriteOnPage(pageIndex, candidate.spriteId, rect);
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    void createAtlasPage() {
+        AtlasPage page;
+        page.packer.reset(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize));
+        page.image = QImage(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize), QImage::Format_RGBA8888_Premultiplied);
+        page.image.fill(Qt::transparent);
+        page.textureDirty = true;
+        m_atlasPages.push_back(std::move(page));
+    }
+
+    void buildAtlasVertices() {
+        m_pageVertices.clear();
+        m_pageVertices.resize(m_atlasPages.size());
+
+        const QColor normalColor(Qt::white);
+        const QColor hoverColor(QStringLiteral("#FFFF6677"));
+        for (const DanmakuRenderInstance &instance : m_instances) {
+            const auto spriteIt = m_sprites.constFind(instance.spriteId);
+            if (spriteIt == m_sprites.constEnd()) {
+                continue;
+            }
+            const SpriteRecord &record = spriteIt.value();
+            if (record.pageIndex < 0 || record.pageIndex >= m_pageVertices.size()) {
+                continue;
+            }
+
+            const QSize pageSize = m_atlasPages[record.pageIndex].image.size();
+            if (!pageSize.isValid()) {
+                continue;
+            }
+            const QColor color = instance.ngDropHovered ? hoverColor : normalColor;
+            const float left = static_cast<float>(instance.x);
+            const float top = static_cast<float>(instance.y);
+            const float right = static_cast<float>(instance.x + record.logicalSize.width());
+            const float bottom = static_cast<float>(instance.y + record.logicalSize.height());
+            const float u0 = static_cast<float>(record.pixelRect.left()) / pageSize.width();
+            const float v0 = static_cast<float>(record.pixelRect.top()) / pageSize.height();
+            const float u1 = static_cast<float>(record.pixelRect.right() + 1) / pageSize.width();
+            const float v1 = static_cast<float>(record.pixelRect.bottom() + 1) / pageSize.height();
+            const float alpha = static_cast<float>(std::clamp(instance.alpha, 0.0, 1.0));
+            QVector<Vertex> &vertices = m_pageVertices[record.pageIndex];
+            vertices.push_back(Vertex {left, top, u0, v0, color.redF(), color.greenF(), color.blueF(), alpha});
+            vertices.push_back(Vertex {right, top, u1, v0, color.redF(), color.greenF(), color.blueF(), alpha});
+            vertices.push_back(Vertex {left, bottom, u0, v1, color.redF(), color.greenF(), color.blueF(), alpha});
+            vertices.push_back(Vertex {left, bottom, u0, v1, color.redF(), color.greenF(), color.blueF(), alpha});
+            vertices.push_back(Vertex {right, top, u1, v0, color.redF(), color.greenF(), color.blueF(), alpha});
+            vertices.push_back(Vertex {right, bottom, u1, v1, color.redF(), color.greenF(), color.blueF(), alpha});
+        }
+    }
+
+    void composeFrameImage() {
+        const QSize imageSize(
+            std::max(1, static_cast<int>(std::ceil(m_itemSize.width() * m_devicePixelRatio))),
+            std::max(1, static_cast<int>(std::ceil(m_itemSize.height() * m_devicePixelRatio))));
+        m_frameImage = QImage(imageSize, QImage::Format_RGBA8888_Premultiplied);
+        m_frameImage.setDevicePixelRatio(m_devicePixelRatio);
+        m_frameImage.fill(Qt::transparent);
+
+        QPainter painter(&m_frameImage);
+        for (const DanmakuRenderInstance &instance : m_instances) {
+            const auto spriteIt = m_sprites.find(instance.spriteId);
+            if (spriteIt == m_sprites.end() || spriteIt->image.isNull()) {
+                continue;
+            }
+            const QRectF targetRect(
+                instance.x,
+                instance.y,
+                spriteIt->logicalSize.width(),
+                spriteIt->logicalSize.height());
+            painter.setOpacity(std::clamp(instance.alpha, 0.0, 1.0));
+            if (instance.ngDropHovered) {
+                if (spriteIt->hoverImage.isNull()) {
+                    spriteIt->hoverImage = colorizeSpriteImage(spriteIt->image, QColor(QStringLiteral("#FFFF6677")));
+                }
+                painter.drawImage(targetRect, spriteIt->hoverImage);
+            } else {
+                painter.drawImage(targetRect, spriteIt->image);
+            }
         }
 
         const float width = static_cast<float>(m_itemSize.width());
         const float height = static_cast<float>(m_itemSize.height());
-        // Keep canonical UVs. Qt Quick's render path already accounts for texture origin.
-        const Vertex vertices[4] = {
-            {0.0f, 0.0f, 0.0f, 0.0f},
-            {width, 0.0f, 1.0f, 0.0f},
-            {0.0f, height, 0.0f, 1.0f},
-            {width, height, 1.0f, 1.0f},
+        m_frameQuadVertices = {
+            Vertex {0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+            Vertex {width, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+            Vertex {0.0f, height, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+            Vertex {0.0f, height, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+            Vertex {width, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+            Vertex {width, height, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
         };
+        m_frameTextureDirty = true;
+    }
 
-        m_vbo.bind();
-        m_vbo.allocate(vertices, sizeof(vertices));
-        m_vbo.release();
+    void maybeWritePerfLog() {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_perfWindowStartMs <= 0) {
+            m_perfWindowStartMs = nowMs;
+            return;
+        }
 
-        m_geometryDirty = false;
-        return true;
+        const qint64 elapsedMs = nowMs - m_perfWindowStartMs;
+        if (elapsedMs < kPerfLogWindowMs) {
+            return;
+        }
+
+        qInfo().noquote()
+            << QString("[perf-render] backend=%1 window_ms=%2 frame_count=%3 instances=%4 sprite_upload_count=%5 sprite_upload_bytes=%6 atlas_pages=%7 draw_calls=%8")
+                   .arg(QString::fromLatin1(rendererBackendName(m_backend)))
+                   .arg(elapsedMs)
+                   .arg(m_perfFrameCount)
+                   .arg(m_perfInstanceTotal)
+                   .arg(m_perfSpriteUploadCount)
+                   .arg(m_perfSpriteUploadBytes)
+                   .arg(m_atlasPages.size())
+                   .arg(m_perfDrawCalls);
+
+        m_perfWindowStartMs = nowMs;
+        m_perfFrameCount = 0;
+        m_perfInstanceTotal = 0;
+        m_perfSpriteUploadCount = 0;
+        m_perfSpriteUploadBytes = 0;
+        m_perfDrawCalls = 0;
     }
 
     void releaseResources() {
-        if (m_texture) {
-            delete m_texture;
-            m_texture = nullptr;
-            m_textureStorageReady = false;
+        for (AtlasPage &page : m_atlasPages) {
+            delete page.texture;
+            page.texture = nullptr;
+        }
+        m_atlasPages.clear();
+        if (m_frameTexture) {
+            delete m_frameTexture;
+            m_frameTexture = nullptr;
         }
         if (m_program) {
             delete m_program;
@@ -350,20 +759,33 @@ private:
     }
 
     QSize m_itemSize;
-    QImage m_image;
+    qreal m_devicePixelRatio = 1.0;
+    DanmakuRendererBackend m_backend = DanmakuRendererBackend::Atlas;
+    QVector<DanmakuRenderInstance> m_instances;
+    QHash<DanmakuSpriteId, SpriteRecord> m_sprites;
+    QVector<AtlasPage> m_atlasPages;
+    QVector<QVector<Vertex>> m_pageVertices;
+    QVector<Vertex> m_frameQuadVertices;
+    QImage m_frameImage;
     bool m_glInitialized = false;
-    bool m_textureDirty = true;
-    bool m_geometryDirty = true;
+    bool m_frameTextureDirty = true;
+    quint64 m_frameSequence = 0;
 
     QOpenGLShaderProgram *m_program = nullptr;
-    QOpenGLTexture *m_texture = nullptr;
-    bool m_textureStorageReady = false;
+    QOpenGLTexture *m_frameTexture = nullptr;
     QOpenGLBuffer m_vbo;
-
     int m_positionLoc = -1;
     int m_uvLoc = -1;
+    int m_colorLoc = -1;
     int m_matrixLoc = -1;
     int m_textureLoc = -1;
+
+    qint64 m_perfWindowStartMs = 0;
+    int m_perfFrameCount = 0;
+    qulonglong m_perfInstanceTotal = 0;
+    qulonglong m_perfSpriteUploadCount = 0;
+    qulonglong m_perfSpriteUploadBytes = 0;
+    qulonglong m_perfDrawCalls = 0;
 };
 } // namespace
 
@@ -395,6 +817,11 @@ void DanmakuRenderNodeItem::setController(DanmakuController *controller) {
             this,
             &DanmakuRenderNodeItem::handleControllerRenderSnapshotChanged,
             Qt::QueuedConnection);
+        if (window()) {
+            const qreal dpr = std::max(window()->effectiveDevicePixelRatio(), 1.0);
+            m_controller->setRenderDevicePixelRatio(dpr);
+            m_lastRenderDevicePixelRatio = dpr;
+        }
     }
 
     emit controllerChanged();
@@ -411,23 +838,41 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
 
     const int itemWidth = static_cast<int>(std::ceil(width()));
     const int itemHeight = static_cast<int>(std::ceil(height()));
+    const qreal devicePixelRatio = window() ? std::max(window()->effectiveDevicePixelRatio(), 1.0) : 1.0;
+    if (m_controller && !qFuzzyCompare(m_lastRenderDevicePixelRatio, devicePixelRatio)) {
+        m_lastRenderDevicePixelRatio = devicePixelRatio;
+        QMetaObject::invokeMethod(
+            m_controller,
+            [controller = QPointer<DanmakuController>(m_controller), devicePixelRatio]() {
+                if (controller) {
+                    controller->setRenderDevicePixelRatio(devicePixelRatio);
+                }
+            },
+            Qt::QueuedConnection);
+    }
     if (itemWidth <= 0 || itemHeight <= 0 || !window()) {
         m_pendingPresentedFrame.store(false, std::memory_order_release);
-        node->setFrame({}, QSize(1, 1), 1.0);
+        node->setFrame(
+            DanmakuRenderFrame {},
+            {},
+            QSize(1, 1),
+            1.0,
+            rendererBackendFromEnv());
         return node;
     }
 
-    QSharedPointer<const QVector<DanmakuController::RenderItem>> snapshot;
+    DanmakuRenderFrame frame;
+    QVector<DanmakuSpriteUpload> uploads;
+    DanmakuRenderFrameConstPtr snapshot;
     if (m_controller) {
         snapshot = m_controller->renderSnapshot();
+        uploads = m_controller->takePendingSpriteUploads();
     }
-    m_pendingPresentedFrame.store(snapshot && !snapshot->isEmpty(), std::memory_order_release);
-
     if (snapshot) {
-        node->setFrame(*snapshot, QSize(itemWidth, itemHeight), window()->effectiveDevicePixelRatio());
-    } else {
-        node->setFrame({}, QSize(itemWidth, itemHeight), window()->effectiveDevicePixelRatio());
+        frame = *snapshot;
     }
+    m_pendingPresentedFrame.store(snapshot && !snapshot->instances.isEmpty(), std::memory_order_release);
+    node->setFrame(frame, uploads, QSize(itemWidth, itemHeight), devicePixelRatio, rendererBackendFromEnv());
     return node;
 }
 
@@ -443,6 +888,11 @@ void DanmakuRenderNodeItem::handleWindowChanged(QQuickWindow *window) {
     m_pendingPresentedFrame.store(false, std::memory_order_release);
     if (!window) {
         return;
+    }
+    if (m_controller) {
+        const qreal dpr = std::max(window->effectiveDevicePixelRatio(), 1.0);
+        m_controller->setRenderDevicePixelRatio(dpr);
+        m_lastRenderDevicePixelRatio = dpr;
     }
     m_frameSwappedConnection = connect(
         window,

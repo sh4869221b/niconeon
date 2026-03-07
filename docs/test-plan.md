@@ -19,6 +19,7 @@
 - `core_client_test`: fake core を使い、`stderr` が crash 扱いされないこと、generation 切替後の stale `playback_tick_batch` が破棄されること、JSON-RPC `error.message` が文字列として届くことを検証する。
 - `danmaku_text_width_test`: 全角文字/日本語文字列を含むコメントで `widthEstimate` が `QFontMetrics` 実測幅 + 左右余白以上になること、およびシーク復帰時の長めの lag compensation でシーク前から流れていたコメントが途中位置に再配置されることを検証する。
 - `danmaku_ng_drop_test`: NG ドロップ失敗時に pending fade が rollback され、ドラッグ起点コメントが同一レーン優先で復帰することを検証する。
+- `danmaku_sprite_cache_test`: atlas packer の矩形が重ならないこと、同一 text の width 計測が再利用されること、DPR 差分で別 sprite が生成されることを検証する。
 - 実行コマンド例:
   - `just ui-test`
   - `cd app-ui && cmake -S . -B build-test -DBUILD_TESTING=ON`
@@ -68,12 +69,14 @@
 - Windows で OS が `Dark` のとき、About の本文（`TextArea`）/タブ/入力欄が可読であることを確認する。
 - Windows で OS が `Light` のときも同様に可読であることを確認する。
 - Windows で起動中に OS の Light/Dark を切り替えても、About/Filter/Speed 設定の文字色・背景色が追従してコントラストを維持することを確認する。
-- 既定の `QSGRenderNode` バックエンドで、コメント表示・ドラッグ・NGドロップ・Undo が機能する。
+- 既定の `QSGRenderNode` atlas backend で、コメント表示・ドラッグ・NGドロップ・Undo が機能する。
+- `NICONEON_DANMAKU_RENDERER=frame_image` へ切替後も同等機能が成立し、比較用 fallback として起動できる。
 - 高密度区間でドラッグ開始時のヒットテストが安定し、意図しないコメント選択が増えない。
 - `NICONEON_DANMAKU_WORKER=on`（既定）で再生・シーク・ドラッグ・NG の回帰がない。
 - `NICONEON_DANMAKU_WORKER=off` へ切替後も同等機能が成立し、クラッシュしない。
 - `NICONEON_SIMD_MODE=auto/scalar/avx2` で起動し、`[danmaku-simd]` ログが期待モードを示す。
 - `NICONEON_SIMD_MODE=avx2` と `scalar` で表示破綻（位置飛び/消去漏れ）がない。
+- `NICONEON_DANMAKU_RENDERER=atlas|frame_image` で起動し、`[perf-render]` が `instances` / `sprite_upload_count` / `sprite_upload_bytes` / `atlas_pages` / `draw_calls` を出力する。
 - `just perf-dummy` で #21 前後を比較し、通常再生中は `spatial_full_rebuilds=0` / `snapshot_full_rebuilds=0`（シーク/compactionを除く）を満たす。
 - `just perf-dummy` で #24 前後を比較し、`updates` 同等条件で `avg_ms` または `p95_ms` が悪化していない。
 - 連続シーク（10回以上）+ 連続ドラッグ（10回以上）を行っても、worker有効時にクラッシュしない。

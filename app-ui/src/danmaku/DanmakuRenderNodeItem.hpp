@@ -1,12 +1,11 @@
 #pragma once
 
-#include "danmaku/DanmakuController.hpp"
-
 #include <atomic>
 #include <QMetaObject>
 #include <QPointer>
 #include <QQuickItem>
 
+class DanmakuController;
 class QSGNode;
 class QQuickWindow;
 
@@ -34,4 +33,5 @@ private:
     QPointer<DanmakuController> m_controller;
     QMetaObject::Connection m_frameSwappedConnection;
     std::atomic_bool m_pendingPresentedFrame = false;
+    qreal m_lastRenderDevicePixelRatio = 0.0;
 };

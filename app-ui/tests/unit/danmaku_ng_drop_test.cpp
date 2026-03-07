@@ -19,9 +19,9 @@ QVariantMap makeComment(const QString &commentId, const QString &userId, const Q
     return comment;
 }
 
-const DanmakuController::RenderItem *findItem(
-    const QVector<DanmakuController::RenderItem> &items, const QString &commentId) {
-    for (const DanmakuController::RenderItem &item : items) {
+const DanmakuRenderInstance *findItem(
+    const QVector<DanmakuRenderInstance> &items, const QString &commentId) {
+    for (const DanmakuRenderInstance &item : items) {
         if (item.commentId == commentId) {
             return &item;
         }
@@ -29,13 +29,13 @@ const DanmakuController::RenderItem *findItem(
     return nullptr;
 }
 
-const DanmakuController::RenderItem *findItem(
-    const QSharedPointer<const QVector<DanmakuController::RenderItem>> &snapshot,
+const DanmakuRenderInstance *findItem(
+    const DanmakuRenderFrameConstPtr &snapshot,
     const QString &commentId) {
     if (!snapshot) {
         return nullptr;
     }
-    return findItem(*snapshot, commentId);
+    return findItem(snapshot->instances, commentId);
 }
 
 double itemAlpha(DanmakuController &controller, const QString &commentId) {
