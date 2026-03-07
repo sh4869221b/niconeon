@@ -26,6 +26,24 @@ QString processErrorName(QProcess::ProcessError error) {
         return QStringLiteral("UnknownError");
     }
 }
+
+QString jsonRpcErrorMessage(const QJsonValue &value) {
+    if (value.isString()) {
+        return value.toString();
+    }
+    if (value.isObject()) {
+        const QJsonObject object = value.toObject();
+        const QString message = object.value(QStringLiteral("message")).toString().trimmed();
+        if (!message.isEmpty()) {
+            return message;
+        }
+        return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
+    }
+    if (value.isUndefined() || value.isNull()) {
+        return QString();
+    }
+    return value.toVariant().toString();
+}
 } // namespace
 
 CoreClient::CoreClient(QObject *parent) : QObject(parent) {
@@ -246,7 +264,7 @@ void CoreClient::onReadyReadStandardOutput() {
             result = obj.value("result").toVariant();
         }
         if (obj.contains("error")) {
-            error = obj.value("error").toVariant();
+            error = jsonRpcErrorMessage(obj.value("error"));
         }
 
         if (method == QStringLiteral("playback_tick_batch")
