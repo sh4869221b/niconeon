@@ -51,6 +51,7 @@ jobs:
         id: wait
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           deadline=$(( $(date +%s) + 900 ))
 
