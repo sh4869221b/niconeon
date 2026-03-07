@@ -426,10 +426,12 @@ ApplicationWindow {
 
     function resetCommentSessionState() {
         root.sessionId = ""
+        root.undoToken = ""
         root.totalComments = 0
         root.commentFps = 0
         root.activeCommentCount = 0
         root.pendingSeek = false
+        danmakuController.resetForSeek()
     }
 
     function shouldResetCommentSessionForError(method, errorMessage) {
