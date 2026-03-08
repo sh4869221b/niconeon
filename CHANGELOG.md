@@ -2,6 +2,52 @@
 
 _Generated from git commit subjects (merge commits excluded)._
 
+## v0.0.17 (2026-03-08)
+
+_Range: `v0.0.16..v0.0.17`_
+
+- docs(changelog): update for v0.0.16
+- fix(release): bundle runtime dependencies in AppImage packaging (#25)
+- docs(ui): refine screen layout design document (#33)
+- feat(ui): expose danmaku overlay metrics properties
+- feat(ui): expose mpv video fps property
+- feat(ui): add danmaku overlay stats panel
+- feat(ui): reset comment session totals and pass overlay stats
+- docs: add ui manual stats panel checks
+- feat(ui): add settings dialog with font size controls
+- fix(ui): keep overlay stats panel inside video area
+- fix(ui): stderr を crash 扱いしない Fixes #35
+- fix(core): fetch に timeout を設定する Fixes #36
+- fix(ui): stale playback_tick_batch 応答を破棄する Fixes #38
+- fix(ui): セッション初期化時に旧弾幕を消す Fixes #37
+- fix(ui): JSON-RPC error message を文字列化する Fixes #40
+- fix(ui): playback tick の同期に last_position_ms を使う Fixes #39
+- fix(core): 0ms と seek 同値時刻のコメントを拾う Fixes #41
+- fix(ui): NG ドロップ失敗時にコメントを復元する Fixes #46
+- fix(core): 壊れた cache でも open_video を継続する Fixes #43
+- fix(core): emit budget を tick 単位で適用する Fixes #42
+- fix(ui): max_emit_per_tick=0 を QoS 変更対象から外す Fixes #47
+- fix(core): open_video を単一アクティブ session にする Fixes #44
+- fix(core): undo_last_ng の更新順序を安全側にする Fixes #45
+- test(core): 境界条件と fallback の回帰テストを追加する Fixes #53
+- test(ui): IPC 順序と NG 同期のテストを追加する Fixes #54
+- test(ci): UI unit tests を標準導線に載せる Fixes #49
+- docs(ci): UI E2E job を best-effort 扱いにする Fixes #48
+- docs(readme): build 前提ツールを明記する Fixes #51
+- docs(architecture): CI job 構成を同期する Fixes #52
+- ci(release): semver tag を検証する Fixes #50
+- chore(gitignore): app-ui build-review を無視する
+- docs(agents): require English commit messages
+- fix(seek): restore in-flight comments after seeking
+- refactor: remove obsolete compatibility code
+- fix: default comment rendering to 60fps and lazy-load file dialog
+- style(ui): render danmaku as text only
+- feat(ui): add atlas-based danmaku renderer
+- ci(release): promote main artifacts for tag releases
+- fix(release): pass AppDir to linuxdeploy deps flag
+- fix(release): skip wrapper script in linuxdeploy
+- fix(release): replace broken appimage icon
+
 ## v0.0.16 (2026-02-15)
 
 _Range: `v0.0.15..v0.0.16`_
