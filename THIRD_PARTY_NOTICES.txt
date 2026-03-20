@@ -394,7 +394,7 @@ Rust Dependencies (core/Cargo.toml)
   Repository: https://github.com/quinn-rs/quinn
   Description: Versatile QUIC transport protocol implementation
 
-- quinn-proto 0.11.13
+- quinn-proto 0.11.14
   License: Apache-2.0 OR MIT
   Repository: https://github.com/quinn-rs/quinn
   Description: State machine for the QUIC transport protocol
