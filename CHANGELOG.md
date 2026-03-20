@@ -2,6 +2,15 @@
 
 _Generated from git commit subjects (merge commits excluded)._
 
+## v0.0.18 (2026-03-20)
+
+_Range: `v0.0.17..v0.0.18`_
+
+- fix(release): pass repo context to gh wait step
+- fix(release): omit target commitish in rebuild publish
+- docs(changelog): update for v0.0.17
+- fix(ui): stabilize danmaku qos and render profiling
+
 ## v0.0.17 (2026-03-08)
 
 _Range: `v0.0.16..v0.0.17`_
