@@ -140,12 +140,14 @@ artifact の欠落・期限切れ・promotion 失敗時は、`Release Rebuild` w
 - `NICONEON_DANMAKU_RENDERER`:
   - 既定 `atlas`
   - `frame_image` で旧来のフルフレーム画像合成へフォールバック
+  - `atlas` は OpenGL instancing を優先し、非対応環境では atlas 頂点展開へフォールバック
 
 ## 弾幕更新モード（R2）
 
 - `NICONEON_DANMAKU_WORKER`:
   - 既定 `on`（ワーカースレッド更新）
   - `off` で単スレッド更新へフォールバック
+  - `on` では persistent SoA + row diff 同期を使い、シーク/DPR/profile変更時だけ full reset する
 - `NICONEON_SIMD_MODE`:
   - 既定 `auto`（AVX2 対応CPUで `avx2`、それ以外は `scalar`）
   - 明示指定: `avx2` / `scalar`

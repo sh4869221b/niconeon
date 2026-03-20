@@ -3,6 +3,7 @@
 #include "danmaku/DanmakuRenderFrame.hpp"
 
 #include <QHash>
+#include <QQueue>
 #include <QString>
 
 class DanmakuTextSpriteCache {
@@ -31,22 +32,32 @@ public:
     struct EnsureResult {
         DanmakuSpriteId spriteId = 0;
         int widthEstimate = 0;
-        bool createdUpload = false;
-        DanmakuSpriteUpload upload;
+        bool queuedRaster = false;
     };
 
     DanmakuTextSpriteCache() = default;
 
     void clear();
     EnsureResult ensureSprite(const QString &text, int fontPixelSize, qreal devicePixelRatio);
+    DanmakuSpriteUpload takePendingUpload(const QString &text, int fontPixelSize, qreal devicePixelRatio);
+    QVector<DanmakuSpriteUpload> rasterizePendingSprites(int maxSprites, qint64 maxUploadBytes);
     int widthMeasurementCountForTesting() const;
+    int pendingRasterCountForTesting() const;
 
 private:
+    struct PendingRaster {
+        SpriteKey key;
+        DanmakuSpriteId spriteId = 0;
+        int widthEstimate = 0;
+    };
+
     int ensureWidthEstimate(const QString &text, int fontPixelSize);
     QImage rasterizeSprite(const QString &text, int fontPixelSize, int widthEstimate, qreal devicePixelRatio) const;
 
     QHash<WidthKey, int> m_widthCache;
     QHash<SpriteKey, DanmakuSpriteId> m_spriteIds;
+    QHash<SpriteKey, PendingRaster> m_pendingRasters;
+    QQueue<PendingRaster> m_pendingRasterQueue;
     quint32 m_nextSpriteId = 1;
     int m_widthMeasurementCount = 0;
 };

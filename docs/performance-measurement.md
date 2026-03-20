@@ -22,11 +22,12 @@ Issue `#4` の目的は、同一条件で再現可能なログを取り、ボト
 
 ## Metrics to Compare
 
-- UI: `tick_sent`, `tick_result`, `tick_backlog`, `dropped_comments`, `coalesced_comments`, `emit_over_budget`, `profile`, `target_fps`, `emit_cap`
+- UI: `tick_sent`, `tick_result`, `tick_backlog`, `dropped_comments`, `coalesced_comments`, `emit_over_budget`, `profile`, `target_fps`, `emit_cap`, `comment_fps`
 - Danmaku: `fps`, `avg_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`, `updates`, `removed`
 - Render: `instances`, `sprite_upload_count`, `sprite_upload_bytes`, `atlas_pages`, `draw_calls`
 - Pool状態: `rows_total`, `rows_active`, `rows_free`, `compacted`
 - Lane状態: `lane_pick_count`, `lane_ready_count`, `lane_forced_count`, `lane_wait_ms_avg`, `lane_wait_ms_max`
+- Spatial/Snapshot 差分: `spatial_full_rebuilds`, `spatial_row_updates`, `snapshot_full_rebuilds`, `snapshot_row_updates`
 - Scene Graph: batch/upload 関連ログ
 - Glyph: glyph time ログのスパイク有無
 
@@ -119,6 +120,7 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 Prerequisites:
 - `ffmpeg`
 - ヘッドレス環境の場合は `xvfb-run`
+- 環境によってはログファイルが空のまま完走することがあるため、`perf-dummy.log` のサイズも結果と合わせて確認する
 
 Run:
 
@@ -247,6 +249,7 @@ NICONEON_SYNTHETIC_USER_SPAN=200
   - `[perf-ui]` の `tick_backlog`
 - 受け入れ判定:
   - 通常再生中は `spatial_full_rebuilds=0` かつ `snapshot_full_rebuilds=0`（シーク/compaction区間を除く）
+  - 通常再生中の `spatial_row_updates` が導入前より明確に減ること
   - `updates` 同等条件で `avg_ms` または `p95_ms` が悪化しないこと
   - ドラッグ/NGドロップ/シーク後再同期の機能回帰がないこと
 
@@ -256,10 +259,12 @@ NICONEON_SYNTHETIC_USER_SPAN=200
 - 比較対象:
   - `[perf-danmaku]` の `avg_ms` / `p95_ms` / `p99_ms`
   - `[perf-danmaku]` の `updates`（同等条件で比較）
+  - `[perf-render]` の `sprite_upload_bytes`
   - `[perf-ui]` の `tick_backlog`
 - 回帰確認:
   - `NICONEON_DANMAKU_WORKER=off` / `NICONEON_SIMD_MODE=scalar|avx2` で表示破綻や操作回帰がないこと
   - 連続シーク・連続ドラッグ時にクラッシュ（double free/use-after-free）がないこと
+  - 初見テキストの多い区間で `sprite_upload_bytes` と `p99_ms` のスパイクが悪化していないこと
 
 ## Expected Log Prefixes
 

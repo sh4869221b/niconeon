@@ -30,6 +30,8 @@ constexpr int kGlyphWarmupQueueMax = 2048;
 constexpr qreal kSpatialCellWidthPx = 192.0;
 constexpr qreal kDragPickSlopPx = 4.0;
 constexpr qint64 kWorkerElapsedCapMs = 200;
+constexpr int kSpriteRasterBudgetPerFrame = 8;
+constexpr qint64 kSpriteUploadBudgetBytesPerFrame = 512 * 1024;
 constexpr const char *kGlyphWarmupSeed =
     "0123456789"
     "abcdefghijklmnopqrstuvwxyz"
@@ -63,6 +65,7 @@ bool isTrackableGlyphCodepoint(char32_t codepoint) {
 
 DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
     qRegisterMetaType<DanmakuWorkerFramePtr>("DanmakuWorkerFramePtr");
+    qRegisterMetaType<DanmakuWorkerSyncBatchPtr>("DanmakuWorkerSyncBatchPtr");
 
     m_lastTickMs = QDateTime::currentMSecsSinceEpoch();
     m_perfLogWindowStartMs = m_lastTickMs;
@@ -136,7 +139,7 @@ void DanmakuController::setPlaybackPaused(bool paused) {
         return;
     }
     m_playbackPaused = paused;
-    invalidateWorkerGeneration();
+    syncWorkerFullState();
     emit playbackPausedChanged();
 }
 
@@ -146,7 +149,7 @@ void DanmakuController::setPlaybackRate(double rate) {
         return;
     }
     m_playbackRate = normalized;
-    invalidateWorkerGeneration();
+    syncWorkerFullState();
     emit playbackRateChanged();
 }
 
@@ -214,12 +217,12 @@ void DanmakuController::setGlyphWarmupEnabled(bool enabled) {
 }
 
 void DanmakuController::appendFromCore(const QVariantList &comments, qint64 playbackPositionMs) {
-    invalidateWorkerGeneration();
     ensureLaneStateSize();
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     QVector<int> appendedRows;
     appendedRows.reserve(comments.size());
     bool appendedAny = false;
+    bool queuedSpriteRaster = false;
     for (const QVariant &entry : comments) {
         const QVariantMap map = entry.toMap();
         Item item;
@@ -236,8 +239,8 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
             m_textSpriteCache.ensureSprite(item.text, DanmakuRenderStyle::kTextPixelSize, m_renderDevicePixelRatio);
         item.spriteId = spriteResult.spriteId;
         item.widthEstimate = spriteResult.widthEstimate;
-        if (spriteResult.createdUpload) {
-            enqueueSpriteUpload(spriteResult.upload);
+        if (spriteResult.queuedRaster) {
+            queuedSpriteRaster = true;
         }
         item.speedPxPerSec = 120 + (qHash(item.commentId) % 70);
         item.active = true;
@@ -268,14 +271,17 @@ void DanmakuController::appendFromCore(const QVariantList &comments, qint64 play
     }
 
     if (appendedAny) {
+        if (queuedSpriteRaster) {
+            rasterizePendingSpritesWithinBudget();
+        }
         queueSpatialUpsertRows(appendedRows);
         queueSnapshotUpsertRows(appendedRows);
         flushPendingDiffs(true);
+        syncWorkerRows(appendedRows);
     }
 }
 
 void DanmakuController::setNgDropZoneRect(qreal x, qreal y, qreal width, qreal height) {
-    invalidateWorkerGeneration();
     m_ngZoneX = x;
     m_ngZoneY = y;
     m_ngZoneWidth = std::max(0.0, width);
@@ -359,7 +365,7 @@ bool DanmakuController::beginDragInternal(int index, qreal pointerX, qreal point
     }
 
     updateNgZoneVisibility();
-    invalidateWorkerGeneration();
+    syncWorkerRows(QVector<int> {index});
     queueSnapshotUpsertRow(index);
     flushPendingDiffs(true);
     return true;
@@ -387,7 +393,7 @@ void DanmakuController::moveDragInternal(int index, qreal pointerX, qreal pointe
     if (hovered != item.ngDropHovered) {
         item.ngDropHovered = hovered;
     }
-    invalidateWorkerGeneration();
+    syncWorkerRows(QVector<int> {index});
     queueSpatialUpsertRow(index);
     queueSnapshotUpsertRow(index);
     flushPendingDiffs(true);
@@ -404,11 +410,11 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
     }
 
     const bool resolvedInNgZone = inNgZone || isItemInNgZone(item);
-    invalidateWorkerGeneration();
     m_activeDragRow = -1;
     m_activeDragOffsetX = 0.0;
     m_activeDragOffsetY = 0.0;
 
+    QVector<int> workerRows;
     if (resolvedInNgZone) {
         const QString userId = item.userId;
         item.dragging = false;
@@ -426,6 +432,7 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
             candidate.fadeRemainingMs = 300;
             changedRows.push_back(row);
         }
+        workerRows = changedRows;
         queueSnapshotUpsertRows(changedRows);
         emit ngDropRequested(userId);
     } else {
@@ -433,6 +440,7 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
         item.frozen = false;
         item.ngDropHovered = false;
         recoverToLane(item);
+        workerRows.push_back(index);
     }
 
     updateNgZoneVisibility();
@@ -441,10 +449,12 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
         queueSnapshotUpsertRow(index);
     }
     flushPendingDiffs(true);
+    if (!workerRows.isEmpty()) {
+        syncWorkerRows(workerRows);
+    }
 }
 
 void DanmakuController::applyNgUserFade(const QString &userId) {
-    invalidateWorkerGeneration();
     bool changed = false;
     QVector<int> changedRows;
     for (int row = 0; row < m_items.size(); ++row) {
@@ -464,11 +474,11 @@ void DanmakuController::applyNgUserFade(const QString &userId) {
     if (changed) {
         queueSnapshotUpsertRows(changedRows);
         flushPendingDiffs(true);
+        syncWorkerRows(changedRows);
     }
 }
 
 void DanmakuController::rollbackPendingNgUserFade(const QString &userId) {
-    invalidateWorkerGeneration();
     QVector<int> snapshotRows;
     QVector<int> spatialRows;
     for (int row = 0; row < m_items.size(); ++row) {
@@ -500,6 +510,7 @@ void DanmakuController::rollbackPendingNgUserFade(const QString &userId) {
     if (!snapshotRows.isEmpty()) {
         queueSnapshotUpsertRows(snapshotRows);
         flushPendingDiffs(true);
+        syncWorkerRows(snapshotRows);
     }
 }
 
@@ -522,6 +533,7 @@ void DanmakuController::resetForSeek() {
     queueFullSpatialRebuild();
     queueFullSnapshotRebuild();
     flushPendingDiffs(true);
+    syncWorkerFullState();
 }
 
 void DanmakuController::resetGlyphSession() {
@@ -554,6 +566,7 @@ void DanmakuController::setRenderDevicePixelRatio(qreal devicePixelRatio) {
         m_pendingSpriteUploads.clear();
     }
     refreshActiveSpriteIds();
+    syncWorkerFullState();
 }
 
 bool DanmakuController::ngDropZoneVisible() const {
@@ -636,6 +649,7 @@ void DanmakuController::onFrame() {
     }
     updateOverlayMetrics(now);
     dispatchGlyphWarmupIfDue(now);
+    rasterizePendingSpritesWithinBudget();
 
     if (activeItemCount() == 0) {
         maybeWritePerfLog(now);
@@ -663,10 +677,13 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
     const qreal elapsedSec = elapsedMs / 1000.0;
     QVector<int> changedRows;
     changedRows.reserve(m_items.size());
+    QVector<int> spatialRows;
+    spatialRows.reserve(8);
     QVector<int> removeRows;
     removeRows.reserve(m_items.size());
     int frameGeometryUpdates = 0;
     bool frameStateChanged = false;
+    bool spatialDirty = false;
 
     for (int i = 0; i < m_items.size(); ++i) {
         Item &item = m_items[i];
@@ -702,6 +719,11 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
         if (geometryChanged) {
             ++frameGeometryUpdates;
             changedRows.push_back(i);
+            if (item.dragging) {
+                spatialRows.push_back(i);
+            } else {
+                spatialDirty = true;
+            }
             frameStateChanged = true;
         }
 
@@ -717,7 +739,12 @@ void DanmakuController::runFrameSingleThread(int elapsedMs, qint64 nowMs) {
         m_perfLogGeometryUpdateCount += frameGeometryUpdates;
     }
     if (!changedRows.isEmpty()) {
-        queueSpatialUpsertRows(changedRows);
+        if (!spatialRows.isEmpty()) {
+            queueSpatialUpsertRows(spatialRows);
+        }
+        if (spatialDirty) {
+            markSpatialIndexDirty();
+        }
         queueSnapshotUpsertRows(changedRows);
     }
     if (!removeRows.isEmpty()) {
@@ -828,6 +855,7 @@ int DanmakuController::pickLane(qint64 nowMs) {
 }
 
 bool DanmakuController::laneHasCollision(int lane, const Item &candidate) {
+    ensureSpatialIndexFresh();
     const QRectF candidateRect(candidate.x, candidate.y, candidate.widthEstimate, kItemHeight);
     const QVector<int> rows = m_spatialGrid.queryRect(candidateRect);
     for (const int row : rows) {
@@ -884,6 +912,7 @@ void DanmakuController::recoverToLane(Item &item) {
 }
 
 int DanmakuController::findItemIndexAt(qreal x, qreal y) {
+    ensureSpatialIndexFresh();
     const QPointF point(x, y);
     QVector<int> candidates = m_spatialGrid.queryPoint(point);
     if (candidates.isEmpty()) {
@@ -966,6 +995,7 @@ void DanmakuController::releaseRow(int row) {
 void DanmakuController::refreshActiveSpriteIds() {
     QVector<int> changedRows;
     changedRows.reserve(activeItemCount());
+    bool queuedSpriteRaster = false;
     for (int row = 0; row < m_items.size(); ++row) {
         Item &item = m_items[row];
         if (!item.active) {
@@ -975,12 +1005,15 @@ void DanmakuController::refreshActiveSpriteIds() {
             m_textSpriteCache.ensureSprite(item.text, DanmakuRenderStyle::kTextPixelSize, m_renderDevicePixelRatio);
         item.spriteId = spriteResult.spriteId;
         item.widthEstimate = spriteResult.widthEstimate;
-        if (spriteResult.createdUpload) {
-            enqueueSpriteUpload(spriteResult.upload);
+        if (spriteResult.queuedRaster) {
+            queuedSpriteRaster = true;
         }
         changedRows.push_back(row);
     }
     if (!changedRows.isEmpty()) {
+        if (queuedSpriteRaster) {
+            rasterizePendingSpritesWithinBudget();
+        }
         queueSpatialUpsertRows(changedRows);
         queueSnapshotUpsertRows(changedRows);
         flushPendingDiffs(true);
@@ -1006,6 +1039,7 @@ void DanmakuController::releaseRowsDescending(const QVector<int> &rowsDescending
     for (const int row : rows) {
         releaseRow(row);
     }
+    syncWorkerRemoveRows(rows);
 }
 
 bool DanmakuController::maybeCompactRows() {
@@ -1042,6 +1076,7 @@ bool DanmakuController::maybeCompactRows() {
     m_perfCompactedSinceLastLog = true;
     queueFullSpatialRebuild();
     queueFullSnapshotRebuild();
+    syncWorkerFullState();
     return true;
 }
 
@@ -1207,37 +1242,163 @@ void DanmakuController::clearGlyphWarmupText() {
     emit glyphWarmupTextChanged();
 }
 
-void DanmakuController::buildSoAState(DanmakuSoAState &state) const {
-    const int count = activeItemCount();
-    state.resize(count);
-    int index = 0;
+bool DanmakuController::rasterizePendingSpritesWithinBudget() {
+    const QVector<DanmakuSpriteUpload> uploads =
+        m_textSpriteCache.rasterizePendingSprites(kSpriteRasterBudgetPerFrame, kSpriteUploadBudgetBytesPerFrame);
+    if (uploads.isEmpty()) {
+        return false;
+    }
+
+    for (const DanmakuSpriteUpload &upload : uploads) {
+        enqueueSpriteUpload(upload);
+    }
+    emit renderSnapshotChanged();
+    return true;
+}
+
+DanmakuWorkerRowState DanmakuController::buildWorkerRowState(int row) const {
+    DanmakuWorkerRowState rowState;
+    if (row < 0 || row >= m_items.size()) {
+        return rowState;
+    }
+
+    const Item &item = m_items[row];
+    if (!item.active) {
+        return rowState;
+    }
+
+    quint8 flags = 0;
+    if (item.frozen) {
+        flags |= DanmakuSoAFlagFrozen;
+    }
+    if (item.dragging) {
+        flags |= DanmakuSoAFlagDragging;
+    }
+    if (item.fading) {
+        flags |= DanmakuSoAFlagFading;
+    }
+
+    rowState.row = row;
+    rowState.x = item.x;
+    rowState.y = item.y;
+    rowState.speed = item.speedPxPerSec;
+    rowState.alpha = item.alpha;
+    rowState.widthEstimate = item.widthEstimate;
+    rowState.fadeRemainingMs = item.fadeRemainingMs;
+    rowState.flags = flags;
+    return rowState;
+}
+
+QVector<DanmakuWorkerRowState> DanmakuController::buildWorkerRowStates(const QVector<int> &rows) const {
+    QVector<int> uniqueRows = rows;
+    std::sort(uniqueRows.begin(), uniqueRows.end());
+    uniqueRows.erase(std::unique(uniqueRows.begin(), uniqueRows.end()), uniqueRows.end());
+
+    QVector<DanmakuWorkerRowState> workerRows;
+    workerRows.reserve(uniqueRows.size());
+    for (const int row : uniqueRows) {
+        const DanmakuWorkerRowState rowState = buildWorkerRowState(row);
+        if (rowState.row >= 0) {
+            workerRows.push_back(rowState);
+        }
+    }
+    return workerRows;
+}
+
+QVector<DanmakuWorkerRowState> DanmakuController::buildAllWorkerRowStates() const {
+    QVector<DanmakuWorkerRowState> workerRows;
+    workerRows.reserve(activeItemCount());
     for (int row = 0; row < m_items.size(); ++row) {
-        const Item &item = m_items[row];
-        if (!item.active) {
+        const DanmakuWorkerRowState rowState = buildWorkerRowState(row);
+        if (rowState.row >= 0) {
+            workerRows.push_back(rowState);
+        }
+    }
+    return workerRows;
+}
+
+void DanmakuController::syncWorkerRows(const QVector<int> &rows) {
+    if (!m_workerEnabled || !m_updateWorker || rows.isEmpty()) {
+        return;
+    }
+
+    const QVector<DanmakuWorkerRowState> workerRows = buildWorkerRowStates(rows);
+    if (workerRows.isEmpty()) {
+        return;
+    }
+
+    markWorkerRowsDirty(rows);
+    DanmakuWorkerSyncBatchPtr batch = DanmakuWorkerSyncBatchPtr::create();
+    batch->upsertRows = workerRows;
+    QMetaObject::invokeMethod(
+        m_updateWorker,
+        "syncState",
+        Qt::QueuedConnection,
+        Q_ARG(DanmakuWorkerSyncBatchPtr, batch));
+}
+
+void DanmakuController::syncWorkerRemoveRows(const QVector<int> &rows) {
+    if (!m_workerEnabled || !m_updateWorker || rows.isEmpty()) {
+        return;
+    }
+
+    QVector<int> uniqueRows = rows;
+    std::sort(uniqueRows.begin(), uniqueRows.end());
+    uniqueRows.erase(std::unique(uniqueRows.begin(), uniqueRows.end()), uniqueRows.end());
+    if (uniqueRows.isEmpty()) {
+        return;
+    }
+
+    markWorkerRowsRemoved(uniqueRows);
+    DanmakuWorkerSyncBatchPtr batch = DanmakuWorkerSyncBatchPtr::create();
+    batch->removeRows = uniqueRows;
+    QMetaObject::invokeMethod(
+        m_updateWorker,
+        "syncState",
+        Qt::QueuedConnection,
+        Q_ARG(DanmakuWorkerSyncBatchPtr, batch));
+}
+
+void DanmakuController::syncWorkerFullState() {
+    if (!m_workerEnabled || !m_updateWorker) {
+        return;
+    }
+
+    invalidateWorkerGeneration();
+    DanmakuWorkerSyncBatchPtr batch = DanmakuWorkerSyncBatchPtr::create();
+    batch->fullReset = true;
+    batch->upsertRows = buildAllWorkerRowStates();
+    QMetaObject::invokeMethod(
+        m_updateWorker,
+        "syncState",
+        Qt::QueuedConnection,
+        Q_ARG(DanmakuWorkerSyncBatchPtr, batch));
+}
+
+void DanmakuController::markWorkerRowsDirty(const QVector<int> &rows) {
+    if (!m_workerEnabled || !m_workerBusy) {
+        return;
+    }
+    for (const int row : rows) {
+        if (row < 0) {
             continue;
         }
-        quint8 flags = 0;
-        if (item.frozen) {
-            flags |= DanmakuSoAFlagFrozen;
-        }
-        if (item.dragging) {
-            flags |= DanmakuSoAFlagDragging;
-        }
-        if (item.fading) {
-            flags |= DanmakuSoAFlagFading;
-        }
-
-        state.rows[index] = row;
-        state.x[index] = item.x;
-        state.y[index] = item.y;
-        state.speed[index] = item.speedPxPerSec;
-        state.alpha[index] = item.alpha;
-        state.widthEstimate[index] = item.widthEstimate;
-        state.fadeRemainingMs[index] = item.fadeRemainingMs;
-        state.flags[index] = flags;
-        ++index;
+        m_workerPendingRemovedRows.remove(row);
+        m_workerPendingDirtyRows.insert(row);
     }
-    Q_ASSERT(index == count);
+}
+
+void DanmakuController::markWorkerRowsRemoved(const QVector<int> &rows) {
+    if (!m_workerEnabled || !m_workerBusy) {
+        return;
+    }
+    for (const int row : rows) {
+        if (row < 0) {
+            continue;
+        }
+        m_workerPendingDirtyRows.remove(row);
+        m_workerPendingRemovedRows.insert(row);
+    }
 }
 
 void DanmakuController::scheduleWorkerFrame(int elapsedMs, qint64 nowMs) {
@@ -1254,10 +1415,9 @@ void DanmakuController::scheduleWorkerFrame(int elapsedMs, qint64 nowMs) {
         m_workerReusableFrame.clear();
     }
 
-    buildSoAState(frameInput->state);
     frameInput->changedRows.clear();
     frameInput->removeRows.clear();
-    if (frameInput->state.size() <= 0) {
+    if (activeItemCount() <= 0) {
         m_workerReusableFrame = std::move(frameInput);
         return;
     }
@@ -1296,69 +1456,56 @@ void DanmakuController::handleWorkerFrame(DanmakuWorkerFramePtr frame) {
         return;
     }
 
-    const QVector<int> &rows = frame->state.rows;
-    const QVector<qreal> &x = frame->state.x;
-    const QVector<qreal> &y = frame->state.y;
-    const QVector<qreal> &alpha = frame->state.alpha;
-    const QVector<int> &fadeRemainingMs = frame->state.fadeRemainingMs;
-    const QVector<quint8> &flags = frame->state.flags;
-    const QVector<int> &changedRows = frame->changedRows;
+    const QVector<DanmakuWorkerRowState> &changedRows = frame->changedRows;
     const QVector<int> &removeRows = frame->removeRows;
 
-    const int count = rows.size();
-    if (count <= 0) {
-        reclaimFrame(frame);
-        return;
-    }
-    if (x.size() != count || y.size() != count || alpha.size() != count || fadeRemainingMs.size() != count || flags.size() != count) {
-        reclaimFrame(frame);
-        return;
-    }
-
-    for (int i = 0; i < count; ++i) {
-        const int row = rows[i];
+    QVector<int> acceptedChangedRows;
+    acceptedChangedRows.reserve(changedRows.size());
+    int geometryUpdateCount = 0;
+    for (const DanmakuWorkerRowState &rowState : changedRows) {
+        const int row = rowState.row;
         if (row < 0 || row >= m_items.size()) {
+            continue;
+        }
+        if (m_workerPendingDirtyRows.contains(row) || m_workerPendingRemovedRows.contains(row)) {
             continue;
         }
         Item &item = m_items[row];
         if (!item.active) {
             continue;
         }
-        item.x = x[i];
-        item.y = y[i];
-        item.alpha = alpha[i];
-        item.fadeRemainingMs = fadeRemainingMs[i];
-        item.frozen = (flags[i] & DanmakuSoAFlagFrozen) != 0;
-        item.dragging = (flags[i] & DanmakuSoAFlagDragging) != 0;
-        item.fading = (flags[i] & DanmakuSoAFlagFading) != 0;
-    }
-
-    int geometryUpdateCount = 0;
-    bool hasGeometryUpdates = false;
-    for (const int row : changedRows) {
-        if (row < 0 || row >= m_items.size()) {
-            continue;
-        }
-        const Item &item = m_items[row];
-        if (!item.active) {
-            continue;
-        }
+        item.x = rowState.x;
+        item.y = rowState.y;
+        item.alpha = rowState.alpha;
+        item.fadeRemainingMs = rowState.fadeRemainingMs;
+        item.frozen = (rowState.flags & DanmakuSoAFlagFrozen) != 0;
+        item.dragging = (rowState.flags & DanmakuSoAFlagDragging) != 0;
+        item.fading = (rowState.flags & DanmakuSoAFlagFading) != 0;
         ++geometryUpdateCount;
-        hasGeometryUpdates = true;
+        acceptedChangedRows.push_back(row);
     }
-    if (hasGeometryUpdates) {
-        queueSpatialUpsertRows(changedRows);
-        queueSnapshotUpsertRows(changedRows);
+    if (!acceptedChangedRows.isEmpty()) {
+        markSpatialIndexDirty();
+        queueSnapshotUpsertRows(acceptedChangedRows);
     }
 
     if (m_perfLogEnabled) {
         m_perfLogGeometryUpdateCount += geometryUpdateCount;
     }
 
-    if (!removeRows.isEmpty()) {
-        releaseRowsDescending(removeRows);
+    QVector<int> acceptedRemoveRows;
+    acceptedRemoveRows.reserve(removeRows.size());
+    for (const int row : removeRows) {
+        if (m_workerPendingDirtyRows.contains(row) || m_workerPendingRemovedRows.contains(row)) {
+            continue;
+        }
+        acceptedRemoveRows.push_back(row);
+    }
+
+    if (!acceptedRemoveRows.isEmpty()) {
+        releaseRowsDescending(acceptedRemoveRows);
         if (m_perfLogEnabled) {
-            m_perfLogRemovedCount += removeRows.size();
+            m_perfLogRemovedCount += acceptedRemoveRows.size();
         }
     }
 
@@ -1367,10 +1514,12 @@ void DanmakuController::handleWorkerFrame(DanmakuWorkerFramePtr frame) {
     const bool compacted = maybeCompactRows()
         || (m_items.size() != totalBeforeCompact || m_freeRows.size() != freeBeforeCompact);
 
-    if (hasGeometryUpdates || !removeRows.isEmpty() || compacted) {
+    if (!acceptedChangedRows.isEmpty() || !acceptedRemoveRows.isEmpty() || compacted) {
         flushPendingDiffs(true);
     }
 
+    m_workerPendingDirtyRows.clear();
+    m_workerPendingRemovedRows.clear();
     reclaimFrame(frame);
 }
 
@@ -1381,6 +1530,8 @@ void DanmakuController::invalidateWorkerGeneration() {
     if (m_workerBusy) {
         ++m_workerSeq;
     }
+    m_workerPendingDirtyRows.clear();
+    m_workerPendingRemovedRows.clear();
 }
 
 void DanmakuController::updateFrameTimerInterval() {
@@ -1498,6 +1649,7 @@ void DanmakuController::rebuildSpatialIndex() {
 
     const qreal cellHeight = std::max<qreal>(kItemHeight, static_cast<qreal>(m_fontPx + m_laneGap));
     m_spatialGrid.rebuild(entries, kSpatialCellWidthPx, cellHeight);
+    m_spatialIndexDirty = false;
 }
 
 void DanmakuController::rebuildRenderSnapshot() {
@@ -1529,6 +1681,22 @@ void DanmakuController::ensureRowToRenderIndexSize() {
     const int oldSize = m_rowToRenderIndex.size();
     m_rowToRenderIndex.resize(m_items.size());
     std::fill(m_rowToRenderIndex.begin() + oldSize, m_rowToRenderIndex.end(), -1);
+}
+
+void DanmakuController::ensureSpatialIndexFresh() {
+    if (!m_spatialIndexDirty) {
+        return;
+    }
+    queueFullSpatialRebuild();
+    flushPendingDiffs(false);
+}
+
+void DanmakuController::markSpatialIndexDirty() {
+    if (m_pendingFullSpatialRebuild) {
+        return;
+    }
+    m_spatialIndexDirty = true;
+    m_pendingSpatialUpsertRows.clear();
 }
 
 bool DanmakuController::applySnapshotRowUpsert(int row) {

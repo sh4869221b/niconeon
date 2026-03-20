@@ -45,23 +45,14 @@ if [ "${NICONEON_DUMMY_REGEN:-0}" = "1" ] || [ ! -f "$VIDEO_PATH" ]; then
 fi
 
 AUTO_EXIT_MS=$((DURATION_SEC * 1000 + 4000))
-RUNNER=()
-DEFAULT_SOFT_GL=0
-if [ -z "${DISPLAY:-}" ]; then
-  if command -v xvfb-run >/dev/null 2>&1; then
-    RUNNER=(xvfb-run -a)
-    DEFAULT_SOFT_GL=1
-  else
-    echo "DISPLAY is not set. install xvfb and retry (or run in desktop session)." >&2
-    exit 1
-  fi
-fi
 
 mkdir -p "$(dirname "$OUT_LOG")"
-"${RUNNER[@]}" env \
+run_profile() {
+  "$@" env \
   LC_NUMERIC=C \
-  LIBGL_ALWAYS_SOFTWARE="${NICONEON_LIBGL_ALWAYS_SOFTWARE:-$DEFAULT_SOFT_GL}" \
+  LIBGL_ALWAYS_SOFTWARE="${NICONEON_LIBGL_ALWAYS_SOFTWARE:-0}" \
   MESA_LOADER_DRIVER_OVERRIDE="${NICONEON_MESA_DRIVER_OVERRIDE:-llvmpipe}" \
+  NICONEON_MPV_AO="${NICONEON_MPV_AO:-}" \
   NICONEON_CORE_BIN="$CORE_BIN" \
   NICONEON_AUTO_VIDEO_PATH="$VIDEO_PATH" \
   NICONEON_AUTO_PERF_LOG=1 \
@@ -73,5 +64,55 @@ mkdir -p "$(dirname "$OUT_LOG")"
   NICONEON_SYNTHETIC_MAX_PER_SEC="${NICONEON_SYNTHETIC_MAX_PER_SEC:-160}" \
   NICONEON_SYNTHETIC_USER_SPAN="${NICONEON_SYNTHETIC_USER_SPAN:-200}" \
   "$UI_BIN" 2>&1 | tee "$OUT_LOG"
+}
+
+has_perf_markers() {
+  grep -Eq '^\[perf-ui\]' "$OUT_LOG" \
+    && grep -Eq '^\[perf-danmaku\]' "$OUT_LOG" \
+    && grep -Eq '^\[perf-render\]' "$OUT_LOG"
+}
+
+if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  run_profile
+  if ! has_perf_markers; then
+    echo "profile run completed without perf markers: $OUT_LOG" >&2
+    exit 1
+  fi
+  echo "wrote profile log: $OUT_LOG"
+  exit 0
+fi
+
+TMP_LOG="$(mktemp "${OUT_LOG}.offscreen.XXXXXX")"
+cleanup() {
+  rm -f "$TMP_LOG"
+}
+trap cleanup EXIT
+
+if QT_QPA_PLATFORM=offscreen \
+  NICONEON_LIBGL_ALWAYS_SOFTWARE="${NICONEON_LIBGL_ALWAYS_SOFTWARE:-1}" \
+  NICONEON_MPV_AO="${NICONEON_MPV_AO:-null}" \
+  run_profile; then
+  if has_perf_markers; then
+    echo "wrote profile log: $OUT_LOG"
+    exit 0
+  fi
+  cp "$OUT_LOG" "$TMP_LOG"
+  echo "offscreen run completed without perf markers; retrying with xvfb-run if available" >&2
+else
+  cp "$OUT_LOG" "$TMP_LOG" 2>/dev/null || true
+  echo "offscreen run failed; retrying with xvfb-run if available" >&2
+fi
+
+if ! command -v xvfb-run >/dev/null 2>&1; then
+  cat "$TMP_LOG" >&2
+  echo "DISPLAY is not set and xvfb-run is unavailable." >&2
+  exit 1
+fi
+
+xvfb-run -a env \
+  QT_QPA_PLATFORM="${NICONEON_QPA_PLATFORM_UNDER_XVFB:-xcb}" \
+  NICONEON_LIBGL_ALWAYS_SOFTWARE="${NICONEON_LIBGL_ALWAYS_SOFTWARE:-1}" \
+  NICONEON_MPV_AO="${NICONEON_MPV_AO:-null}" \
+  bash -lc "exec \"\$0\" \"\$@\"" "$0" "$OUT_LOG" "$DURATION_SEC"
 
 echo "wrote profile log: $OUT_LOG"

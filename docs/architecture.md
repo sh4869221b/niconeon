@@ -18,13 +18,18 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
   - Backend: `QSGRenderNode` atlas/sprite renderer (`DanmakuRenderNodeItem`).
     - Default: `NICONEON_DANMAKU_RENDERER=atlas`
     - Fallback: `NICONEON_DANMAKU_RENDERER=frame_image`
+    - Atlas path prefers OpenGL instancing and falls back to expanded atlas vertices when instancing is unavailable.
   - Simulation update path:
     - Default: worker-thread simulation (`NICONEON_DANMAKU_WORKER=on`).
     - Fallback: single-thread simulation (`NICONEON_DANMAKU_WORKER=off`).
+    - Worker path keeps persistent SoA state and receives `full reset / upsert rows / remove rows / advance frame` style diffs from `DanmakuController`.
+  - Spatial hit-test index is updated on-demand during normal playback to reduce per-frame row upserts; drag/seek/explicit rebuild paths keep correctness.
+  - Sprite generation is split into width estimate + sprite ID reservation first, then budgeted raster/upload in later frames.
   - SIMD mode for position update:
     - `NICONEON_SIMD_MODE=auto|avx2|scalar` (default: `auto`).
 - Provide danmaku visibility toggle for low-spec environments.
 - Apply runtime profile (`high` / `balanced` / `low_spec`) and target FPS (`60` by default) to keep playback stable on low-end CPUs.
+  - Automatic QoS also reacts to rendered comment FPS and can step down `emit cap -> coalesce -> target fps`.
 - Emit periodic UI/danmaku/render performance logs when enabled.
 - Show NG drop zone only during drag.
 - Show toast notifications and Undo actions.

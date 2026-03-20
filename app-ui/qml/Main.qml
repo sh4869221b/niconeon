@@ -35,6 +35,7 @@ ApplicationWindow {
     property bool commentsVisible: true
     property bool perfLogEnabled: false
     property string perfProfile: "low_spec"
+    property string selectedPerfProfile: "low_spec"
     property int targetFps: 60
     property int maxEmitPerTick: 48
     property bool coalesceSameContent: true
@@ -320,20 +321,44 @@ ApplicationWindow {
         }
     }
 
-    function applyRuntimeProfile(profile, targetFps, maxEmitPerTick, coalesceSameContent, notify) {
+    function qosCeilingProfile() {
+        return sanitizePerfProfile(root.selectedPerfProfile)
+    }
+
+    function qosCeilingConfig() {
+        return defaultRuntimeProfileConfig(qosCeilingProfile())
+    }
+
+    function qosRenderOverloaded() {
+        if (!root.commentsVisible || mpv.paused || root.activeCommentCount <= 0) {
+            return false
+        }
+        const target = Math.max(10, Math.min(120, Number(root.targetFps) || 60))
+        const fps = Number(root.commentFps || 0)
+        if (!(fps > 0)) {
+            return false
+        }
+        return fps < (target * 0.8)
+    }
+
+    function applyRuntimeProfile(profile, targetFps, maxEmitPerTick, coalesceSameContent, notify, persistSelection) {
         const normalizedProfile = sanitizePerfProfile(profile)
         const normalizedTargetFps = Math.max(10, Math.min(120, Number(targetFps) || 60))
         const normalizedMaxEmit = Math.max(0, Math.min(2000, Number(maxEmitPerTick) || 0))
         const normalizedCoalesce = !!coalesceSameContent
+        const shouldPersistSelection = persistSelection !== false
 
         root.perfProfile = normalizedProfile
         root.targetFps = normalizedTargetFps
         root.maxEmitPerTick = normalizedMaxEmit
         root.coalesceSameContent = normalizedCoalesce
-        uiSettings.perfProfile = normalizedProfile
-        uiSettings.targetFps = normalizedTargetFps
-        uiSettings.maxEmitPerTick = normalizedMaxEmit
-        uiSettings.coalesceSameContent = normalizedCoalesce
+        if (shouldPersistSelection) {
+            root.selectedPerfProfile = normalizedProfile
+            uiSettings.perfProfile = normalizedProfile
+            uiSettings.targetFps = normalizedTargetFps
+            uiSettings.maxEmitPerTick = normalizedMaxEmit
+            uiSettings.coalesceSameContent = normalizedCoalesce
+        }
 
         danmakuController.setTargetFps(normalizedTargetFps)
         coreClient.setRuntimeProfile(
@@ -350,15 +375,130 @@ ApplicationWindow {
         }
     }
 
-    function handleQosWindowFeedback(tickBacklog) {
+    function applyQosDegradeStep() {
+        const ceilingProfile = qosCeilingProfile()
+        const currentProfile = sanitizePerfProfile(root.perfProfile)
+        const degradedProfile = currentProfile === "high" ? "balanced" : ceilingProfile
+        const degradedDefaults = defaultRuntimeProfileConfig(degradedProfile)
+
+        if (currentProfile === "high") {
+            applyRuntimeProfile(
+                degradedProfile,
+                degradedDefaults.targetFps,
+                degradedDefaults.maxEmitPerTick,
+                degradedDefaults.coalesceSameContent,
+                false,
+                false)
+            return true
+        }
+
         if (root.maxEmitPerTick <= 0) {
+            applyRuntimeProfile(
+                degradedProfile,
+                root.targetFps,
+                degradedDefaults.maxEmitPerTick,
+                root.coalesceSameContent || degradedDefaults.coalesceSameContent,
+                false,
+                false)
+            return true
+        }
+
+        const nextCap = Math.max(16, root.maxEmitPerTick - 8)
+        if (nextCap < root.maxEmitPerTick) {
+            applyRuntimeProfile(currentProfile, root.targetFps, nextCap, root.coalesceSameContent, false, false)
+            return true
+        }
+
+        if (!root.coalesceSameContent) {
+            applyRuntimeProfile(currentProfile, root.targetFps, root.maxEmitPerTick, true, false, false)
+            return true
+        }
+
+        if (root.targetFps > 45) {
+            applyRuntimeProfile(currentProfile, Math.max(45, root.targetFps - 15), root.maxEmitPerTick, true, false, false)
+            return true
+        }
+
+        return false
+    }
+
+    function applyQosRecoveryStep() {
+        const ceilingProfile = qosCeilingProfile()
+        const ceiling = qosCeilingConfig()
+        const currentProfile = sanitizePerfProfile(root.perfProfile)
+        const currentDefaults = defaultRuntimeProfileConfig(currentProfile)
+
+        if (root.targetFps < currentDefaults.targetFps) {
+            applyRuntimeProfile(currentProfile, currentDefaults.targetFps, root.maxEmitPerTick, root.coalesceSameContent, false, false)
+            return true
+        }
+
+        if (root.coalesceSameContent && !currentDefaults.coalesceSameContent) {
+            applyRuntimeProfile(currentProfile, root.targetFps, root.maxEmitPerTick, false, false, false)
+            return true
+        }
+
+        if (currentDefaults.maxEmitPerTick > 0 && root.maxEmitPerTick < currentDefaults.maxEmitPerTick) {
+            const nextCap = Math.min(currentDefaults.maxEmitPerTick, root.maxEmitPerTick + 4)
+            applyRuntimeProfile(
+                currentProfile,
+                root.targetFps,
+                nextCap,
+                root.coalesceSameContent,
+                false,
+                false)
+            return true
+        }
+
+        if (currentProfile !== ceilingProfile) {
+            applyRuntimeProfile(
+                ceilingProfile,
+                ceiling.targetFps,
+                ceiling.maxEmitPerTick,
+                ceiling.coalesceSameContent,
+                false,
+                false)
+            return true
+        }
+
+        if (ceiling.maxEmitPerTick <= 0 && root.maxEmitPerTick !== 0) {
+            applyRuntimeProfile(
+                ceilingProfile,
+                root.targetFps,
+                0,
+                root.coalesceSameContent,
+                false,
+                false)
+            return true
+        }
+
+        if (ceiling.maxEmitPerTick > 0 && root.maxEmitPerTick < ceiling.maxEmitPerTick) {
+            const nextCap = ceiling.maxEmitPerTick <= 0
+                ? 0
+                : Math.min(ceiling.maxEmitPerTick, root.maxEmitPerTick + 4)
+            applyRuntimeProfile(
+                ceilingProfile,
+                root.targetFps,
+                nextCap,
+                root.coalesceSameContent,
+                false,
+                false)
+            return true
+        }
+
+        return false
+    }
+
+    function handleQosWindowFeedback(tickBacklog) {
+        if (!root.commentsVisible || mpv.paused) {
             root.qosOverBudgetStreak = 0
             root.qosStableStreak = 0
             return
         }
 
         const backlog = Math.max(0, Number(tickBacklog) || 0)
-        if (root.perfEmitOverBudgetCount > 0 || backlog >= 3) {
+        const renderOverloaded = root.qosRenderOverloaded()
+        if (root.perfEmitOverBudgetCount > 0 || backlog >= 3 || renderOverloaded) {
             root.qosOverBudgetStreak += 1
             root.qosStableStreak = 0
         } else {
@@ -367,17 +507,10 @@ ApplicationWindow {
         }
 
         if (root.qosOverBudgetStreak >= 2) {
-            const currentCap = root.maxEmitPerTick <= 0 ? 128 : root.maxEmitPerTick
-            const nextCap = Math.max(16, currentCap - 8)
-            if (root.maxEmitPerTick <= 0 || nextCap < root.maxEmitPerTick) {
-                applyRuntimeProfile(root.perfProfile, root.targetFps, nextCap, root.coalesceSameContent, false)
-            }
+            root.applyQosDegradeStep()
             root.qosOverBudgetStreak = 0
         } else if (root.qosStableStreak >= 4) {
-            const nextCap = Math.min(128, root.maxEmitPerTick + 4)
-            if (nextCap > root.maxEmitPerTick) {
-                applyRuntimeProfile(root.perfProfile, root.targetFps, nextCap, root.coalesceSameContent, false)
-            }
+            root.applyQosRecoveryStep()
             root.qosStableStreak = 0
         }
     }
@@ -884,17 +1017,13 @@ ApplicationWindow {
                         Number(result.last_position_ms || 0))
                 }
             } else if (method === "set_runtime_profile") {
-                if (result && typeof result === "object") {
-                    root.perfProfile = root.sanitizePerfProfile(result.profile || root.perfProfile)
-                    root.targetFps = Math.max(10, Math.min(120, Number(result.target_fps || root.targetFps)))
-                    root.maxEmitPerTick = Math.max(0, Math.min(2000, Number(result.max_emit_per_tick || root.maxEmitPerTick)))
-                    root.coalesceSameContent = Boolean(result.coalesce_same_content)
-                    uiSettings.perfProfile = root.perfProfile
-                    uiSettings.targetFps = root.targetFps
-                    uiSettings.maxEmitPerTick = root.maxEmitPerTick
-                    uiSettings.coalesceSameContent = root.coalesceSameContent
-                    danmakuController.setTargetFps(root.targetFps)
-                }
+        if (result && typeof result === "object") {
+            root.perfProfile = root.sanitizePerfProfile(result.profile || root.perfProfile)
+            root.targetFps = Math.max(10, Math.min(120, Number(result.target_fps || root.targetFps)))
+            root.maxEmitPerTick = Math.max(0, Math.min(2000, Number(result.max_emit_per_tick || root.maxEmitPerTick)))
+            root.coalesceSameContent = Boolean(result.coalesce_same_content)
+            danmakuController.setTargetFps(root.targetFps)
+        }
             } else if (method === "add_ng_user") {
                 const hiddenUserId = String(result.hidden_user_id || root.pendingNgUserId || "")
                 if (hiddenUserId !== "") {
@@ -957,7 +1086,8 @@ ApplicationWindow {
         loadSpeedSettings()
         root.commentsVisible = uiSettings.commentsVisible
         root.perfLogEnabled = uiSettings.perfLogEnabled
-        root.perfProfile = root.sanitizePerfProfile(uiSettings.perfProfile)
+        root.selectedPerfProfile = root.sanitizePerfProfile(uiSettings.perfProfile)
+        root.perfProfile = root.selectedPerfProfile
         root.targetFps = Math.max(10, Math.min(120, Number(uiSettings.targetFps || 60)))
         root.maxEmitPerTick = Math.max(0, Math.min(2000, Number(uiSettings.maxEmitPerTick || 48)))
         root.coalesceSameContent = !!uiSettings.coalesceSameContent

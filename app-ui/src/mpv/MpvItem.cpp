@@ -113,6 +113,10 @@ MpvItem::MpvItem(QQuickItem *parent) : QQuickFramebufferObject(parent) {
     mpv_set_option_string(m_mpv, "vo", "libmpv");
     mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
     mpv_set_option_string(m_mpv, "terminal", "no");
+    const QByteArray audioOutputOverride = qgetenv("NICONEON_MPV_AO").trimmed();
+    if (!audioOutputOverride.isEmpty()) {
+        mpv_set_option_string(m_mpv, "ao", audioOutputOverride.constData());
+    }
 
     if (mpv_initialize(m_mpv) < 0) {
         qWarning() << "failed to initialize mpv";

@@ -19,7 +19,7 @@
 - `core_client_test`: fake core を使い、`stderr` が crash 扱いされないこと、generation 切替後の stale `playback_tick_batch` が破棄されること、JSON-RPC `error.message` が文字列として届くことを検証する。
 - `danmaku_text_width_test`: 全角文字/日本語文字列を含むコメントで `widthEstimate` が `QFontMetrics` 実測幅 + 左右余白以上になること、およびシーク復帰時の長めの lag compensation でシーク前から流れていたコメントが途中位置に再配置されることを検証する。
 - `danmaku_ng_drop_test`: NG ドロップ失敗時に pending fade が rollback され、ドラッグ起点コメントが同一レーン優先で復帰することを検証する。
-- `danmaku_sprite_cache_test`: atlas packer の矩形が重ならないこと、同一 text の width 計測が再利用されること、DPR 差分で別 sprite が生成されることを検証する。
+- `danmaku_sprite_cache_test`: atlas packer の矩形が重ならないこと、同一 text の width 計測が再利用されること、DPR 差分で別 sprite が生成されること、pending raster queue が budget どおり分割消化されることを検証する。
 - 実行コマンド例:
   - `just ui-test`
   - `cd app-ui && cmake -S . -B build-test -DBUILD_TESTING=ON`
@@ -31,6 +31,7 @@
 
 - `rendernode_alignment_e2e`: `DanmakuRenderNodeItem` をオフセット付きコンテナに配置して描画し、弾幕ピクセルがコンテナ内に出ることを検証する（座標変換漏れ回帰の検知）。
 - 実行コマンド: `just ui-e2e`
+- `just ui-e2e` は OpenGL scenegraph backend を使えるセッションで実行し、ヘッドレス環境では `xvfb-run` を利用する。
 - CI job 名は `ui-e2e-linux-best-effort` とし、GitHub Actions 上では best-effort 実行に留める。
 - 画面修正（`app-ui/qml` や `app-ui/src/danmaku`）を含む変更では、CI結果に関わらずローカルで `just ui-e2e` を実行して結果を確認する。
 - GitHub Actions の runner では OpenGL scenegraph backend を安定確保できないため、このテストは `SKIP` になりうる。回帰判定はローカル実行を正とする。
@@ -78,11 +79,14 @@
 - `NICONEON_SIMD_MODE=avx2` と `scalar` で表示破綻（位置飛び/消去漏れ）がない。
 - `NICONEON_DANMAKU_RENDERER=atlas|frame_image` で起動し、`[perf-render]` が `instances` / `sprite_upload_count` / `sprite_upload_bytes` / `atlas_pages` / `draw_calls` を出力する。
 - `just perf-dummy` で #21 前後を比較し、通常再生中は `spatial_full_rebuilds=0` / `snapshot_full_rebuilds=0`（シーク/compactionを除く）を満たす。
+- `just perf-dummy` で #21 前後を比較し、通常再生中の `spatial_row_updates` が大きく減り、drag/seek 以外で spatial rebuild が増えすぎないことを確認する。
 - `just perf-dummy` で #24 前後を比較し、`updates` 同等条件で `avg_ms` または `p95_ms` が悪化していない。
+- `just perf-dummy` で初見テキストが多い区間の `sprite_upload_bytes` スパイクと `p99_ms` を比較し、budgeted raster queue 導入前より平準化していることを確認する。
 - 連続シーク（10回以上）+ 連続ドラッグ（10回以上）を行っても、worker有効時にクラッシュしない。
 - Runtime profile を `high` / `balanced` / `low_spec` に切り替えて、`set_runtime_profile` 応答と挙動（emit cap/coalesce）が一致する。
 - 動画再生中に `Video FPS` が 0 以外で更新される。
 - コメント流量がある区間で `Comment FPS` が更新され、更新ループ回数ではなく提示済みコメントフレームに追従する。
+- 高密度区間で overload が続く場合、QoS が `emit cap` の低下、`coalesce` 有効化、`target fps` 低下の順に段階降下し、軽負荷復帰後に過剰に低い設定が残らないことを確認する。
 - シーク・一時停止・コメント非表示切替時に FPS/統計値が破綻しない。
 - `Comments active/total` が `open_video` 直後と再生中で整合する。
 - ドラッグ/NGドロップ中も stats パネル表示が操作を妨げない。

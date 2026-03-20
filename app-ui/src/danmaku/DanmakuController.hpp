@@ -153,18 +153,28 @@ private:
     bool applySnapshotRowUpsert(int row);
     bool applySnapshotRowRemoval(int row);
     void ensureRowToRenderIndexSize();
+    void ensureSpatialIndexFresh();
+    void markSpatialIndexDirty();
     void publishRenderSnapshot();
     void flushPendingDiffs(bool emitSnapshotSignal);
-    void buildSoAState(DanmakuSoAState &state) const;
     void scheduleWorkerFrame(int elapsedMs, qint64 nowMs);
     void handleWorkerFrame(DanmakuWorkerFramePtr frame);
     void invalidateWorkerGeneration();
+    DanmakuWorkerRowState buildWorkerRowState(int row) const;
+    QVector<DanmakuWorkerRowState> buildWorkerRowStates(const QVector<int> &rows) const;
+    QVector<DanmakuWorkerRowState> buildAllWorkerRowStates() const;
+    void syncWorkerRows(const QVector<int> &rows);
+    void syncWorkerRemoveRows(const QVector<int> &rows);
+    void syncWorkerFullState();
+    void markWorkerRowsDirty(const QVector<int> &rows);
+    void markWorkerRowsRemoved(const QVector<int> &rows);
     void updateFrameTimerInterval();
     bool beginDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void moveDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void dropDragInternal(int index, bool inNgZone);
     void refreshActiveSpriteIds();
     void enqueueSpriteUpload(const DanmakuSpriteUpload &upload);
+    bool rasterizePendingSpritesWithinBudget();
 
     QVector<Item> m_items;
     QVector<LaneState> m_laneStates;
@@ -176,6 +186,7 @@ private:
     QSet<int> m_pendingSnapshotRemoveRows;
     bool m_pendingFullSpatialRebuild = true;
     bool m_pendingFullSnapshotRebuild = true;
+    bool m_spatialIndexDirty = false;
 
     qreal m_viewportWidth = 1280;
     qreal m_viewportHeight = 720;
@@ -236,6 +247,8 @@ private:
     DanmakuUpdateWorker *m_updateWorker = nullptr;
     QThread m_updateThread;
     QString m_simdModeName = QStringLiteral("auto");
+    QSet<int> m_workerPendingDirtyRows;
+    QSet<int> m_workerPendingRemovedRows;
 
     QTimer m_frameTimer;
     qint64 m_lastTickMs = 0;

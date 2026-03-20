@@ -7,12 +7,13 @@
 
 #include <QColor>
 #include <QDateTime>
+#include <QDebug>
 #include <QHash>
 #include <QImage>
 #include <QMetaObject>
 #include <QOpenGLBuffer>
 #include <QOpenGLContext>
-#include <QOpenGLFunctions>
+#include <QOpenGLExtraFunctions>
 #include <QOpenGLPixelTransferOptions>
 #include <QOpenGLShader>
 #include <QOpenGLShaderProgram>
@@ -25,6 +26,7 @@
 #include <QSet>
 #include <QSharedPointer>
 #include <QSize>
+#include <QSurfaceFormat>
 #include <QVector>
 #include <QtGlobal>
 
@@ -86,9 +88,12 @@ QImage colorizeSpriteImage(const QImage &source, const QColor &color) {
     return tinted;
 }
 
-class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLFunctions {
+class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunctions {
 public:
-    DanmakuRenderNode() : m_vbo(QOpenGLBuffer::VertexBuffer) {}
+    DanmakuRenderNode()
+        : m_quadVbo(QOpenGLBuffer::VertexBuffer),
+          m_instanceVbo(QOpenGLBuffer::VertexBuffer),
+          m_frameVbo(QOpenGLBuffer::VertexBuffer) {}
 
     ~DanmakuRenderNode() override {
         releaseResources();
@@ -100,9 +105,13 @@ public:
         const QSize &itemSize,
         qreal devicePixelRatio,
         DanmakuRendererBackend backend) {
+        if (m_requestedBackend != backend) {
+            m_requestedBackend = backend;
+            m_runtimeBackend = backend;
+            m_atlasInstancingUnsupported = false;
+        }
         m_itemSize = itemSize;
         m_devicePixelRatio = std::max(devicePixelRatio, 1.0);
-        m_backend = backend;
         ++m_frameSequence;
         ++m_perfFrameCount;
         m_perfInstanceTotal += frame.instances.size();
@@ -138,9 +147,15 @@ public:
             }
         }
 
-        if (m_backend == DanmakuRendererBackend::Atlas) {
+        if (m_runtimeBackend == DanmakuRendererBackend::Atlas) {
             ensureActiveSpritesResident(activeSpriteIds);
-            buildAtlasVertices();
+            if (m_atlasInstancingUnsupported) {
+                buildAtlasVertices();
+                m_pageInstances.clear();
+            } else {
+                buildAtlasInstances();
+                m_pageVertices.clear();
+            }
         } else {
             composeFrameImage();
         }
@@ -162,12 +177,14 @@ public:
         if (m_itemSize.width() <= 0 || m_itemSize.height() <= 0) {
             return;
         }
-        if (!ensureGlResources()) {
+        auto *ctx = QOpenGLContext::currentContext();
+        if (!ctx) {
             return;
         }
+        ensureGlFunctionsInitialized(ctx);
 
         const QMatrix4x4 *projection = state ? state->projectionMatrix() : nullptr;
-        if (!projection || !m_program) {
+        if (!projection) {
             return;
         }
 
@@ -190,78 +207,232 @@ public:
             mvp *= *model;
         }
 
-        m_program->bind();
-        m_program->setUniformValue(m_matrixLoc, mvp);
-        m_program->setUniformValue(m_textureLoc, 0);
-        m_vbo.bind();
-        m_program->enableAttributeArray(m_positionLoc);
-        m_program->enableAttributeArray(m_uvLoc);
-        m_program->enableAttributeArray(m_colorLoc);
-        m_program->setAttributeBuffer(m_positionLoc, GL_FLOAT, offsetof(Vertex, x), 2, sizeof(Vertex));
-        m_program->setAttributeBuffer(m_uvLoc, GL_FLOAT, offsetof(Vertex, u), 2, sizeof(Vertex));
-        m_program->setAttributeBuffer(m_colorLoc, GL_FLOAT, offsetof(Vertex, r), 4, sizeof(Vertex));
-
         int drawCallsThisFrame = 0;
-        if (m_backend == DanmakuRendererBackend::Atlas) {
-            if (!updateAtlasTextures()) {
-                m_program->disableAttributeArray(m_positionLoc);
-                m_program->disableAttributeArray(m_uvLoc);
-                m_program->disableAttributeArray(m_colorLoc);
-                m_vbo.release();
-                m_program->release();
+        DanmakuRendererBackend backendForRender = m_runtimeBackend;
+        if (backendForRender == DanmakuRendererBackend::Atlas) {
+            const bool useInstancing = !m_atlasInstancingUnsupported && supportsAtlasInstancing(ctx);
+            if (useInstancing) {
+                if (!ensureAtlasGlResources() || !updateAtlasTextures() || !m_atlasProgram) {
+                    activateFrameImageFallback(QStringLiteral("atlas_gl_resources_unavailable"));
+                    backendForRender = m_runtimeBackend;
+                } else {
+                    m_atlasProgram->bind();
+                    m_atlasProgram->setUniformValue(m_atlasMatrixLoc, mvp);
+                    m_atlasProgram->setUniformValue(m_atlasTextureLoc, 0);
+
+                    m_quadVbo.bind();
+                    m_atlasProgram->enableAttributeArray(m_atlasLocalPositionLoc);
+                    m_atlasProgram->enableAttributeArray(m_atlasLocalUvLoc);
+                    m_atlasProgram->setAttributeBuffer(
+                        m_atlasLocalPositionLoc,
+                        GL_FLOAT,
+                        offsetof(QuadVertex, x),
+                        2,
+                        sizeof(QuadVertex));
+                    m_atlasProgram->setAttributeBuffer(
+                        m_atlasLocalUvLoc,
+                        GL_FLOAT,
+                        offsetof(QuadVertex, u),
+                        2,
+                        sizeof(QuadVertex));
+
+                    m_instanceVbo.bind();
+                    m_atlasProgram->enableAttributeArray(m_atlasRectLoc);
+                    m_atlasProgram->enableAttributeArray(m_atlasUvRectLoc);
+                    m_atlasProgram->enableAttributeArray(m_atlasColorLoc);
+                    m_atlasProgram->setAttributeBuffer(
+                        m_atlasRectLoc,
+                        GL_FLOAT,
+                        offsetof(InstanceData, x),
+                        4,
+                        sizeof(InstanceData));
+                    m_atlasProgram->setAttributeBuffer(
+                        m_atlasUvRectLoc,
+                        GL_FLOAT,
+                        offsetof(InstanceData, u0),
+                        4,
+                        sizeof(InstanceData));
+                    m_atlasProgram->setAttributeBuffer(
+                        m_atlasColorLoc,
+                        GL_FLOAT,
+                        offsetof(InstanceData, r),
+                        4,
+                        sizeof(InstanceData));
+                    glVertexAttribDivisor(static_cast<GLuint>(m_atlasRectLoc), 1);
+                    glVertexAttribDivisor(static_cast<GLuint>(m_atlasUvRectLoc), 1);
+                    glVertexAttribDivisor(static_cast<GLuint>(m_atlasColorLoc), 1);
+
+                    for (int pageIndex = 0; pageIndex < m_pageInstances.size(); ++pageIndex) {
+                        const QVector<InstanceData> &instances = m_pageInstances[pageIndex];
+                        if (instances.isEmpty()) {
+                            continue;
+                        }
+                        AtlasPage &page = m_atlasPages[pageIndex];
+                        if (!page.texture) {
+                            continue;
+                        }
+                        page.texture->bind(0);
+                        m_instanceVbo.allocate(instances.constData(), instances.size() * static_cast<int>(sizeof(InstanceData)));
+                        glDrawArraysInstanced(GL_TRIANGLES, 0, 6, instances.size());
+                        page.texture->release();
+                        ++drawCallsThisFrame;
+                    }
+
+                    glVertexAttribDivisor(static_cast<GLuint>(m_atlasRectLoc), 0);
+                    glVertexAttribDivisor(static_cast<GLuint>(m_atlasUvRectLoc), 0);
+                    glVertexAttribDivisor(static_cast<GLuint>(m_atlasColorLoc), 0);
+                    m_atlasProgram->disableAttributeArray(m_atlasLocalPositionLoc);
+                    m_atlasProgram->disableAttributeArray(m_atlasLocalUvLoc);
+                    m_atlasProgram->disableAttributeArray(m_atlasRectLoc);
+                    m_atlasProgram->disableAttributeArray(m_atlasUvRectLoc);
+                    m_atlasProgram->disableAttributeArray(m_atlasColorLoc);
+                    m_instanceVbo.release();
+                    m_quadVbo.release();
+                    m_atlasProgram->release();
+                }
+            } else {
+                activateAtlasVertexFallback(QStringLiteral("instancing_unavailable"));
+                if (m_pageVertices.size() != m_atlasPages.size()) {
+                    buildAtlasVertices();
+                }
+                if (!ensureFrameGlResources() || !updateAtlasTextures() || !m_frameProgram) {
+                    activateFrameImageFallback(QStringLiteral("atlas_vertex_path_unavailable"));
+                    backendForRender = m_runtimeBackend;
+                } else {
+                    m_frameProgram->bind();
+                    m_frameProgram->setUniformValue(m_frameMatrixLoc, mvp);
+                    m_frameProgram->setUniformValue(m_frameTextureLoc, 0);
+                    m_frameVbo.bind();
+                    m_frameProgram->enableAttributeArray(m_framePositionLoc);
+                    m_frameProgram->enableAttributeArray(m_frameUvLoc);
+                    m_frameProgram->enableAttributeArray(m_frameColorLoc);
+                    m_frameProgram->setAttributeBuffer(m_framePositionLoc, GL_FLOAT, offsetof(Vertex, x), 2, sizeof(Vertex));
+                    m_frameProgram->setAttributeBuffer(m_frameUvLoc, GL_FLOAT, offsetof(Vertex, u), 2, sizeof(Vertex));
+                    m_frameProgram->setAttributeBuffer(m_frameColorLoc, GL_FLOAT, offsetof(Vertex, r), 4, sizeof(Vertex));
+
+                    for (int pageIndex = 0; pageIndex < m_pageVertices.size(); ++pageIndex) {
+                        const QVector<Vertex> &vertices = m_pageVertices[pageIndex];
+                        if (vertices.isEmpty()) {
+                            continue;
+                        }
+                        AtlasPage &page = m_atlasPages[pageIndex];
+                        if (!page.texture) {
+                            continue;
+                        }
+                        page.texture->bind(0);
+                        m_frameVbo.allocate(vertices.constData(), vertices.size() * static_cast<int>(sizeof(Vertex)));
+                        glDrawArrays(GL_TRIANGLES, 0, vertices.size());
+                        page.texture->release();
+                        ++drawCallsThisFrame;
+                    }
+
+                    m_frameProgram->disableAttributeArray(m_framePositionLoc);
+                    m_frameProgram->disableAttributeArray(m_frameUvLoc);
+                    m_frameProgram->disableAttributeArray(m_frameColorLoc);
+                    m_frameVbo.release();
+                    m_frameProgram->release();
+                }
+            }
+        }
+
+        if (backendForRender == DanmakuRendererBackend::FrameImage) {
+            if (!ensureFrameGlResources() || !updateFrameTexture() || !m_frameTexture || m_frameQuadVertices.isEmpty()) {
                 return;
             }
 
-            for (int pageIndex = 0; pageIndex < m_pageVertices.size(); ++pageIndex) {
-                const QVector<Vertex> &vertices = m_pageVertices[pageIndex];
-                if (vertices.isEmpty()) {
-                    continue;
-                }
-                AtlasPage &page = m_atlasPages[pageIndex];
-                if (!page.texture) {
-                    continue;
-                }
-                page.texture->bind(0);
-                m_vbo.allocate(vertices.constData(), vertices.size() * static_cast<int>(sizeof(Vertex)));
-                glDrawArrays(GL_TRIANGLES, 0, vertices.size());
-                page.texture->release();
-                ++drawCallsThisFrame;
-            }
-        } else {
-            if (!updateFrameTexture() || !m_frameTexture || m_frameQuadVertices.isEmpty()) {
-                m_program->disableAttributeArray(m_positionLoc);
-                m_program->disableAttributeArray(m_uvLoc);
-                m_program->disableAttributeArray(m_colorLoc);
-                m_vbo.release();
-                m_program->release();
-                return;
-            }
-
+            m_frameProgram->bind();
+            m_frameProgram->setUniformValue(m_frameMatrixLoc, mvp);
+            m_frameProgram->setUniformValue(m_frameTextureLoc, 0);
+            m_frameVbo.bind();
+            m_frameProgram->enableAttributeArray(m_framePositionLoc);
+            m_frameProgram->enableAttributeArray(m_frameUvLoc);
+            m_frameProgram->enableAttributeArray(m_frameColorLoc);
+            m_frameProgram->setAttributeBuffer(m_framePositionLoc, GL_FLOAT, offsetof(Vertex, x), 2, sizeof(Vertex));
+            m_frameProgram->setAttributeBuffer(m_frameUvLoc, GL_FLOAT, offsetof(Vertex, u), 2, sizeof(Vertex));
+            m_frameProgram->setAttributeBuffer(m_frameColorLoc, GL_FLOAT, offsetof(Vertex, r), 4, sizeof(Vertex));
             m_frameTexture->bind(0);
-            m_vbo.allocate(
+            m_frameVbo.allocate(
                 m_frameQuadVertices.constData(),
                 m_frameQuadVertices.size() * static_cast<int>(sizeof(Vertex)));
             glDrawArrays(GL_TRIANGLES, 0, m_frameQuadVertices.size());
             m_frameTexture->release();
             drawCallsThisFrame = m_frameQuadVertices.isEmpty() ? 0 : 1;
-        }
 
-        m_program->disableAttributeArray(m_positionLoc);
-        m_program->disableAttributeArray(m_uvLoc);
-        m_program->disableAttributeArray(m_colorLoc);
-        m_vbo.release();
-        m_program->release();
+            m_frameProgram->disableAttributeArray(m_framePositionLoc);
+            m_frameProgram->disableAttributeArray(m_frameUvLoc);
+            m_frameProgram->disableAttributeArray(m_frameColorLoc);
+            m_frameVbo.release();
+            m_frameProgram->release();
+        }
 
         m_perfDrawCalls += drawCallsThisFrame;
         maybeWritePerfLog();
     }
 
 private:
+    void activateAtlasVertexFallback(const QString &reason) {
+        if (m_atlasInstancingUnsupported) {
+            return;
+        }
+        qWarning().noquote()
+            << QString("[danmaku-render] fallback=atlas_vertices reason=%1 requested=%2")
+                   .arg(reason)
+                   .arg(QString::fromLatin1(rendererBackendName(m_requestedBackend)));
+        m_atlasInstancingUnsupported = true;
+    }
+
+    void activateFrameImageFallback(const QString &reason) {
+        if (m_runtimeBackend == DanmakuRendererBackend::FrameImage) {
+            return;
+        }
+        qWarning().noquote()
+            << QString("[danmaku-render] fallback=frame_image reason=%1 requested=%2")
+                   .arg(reason)
+                   .arg(QString::fromLatin1(rendererBackendName(m_requestedBackend)));
+        m_runtimeBackend = DanmakuRendererBackend::FrameImage;
+        composeFrameImage();
+    }
+
+    void ensureGlFunctionsInitialized(QOpenGLContext *ctx) {
+        if (!ctx) {
+            return;
+        }
+        if (m_glContext == ctx && m_glInitialized) {
+            return;
+        }
+
+        initializeOpenGLFunctions();
+        m_glContext = ctx;
+        m_glInitialized = true;
+    }
+
+    struct QuadVertex {
+        float x = 0.0f;
+        float y = 0.0f;
+        float u = 0.0f;
+        float v = 0.0f;
+    };
+
     struct Vertex {
         float x = 0.0f;
         float y = 0.0f;
         float u = 0.0f;
         float v = 0.0f;
+        float r = 1.0f;
+        float g = 1.0f;
+        float b = 1.0f;
+        float a = 1.0f;
+    };
+
+    struct InstanceData {
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        float u0 = 0.0f;
+        float v0 = 0.0f;
+        float u1 = 0.0f;
+        float v1 = 0.0f;
         float r = 1.0f;
         float g = 1.0f;
         float b = 1.0f;
@@ -292,17 +463,154 @@ private:
         quint64 lastUsedFrame = 0;
     };
 
-    bool ensureGlResources() {
+    bool ensureAtlasGlResources() {
         auto *ctx = QOpenGLContext::currentContext();
         if (!ctx) {
             return false;
         }
-        if (!m_glInitialized) {
-            initializeOpenGLFunctions();
-            m_glInitialized = true;
+        ensureGlFunctionsInitialized(ctx);
+
+        if (!m_atlasProgram) {
+            const bool isGles = ctx->isOpenGLES();
+            const char *vertexSource = isGles
+                ? R"(
+                    precision mediump float;
+                    attribute vec2 a_localPos;
+                    attribute vec2 a_localUv;
+                    attribute vec4 a_instanceRect;
+                    attribute vec4 a_instanceUvRect;
+                    attribute vec4 a_instanceColor;
+                    uniform mat4 u_matrix;
+                    varying vec2 v_uv;
+                    varying vec4 v_color;
+                    void main() {
+                        vec2 position = a_instanceRect.xy + (a_localPos * a_instanceRect.zw);
+                        vec2 uv = mix(a_instanceUvRect.xy, a_instanceUvRect.zw, a_localUv);
+                        v_uv = uv;
+                        v_color = a_instanceColor;
+                        gl_Position = u_matrix * vec4(position, 0.0, 1.0);
+                    }
+                )"
+                : R"(
+                    #version 150
+                    in vec2 a_localPos;
+                    in vec2 a_localUv;
+                    in vec4 a_instanceRect;
+                    in vec4 a_instanceUvRect;
+                    in vec4 a_instanceColor;
+                    uniform mat4 u_matrix;
+                    out vec2 v_uv;
+                    out vec4 v_color;
+                    void main() {
+                        vec2 position = a_instanceRect.xy + (a_localPos * a_instanceRect.zw);
+                        vec2 uv = mix(a_instanceUvRect.xy, a_instanceUvRect.zw, a_localUv);
+                        v_uv = uv;
+                        v_color = a_instanceColor;
+                        gl_Position = u_matrix * vec4(position, 0.0, 1.0);
+                    }
+                )";
+
+            const char *fragmentSource = isGles
+                ? R"(
+                    precision mediump float;
+                    varying vec2 v_uv;
+                    varying vec4 v_color;
+                    uniform sampler2D u_texture;
+                    void main() {
+                        vec4 tex = texture2D(u_texture, v_uv);
+                        gl_FragColor = vec4(v_color.rgb * tex.a, tex.a * v_color.a);
+                    }
+                )"
+                : R"(
+                    #version 150
+                    in vec2 v_uv;
+                    in vec4 v_color;
+                    uniform sampler2D u_texture;
+                    out vec4 fragColor;
+                    void main() {
+                        vec4 tex = texture(u_texture, v_uv);
+                        fragColor = vec4(v_color.rgb * tex.a, tex.a * v_color.a);
+                    }
+                )";
+
+            m_atlasProgram = new QOpenGLShaderProgram();
+            if (!m_atlasProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexSource)
+                || !m_atlasProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentSource)) {
+                delete m_atlasProgram;
+                m_atlasProgram = nullptr;
+                return false;
+            }
+
+            m_atlasProgram->bindAttributeLocation("a_localPos", 0);
+            m_atlasProgram->bindAttributeLocation("a_localUv", 1);
+            m_atlasProgram->bindAttributeLocation("a_instanceRect", 2);
+            m_atlasProgram->bindAttributeLocation("a_instanceUvRect", 3);
+            m_atlasProgram->bindAttributeLocation("a_instanceColor", 4);
+            if (!m_atlasProgram->link()) {
+                delete m_atlasProgram;
+                m_atlasProgram = nullptr;
+                return false;
+            }
+
+            m_atlasLocalPositionLoc = 0;
+            m_atlasLocalUvLoc = 1;
+            m_atlasRectLoc = 2;
+            m_atlasUvRectLoc = 3;
+            m_atlasColorLoc = 4;
+            m_atlasMatrixLoc = m_atlasProgram->uniformLocation("u_matrix");
+            m_atlasTextureLoc = m_atlasProgram->uniformLocation("u_texture");
         }
 
-        if (!m_program) {
+        if (!m_quadVbo.isCreated()) {
+            m_quadVbo.create();
+            m_quadVbo.bind();
+            m_quadVbo.setUsagePattern(QOpenGLBuffer::StaticDraw);
+            const QuadVertex quadVertices[] = {
+                {0.0f, 0.0f, 0.0f, 0.0f},
+                {1.0f, 0.0f, 1.0f, 0.0f},
+                {0.0f, 1.0f, 0.0f, 1.0f},
+                {0.0f, 1.0f, 0.0f, 1.0f},
+                {1.0f, 0.0f, 1.0f, 0.0f},
+                {1.0f, 1.0f, 1.0f, 1.0f},
+            };
+            m_quadVbo.allocate(quadVertices, static_cast<int>(sizeof(quadVertices)));
+            m_quadVbo.release();
+        }
+        if (!m_instanceVbo.isCreated()) {
+            m_instanceVbo.create();
+            m_instanceVbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+        }
+        return true;
+    }
+
+    bool supportsAtlasInstancing(QOpenGLContext *ctx) const {
+        if (!ctx) {
+            return false;
+        }
+        const QSurfaceFormat format = ctx->format();
+        if (ctx->isOpenGLES()) {
+            return (format.majorVersion() > 3 || (format.majorVersion() == 3 && format.minorVersion() >= 0))
+                || ctx->hasExtension(QByteArrayLiteral("GL_EXT_instanced_arrays"))
+                || ctx->hasExtension(QByteArrayLiteral("GL_ANGLE_instanced_arrays"));
+        }
+
+        const bool hasGlsl150 =
+            format.majorVersion() > 3 || (format.majorVersion() == 3 && format.minorVersion() >= 2);
+        const bool hasInstancingApi =
+            format.majorVersion() > 3
+            || (format.majorVersion() == 3 && format.minorVersion() >= 3)
+            || ctx->hasExtension(QByteArrayLiteral("GL_ARB_instanced_arrays"));
+        return hasGlsl150 && hasInstancingApi;
+    }
+
+    bool ensureFrameGlResources() {
+        auto *ctx = QOpenGLContext::currentContext();
+        if (!ctx) {
+            return false;
+        }
+        ensureGlFunctionsInitialized(ctx);
+
+        if (!m_frameProgram) {
             const bool isGles = ctx->isOpenGLES();
             const char *vertexSource = isGles
                 ? R"(
@@ -357,33 +665,33 @@ private:
                     }
                 )";
 
-            m_program = new QOpenGLShaderProgram();
-            if (!m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexSource)
-                || !m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentSource)) {
-                delete m_program;
-                m_program = nullptr;
+            m_frameProgram = new QOpenGLShaderProgram();
+            if (!m_frameProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexSource)
+                || !m_frameProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentSource)) {
+                delete m_frameProgram;
+                m_frameProgram = nullptr;
                 return false;
             }
 
-            m_program->bindAttributeLocation("a_position", 0);
-            m_program->bindAttributeLocation("a_uv", 1);
-            m_program->bindAttributeLocation("a_color", 2);
-            if (!m_program->link()) {
-                delete m_program;
-                m_program = nullptr;
+            m_frameProgram->bindAttributeLocation("a_position", 0);
+            m_frameProgram->bindAttributeLocation("a_uv", 1);
+            m_frameProgram->bindAttributeLocation("a_color", 2);
+            if (!m_frameProgram->link()) {
+                delete m_frameProgram;
+                m_frameProgram = nullptr;
                 return false;
             }
 
-            m_positionLoc = 0;
-            m_uvLoc = 1;
-            m_colorLoc = 2;
-            m_matrixLoc = m_program->uniformLocation("u_matrix");
-            m_textureLoc = m_program->uniformLocation("u_texture");
+            m_framePositionLoc = 0;
+            m_frameUvLoc = 1;
+            m_frameColorLoc = 2;
+            m_frameMatrixLoc = m_frameProgram->uniformLocation("u_matrix");
+            m_frameTextureLoc = m_frameProgram->uniformLocation("u_texture");
         }
 
-        if (!m_vbo.isCreated()) {
-            m_vbo.create();
-            m_vbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+        if (!m_frameVbo.isCreated()) {
+            m_frameVbo.create();
+            m_frameVbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
         }
         return true;
     }
@@ -625,6 +933,50 @@ private:
         m_atlasPages.push_back(std::move(page));
     }
 
+    void buildAtlasInstances() {
+        m_pageInstances.clear();
+        m_pageInstances.resize(m_atlasPages.size());
+
+        const QColor normalColor(Qt::white);
+        const QColor hoverColor(QStringLiteral("#FFFF6677"));
+        for (const DanmakuRenderInstance &instance : m_instances) {
+            const auto spriteIt = m_sprites.constFind(instance.spriteId);
+            if (spriteIt == m_sprites.constEnd()) {
+                continue;
+            }
+            const SpriteRecord &record = spriteIt.value();
+            if (record.pageIndex < 0 || record.pageIndex >= m_pageInstances.size()) {
+                continue;
+            }
+
+            const QSize pageSize = m_atlasPages[record.pageIndex].image.size();
+            if (!pageSize.isValid()) {
+                continue;
+            }
+            const QColor color = instance.ngDropHovered ? hoverColor : normalColor;
+            const float u0 = static_cast<float>(record.pixelRect.left()) / pageSize.width();
+            const float v0 = static_cast<float>(record.pixelRect.top()) / pageSize.height();
+            const float u1 = static_cast<float>(record.pixelRect.right() + 1) / pageSize.width();
+            const float v1 = static_cast<float>(record.pixelRect.bottom() + 1) / pageSize.height();
+            const float alpha = static_cast<float>(std::clamp(instance.alpha, 0.0, 1.0));
+            QVector<InstanceData> &instances = m_pageInstances[record.pageIndex];
+            instances.push_back(InstanceData {
+                static_cast<float>(instance.x),
+                static_cast<float>(instance.y),
+                static_cast<float>(record.logicalSize.width()),
+                static_cast<float>(record.logicalSize.height()),
+                u0,
+                v0,
+                u1,
+                v1,
+                color.redF(),
+                color.greenF(),
+                color.blueF(),
+                alpha,
+            });
+        }
+    }
+
     void buildAtlasVertices() {
         m_pageVertices.clear();
         m_pageVertices.resize(m_atlasPages.size());
@@ -722,7 +1074,7 @@ private:
 
         qInfo().noquote()
             << QString("[perf-render] backend=%1 window_ms=%2 frame_count=%3 instances=%4 sprite_upload_count=%5 sprite_upload_bytes=%6 atlas_pages=%7 draw_calls=%8")
-                   .arg(QString::fromLatin1(rendererBackendName(m_backend)))
+                   .arg(QString::fromLatin1(rendererBackendName(m_runtimeBackend)))
                    .arg(elapsedMs)
                    .arg(m_perfFrameCount)
                    .arg(m_perfInstanceTotal)
@@ -749,36 +1101,60 @@ private:
             delete m_frameTexture;
             m_frameTexture = nullptr;
         }
-        if (m_program) {
-            delete m_program;
-            m_program = nullptr;
+        if (m_atlasProgram) {
+            delete m_atlasProgram;
+            m_atlasProgram = nullptr;
         }
-        if (m_vbo.isCreated()) {
-            m_vbo.destroy();
+        if (m_frameProgram) {
+            delete m_frameProgram;
+            m_frameProgram = nullptr;
+        }
+        if (m_quadVbo.isCreated()) {
+            m_quadVbo.destroy();
+        }
+        if (m_instanceVbo.isCreated()) {
+            m_instanceVbo.destroy();
+        }
+        if (m_frameVbo.isCreated()) {
+            m_frameVbo.destroy();
         }
     }
 
     QSize m_itemSize;
     qreal m_devicePixelRatio = 1.0;
-    DanmakuRendererBackend m_backend = DanmakuRendererBackend::Atlas;
+    DanmakuRendererBackend m_requestedBackend = DanmakuRendererBackend::Atlas;
+    DanmakuRendererBackend m_runtimeBackend = DanmakuRendererBackend::Atlas;
     QVector<DanmakuRenderInstance> m_instances;
     QHash<DanmakuSpriteId, SpriteRecord> m_sprites;
     QVector<AtlasPage> m_atlasPages;
+    QVector<QVector<InstanceData>> m_pageInstances;
     QVector<QVector<Vertex>> m_pageVertices;
     QVector<Vertex> m_frameQuadVertices;
     QImage m_frameImage;
     bool m_glInitialized = false;
+    QOpenGLContext *m_glContext = nullptr;
+    bool m_atlasInstancingUnsupported = false;
     bool m_frameTextureDirty = true;
     quint64 m_frameSequence = 0;
 
-    QOpenGLShaderProgram *m_program = nullptr;
+    QOpenGLShaderProgram *m_atlasProgram = nullptr;
+    QOpenGLShaderProgram *m_frameProgram = nullptr;
     QOpenGLTexture *m_frameTexture = nullptr;
-    QOpenGLBuffer m_vbo;
-    int m_positionLoc = -1;
-    int m_uvLoc = -1;
-    int m_colorLoc = -1;
-    int m_matrixLoc = -1;
-    int m_textureLoc = -1;
+    QOpenGLBuffer m_quadVbo;
+    QOpenGLBuffer m_instanceVbo;
+    QOpenGLBuffer m_frameVbo;
+    int m_atlasLocalPositionLoc = -1;
+    int m_atlasLocalUvLoc = -1;
+    int m_atlasRectLoc = -1;
+    int m_atlasUvRectLoc = -1;
+    int m_atlasColorLoc = -1;
+    int m_atlasMatrixLoc = -1;
+    int m_atlasTextureLoc = -1;
+    int m_framePositionLoc = -1;
+    int m_frameUvLoc = -1;
+    int m_frameColorLoc = -1;
+    int m_frameMatrixLoc = -1;
+    int m_frameTextureLoc = -1;
 
     qint64 m_perfWindowStartMs = 0;
     int m_perfFrameCount = 0;

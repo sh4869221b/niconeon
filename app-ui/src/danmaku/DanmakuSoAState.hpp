@@ -11,6 +11,17 @@ enum DanmakuSoAFlag : quint8 {
     DanmakuSoAFlagFading = 1 << 2,
 };
 
+struct DanmakuWorkerRowState {
+    int row = -1;
+    qreal x = 0.0;
+    qreal y = 0.0;
+    qreal speed = 0.0;
+    qreal alpha = 1.0;
+    int widthEstimate = 0;
+    int fadeRemainingMs = 0;
+    quint8 flags = 0;
+};
+
 struct DanmakuSoAState {
     QVector<int> rows;
     QVector<qreal> x;
@@ -59,6 +70,12 @@ struct DanmakuSoAState {
     }
 };
 
+struct DanmakuWorkerSyncBatch {
+    bool fullReset = false;
+    QVector<DanmakuWorkerRowState> upsertRows;
+    QVector<int> removeRows;
+};
+
 struct DanmakuWorkerFrame {
     qint64 seq = 0;
     bool playbackPaused = false;
@@ -67,11 +84,12 @@ struct DanmakuWorkerFrame {
     qreal viewportHeight = 0;
     qreal cullThreshold = 0;
     qreal itemHeight = 0;
-    DanmakuSoAState state;
-    QVector<int> changedRows;
+    QVector<DanmakuWorkerRowState> changedRows;
     QVector<int> removeRows;
 };
 
 using DanmakuWorkerFramePtr = QSharedPointer<DanmakuWorkerFrame>;
+using DanmakuWorkerSyncBatchPtr = QSharedPointer<DanmakuWorkerSyncBatch>;
 
+Q_DECLARE_METATYPE(DanmakuWorkerSyncBatchPtr)
 Q_DECLARE_METATYPE(DanmakuWorkerFramePtr)
