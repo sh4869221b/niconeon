@@ -806,10 +806,11 @@ mod tests {
     #[test]
     fn broken_cache_falls_back_to_none() {
         let path = temp_db_path("broken-cache");
-        let store = Store::open_with_path(path.clone()).expect("store");
+        let cache_path = path.with_file_name("niconeon-cache.db");
+        let store = Store::open_with_paths(path.clone(), cache_path.clone()).expect("store");
         drop(store);
 
-        let conn = Connection::open(&path).expect("sqlite");
+        let conn = Connection::open(&cache_path).expect("sqlite");
         conn.execute(
             "INSERT INTO comment_cache(video_id, fetched_at, payload_json) VALUES (?1, ?2, ?3)",
             rusqlite::params!["sm9", "2026-03-07T00:00:00Z", "{not-json}"],
@@ -820,7 +821,11 @@ mod tests {
         let fetcher = MockFetcher {
             data: RefCell::new(Err("network error".to_string())),
         };
-        let mut app = AppCore::new(Store::open_with_path(path.clone()).expect("store"), fetcher).expect("app");
+        let mut app = AppCore::new(
+            Store::open_with_paths(path.clone(), cache_path.clone()).expect("store"),
+            fetcher,
+        )
+        .expect("app");
         let open = app.handle_request(open_video_req());
 
         let src = open
@@ -839,6 +844,7 @@ mod tests {
         assert_eq!(src, "none");
         assert_eq!(total, 0);
         let _ = fs::remove_file(path);
+        let _ = fs::remove_file(cache_path);
     }
 
     #[test]
