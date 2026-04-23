@@ -2,6 +2,17 @@
 
 _Generated from git commit subjects (merge commits excluded)._
 
+## v0.0.19 (2026-04-24)
+
+_Range: `v0.0.18..v0.0.19`_
+
+- docs(changelog): update for v0.0.18
+- chore(deps): bump quinn-proto from 0.11.13 to 0.11.14 in /core in the cargo group across 1 directory (#55)
+- feat(store): split comment cache into cache db
+- test(store): add deterministic path resolution tests
+- fix(core): align broken cache fallback test with split cache db
+- perf(ui): reduce danmaku render snapshot copying
+
 ## v0.0.18 (2026-03-20)
 
 _Range: `v0.0.17..v0.0.18`_
