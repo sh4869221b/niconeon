@@ -100,7 +100,7 @@ public:
     }
 
     void setFrame(
-        const DanmakuRenderFrame &frame,
+        const DanmakuRenderFrameConstPtr &frame,
         const QVector<DanmakuSpriteUpload> &uploads,
         const QSize &itemSize,
         qreal devicePixelRatio,
@@ -112,9 +112,11 @@ public:
         }
         m_itemSize = itemSize;
         m_devicePixelRatio = std::max(devicePixelRatio, 1.0);
+        m_frameSnapshot = frame;
+        const QVector<DanmakuRenderInstance> &instances = currentInstances();
         ++m_frameSequence;
         ++m_perfFrameCount;
-        m_perfInstanceTotal += frame.instances.size();
+        m_perfInstanceTotal += instances.size();
 
         for (const DanmakuSpriteUpload &upload : uploads) {
             if (upload.spriteId == 0 || upload.image.isNull()) {
@@ -136,25 +138,32 @@ public:
             m_perfSpriteUploadBytes += static_cast<qulonglong>(record.image.sizeInBytes());
         }
 
-        m_instances = frame.instances;
-        QSet<DanmakuSpriteId> activeSpriteIds;
-        activeSpriteIds.reserve(m_instances.size());
-        for (const DanmakuRenderInstance &instance : m_instances) {
-            activeSpriteIds.insert(instance.spriteId);
+        bool hasPendingResidency = false;
+        for (const DanmakuRenderInstance &instance : instances) {
             auto spriteIt = m_sprites.find(instance.spriteId);
             if (spriteIt != m_sprites.end()) {
                 spriteIt->lastUsedFrame = m_frameSequence;
+                if (spriteIt->pageIndex < 0 && !spriteIt->image.isNull()) {
+                    hasPendingResidency = true;
+                }
             }
         }
 
         if (m_runtimeBackend == DanmakuRendererBackend::Atlas) {
-            ensureActiveSpritesResident(activeSpriteIds);
+            if (hasPendingResidency) {
+                QSet<DanmakuSpriteId> activeSpriteIds;
+                activeSpriteIds.reserve(instances.size());
+                for (const DanmakuRenderInstance &instance : instances) {
+                    activeSpriteIds.insert(instance.spriteId);
+                }
+                ensureActiveSpritesResident(activeSpriteIds);
+            }
             if (m_atlasInstancingUnsupported) {
                 buildAtlasVertices();
-                m_pageInstances.clear();
+                clearPageInstanceBuffers();
             } else {
                 buildAtlasInstances();
-                m_pageVertices.clear();
+                clearPageVertexBuffers();
             }
         } else {
             composeFrameImage();
@@ -753,8 +762,25 @@ private:
         return true;
     }
 
+    const QVector<DanmakuRenderInstance> &currentInstances() const {
+        static const QVector<DanmakuRenderInstance> emptyInstances;
+        return m_frameSnapshot ? m_frameSnapshot->instances : emptyInstances;
+    }
+
+    void clearPageInstanceBuffers() {
+        for (QVector<InstanceData> &instances : m_pageInstances) {
+            instances.clear();
+        }
+    }
+
+    void clearPageVertexBuffers() {
+        for (QVector<Vertex> &vertices : m_pageVertices) {
+            vertices.clear();
+        }
+    }
+
     void ensureActiveSpritesResident(const QSet<DanmakuSpriteId> &activeSpriteIds) {
-        for (const DanmakuRenderInstance &instance : m_instances) {
+        for (const DanmakuRenderInstance &instance : currentInstances()) {
             ensureSpriteResident(instance.spriteId, activeSpriteIds);
         }
     }
@@ -934,12 +960,12 @@ private:
     }
 
     void buildAtlasInstances() {
-        m_pageInstances.clear();
-        m_pageInstances.resize(m_atlasPages.size());
+        if (m_pageInstances.size() != m_atlasPages.size()) {
+            m_pageInstances.resize(m_atlasPages.size());
+        }
+        clearPageInstanceBuffers();
 
-        const QColor normalColor(Qt::white);
-        const QColor hoverColor(QStringLiteral("#FFFF6677"));
-        for (const DanmakuRenderInstance &instance : m_instances) {
+        for (const DanmakuRenderInstance &instance : currentInstances()) {
             const auto spriteIt = m_sprites.constFind(instance.spriteId);
             if (spriteIt == m_sprites.constEnd()) {
                 continue;
@@ -953,12 +979,14 @@ private:
             if (!pageSize.isValid()) {
                 continue;
             }
-            const QColor color = instance.ngDropHovered ? hoverColor : normalColor;
             const float u0 = static_cast<float>(record.pixelRect.left()) / pageSize.width();
             const float v0 = static_cast<float>(record.pixelRect.top()) / pageSize.height();
             const float u1 = static_cast<float>(record.pixelRect.right() + 1) / pageSize.width();
             const float v1 = static_cast<float>(record.pixelRect.bottom() + 1) / pageSize.height();
             const float alpha = static_cast<float>(std::clamp(instance.alpha, 0.0, 1.0));
+            const float red = 1.0f;
+            const float green = instance.ngDropHovered ? 0.4f : 1.0f;
+            const float blue = instance.ngDropHovered ? (119.0f / 255.0f) : 1.0f;
             QVector<InstanceData> &instances = m_pageInstances[record.pageIndex];
             instances.push_back(InstanceData {
                 static_cast<float>(instance.x),
@@ -969,21 +997,21 @@ private:
                 v0,
                 u1,
                 v1,
-                color.redF(),
-                color.greenF(),
-                color.blueF(),
+                red,
+                green,
+                blue,
                 alpha,
             });
         }
     }
 
     void buildAtlasVertices() {
-        m_pageVertices.clear();
-        m_pageVertices.resize(m_atlasPages.size());
+        if (m_pageVertices.size() != m_atlasPages.size()) {
+            m_pageVertices.resize(m_atlasPages.size());
+        }
+        clearPageVertexBuffers();
 
-        const QColor normalColor(Qt::white);
-        const QColor hoverColor(QStringLiteral("#FFFF6677"));
-        for (const DanmakuRenderInstance &instance : m_instances) {
+        for (const DanmakuRenderInstance &instance : currentInstances()) {
             const auto spriteIt = m_sprites.constFind(instance.spriteId);
             if (spriteIt == m_sprites.constEnd()) {
                 continue;
@@ -997,7 +1025,6 @@ private:
             if (!pageSize.isValid()) {
                 continue;
             }
-            const QColor color = instance.ngDropHovered ? hoverColor : normalColor;
             const float left = static_cast<float>(instance.x);
             const float top = static_cast<float>(instance.y);
             const float right = static_cast<float>(instance.x + record.logicalSize.width());
@@ -1007,13 +1034,16 @@ private:
             const float u1 = static_cast<float>(record.pixelRect.right() + 1) / pageSize.width();
             const float v1 = static_cast<float>(record.pixelRect.bottom() + 1) / pageSize.height();
             const float alpha = static_cast<float>(std::clamp(instance.alpha, 0.0, 1.0));
+            const float red = 1.0f;
+            const float green = instance.ngDropHovered ? 0.4f : 1.0f;
+            const float blue = instance.ngDropHovered ? (119.0f / 255.0f) : 1.0f;
             QVector<Vertex> &vertices = m_pageVertices[record.pageIndex];
-            vertices.push_back(Vertex {left, top, u0, v0, color.redF(), color.greenF(), color.blueF(), alpha});
-            vertices.push_back(Vertex {right, top, u1, v0, color.redF(), color.greenF(), color.blueF(), alpha});
-            vertices.push_back(Vertex {left, bottom, u0, v1, color.redF(), color.greenF(), color.blueF(), alpha});
-            vertices.push_back(Vertex {left, bottom, u0, v1, color.redF(), color.greenF(), color.blueF(), alpha});
-            vertices.push_back(Vertex {right, top, u1, v0, color.redF(), color.greenF(), color.blueF(), alpha});
-            vertices.push_back(Vertex {right, bottom, u1, v1, color.redF(), color.greenF(), color.blueF(), alpha});
+            vertices.push_back(Vertex {left, top, u0, v0, red, green, blue, alpha});
+            vertices.push_back(Vertex {right, top, u1, v0, red, green, blue, alpha});
+            vertices.push_back(Vertex {left, bottom, u0, v1, red, green, blue, alpha});
+            vertices.push_back(Vertex {left, bottom, u0, v1, red, green, blue, alpha});
+            vertices.push_back(Vertex {right, top, u1, v0, red, green, blue, alpha});
+            vertices.push_back(Vertex {right, bottom, u1, v1, red, green, blue, alpha});
         }
     }
 
@@ -1026,7 +1056,7 @@ private:
         m_frameImage.fill(Qt::transparent);
 
         QPainter painter(&m_frameImage);
-        for (const DanmakuRenderInstance &instance : m_instances) {
+        for (const DanmakuRenderInstance &instance : currentInstances()) {
             const auto spriteIt = m_sprites.find(instance.spriteId);
             if (spriteIt == m_sprites.end() || spriteIt->image.isNull()) {
                 continue;
@@ -1124,7 +1154,7 @@ private:
     qreal m_devicePixelRatio = 1.0;
     DanmakuRendererBackend m_requestedBackend = DanmakuRendererBackend::Atlas;
     DanmakuRendererBackend m_runtimeBackend = DanmakuRendererBackend::Atlas;
-    QVector<DanmakuRenderInstance> m_instances;
+    DanmakuRenderFrameConstPtr m_frameSnapshot;
     QHash<DanmakuSpriteId, SpriteRecord> m_sprites;
     QVector<AtlasPage> m_atlasPages;
     QVector<QVector<InstanceData>> m_pageInstances;
@@ -1228,27 +1258,18 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
     }
     if (itemWidth <= 0 || itemHeight <= 0 || !window()) {
         m_pendingPresentedFrame.store(false, std::memory_order_release);
-        node->setFrame(
-            DanmakuRenderFrame {},
-            {},
-            QSize(1, 1),
-            1.0,
-            rendererBackendFromEnv());
+        node->setFrame({}, {}, QSize(1, 1), 1.0, rendererBackendFromEnv());
         return node;
     }
 
-    DanmakuRenderFrame frame;
     QVector<DanmakuSpriteUpload> uploads;
     DanmakuRenderFrameConstPtr snapshot;
     if (m_controller) {
         snapshot = m_controller->renderSnapshot();
         uploads = m_controller->takePendingSpriteUploads();
     }
-    if (snapshot) {
-        frame = *snapshot;
-    }
     m_pendingPresentedFrame.store(snapshot && !snapshot->instances.isEmpty(), std::memory_order_release);
-    node->setFrame(frame, uploads, QSize(itemWidth, itemHeight), devicePixelRatio, rendererBackendFromEnv());
+    node->setFrame(snapshot, uploads, QSize(itemWidth, itemHeight), devicePixelRatio, rendererBackendFromEnv());
     return node;
 }
 
