@@ -176,4 +176,8 @@ DanmakuRenderFrameConstPtr DanmakuTextWidthTest::appendSingleComment(
 
 QTEST_MAIN(DanmakuTextWidthTest)
 
+#if defined(NICONEON_BAZEL_BUILD)
+#include "tests/unit/danmaku_text_width_test.moc.h"
+#else
 #include "danmaku_text_width_test.moc"
+#endif

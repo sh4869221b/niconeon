@@ -113,4 +113,8 @@ void DanmakuNgDropTest::pendingNgFadeRollbackRestoresDraggedComment() {
 
 QTEST_MAIN(DanmakuNgDropTest)
 
+#if defined(NICONEON_BAZEL_BUILD)
+#include "tests/unit/danmaku_ng_drop_test.moc.h"
+#else
 #include "danmaku_ng_drop_test.moc"
+#endif

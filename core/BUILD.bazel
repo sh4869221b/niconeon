@@ -1,0 +1,17 @@
+alias(
+    name = "niconeon-core",
+    actual = "//core/crates/niconeon-core:niconeon-core",
+    visibility = ["//visibility:public"],
+)
+
+test_suite(
+    name = "core_tests",
+    tests = [
+        "//core/crates/niconeon-core:unit_test",
+        "//core/crates/niconeon-domain:unit_test",
+        "//core/crates/niconeon-fetcher:unit_test",
+        "//core/crates/niconeon-filter:unit_test",
+        "//core/crates/niconeon-protocol:unit_test",
+        "//core/crates/niconeon-store:unit_test",
+    ],
+)

@@ -120,20 +120,13 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core
+      - name: Setup Bazelisk
+        uses: bazelbuild/setup-bazelisk@v3
 
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
             pkg-config \
             libmpv-dev \
             qt6-base-dev \
@@ -142,15 +135,25 @@ jobs:
             qt6-declarative-dev-tools \
             zip
 
-      - name: Build core (release)
-        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+      - name: Build release binaries with Bazel
+        run: bazelisk build //core:niconeon-core //app-ui:niconeon-ui
 
-      - name: Build UI (release)
+      - name: Stage Bazel release binaries
         run: |
-          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build app-ui/build-release --parallel
+          set -euo pipefail
+          mkdir -p dist/bazel-linux-ui dist/bazel-linux-core
+          ui_bin="$(bazelisk cquery --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui$' | tail -n1)"
+          core_bin="$(bazelisk cquery --output=files //core:niconeon-core | grep -E '(^|/)niconeon-core$' | tail -n1)"
+          test -n "${ui_bin}"
+          test -n "${core_bin}"
+          cp "${ui_bin}" dist/bazel-linux-ui/niconeon-ui
+          cp "${core_bin}" dist/bazel-linux-core/niconeon-core
+          chmod 755 dist/bazel-linux-ui/niconeon-ui dist/bazel-linux-core/niconeon-core
 
       - name: Package Linux binaries zip
+        env:
+          NICONEON_UI_BUILD_DIR: dist/bazel-linux-ui
+          NICONEON_CORE_BUILD_DIR: dist/bazel-linux-core
         run: scripts/release/package_linux.sh "${{ needs.prepare.outputs.version }}"
 
       - name: Verify Linux binaries license bundle
@@ -159,7 +162,7 @@ jobs:
       - name: Upload Linux binaries artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-binaries-zip
+          name: release-linux-binaries
           path: dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64-binaries.zip
 
   package-linux-appimage:
@@ -173,20 +176,13 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core
+      - name: Setup Bazelisk
+        uses: bazelbuild/setup-bazelisk@v3
 
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
             pkg-config \
             libmpv-dev \
             qt6-base-dev \
@@ -197,15 +193,25 @@ jobs:
             patchelf \
             desktop-file-utils
 
-      - name: Build core (release)
-        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+      - name: Build release binaries with Bazel
+        run: bazelisk build //core:niconeon-core //app-ui:niconeon-ui
 
-      - name: Build UI (release)
+      - name: Stage Bazel release binaries
         run: |
-          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build app-ui/build-release --parallel
+          set -euo pipefail
+          mkdir -p dist/bazel-linux-ui dist/bazel-linux-core
+          ui_bin="$(bazelisk cquery --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui$' | tail -n1)"
+          core_bin="$(bazelisk cquery --output=files //core:niconeon-core | grep -E '(^|/)niconeon-core$' | tail -n1)"
+          test -n "${ui_bin}"
+          test -n "${core_bin}"
+          cp "${ui_bin}" dist/bazel-linux-ui/niconeon-ui
+          cp "${core_bin}" dist/bazel-linux-core/niconeon-core
+          chmod 755 dist/bazel-linux-ui/niconeon-ui dist/bazel-linux-core/niconeon-core
 
       - name: Package Linux AppImage
+        env:
+          NICONEON_UI_BUILD_DIR: dist/bazel-linux-ui
+          NICONEON_CORE_BUILD_DIR: dist/bazel-linux-core
         run: scripts/release/package_linux_appimage.sh "${{ needs.prepare.outputs.version }}"
 
       - name: Verify Linux AppImage license bundle
@@ -214,7 +220,7 @@ jobs:
       - name: Upload Linux AppImage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-appimage
+          name: release-linux-appimage
           path: dist/niconeon-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage
 
   package-windows:
@@ -228,20 +234,26 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
+      - name: Setup Bazelisk
+        uses: bazelbuild/setup-bazelisk@v3
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core
 
       - name: Build core (release, MSVC)
         shell: pwsh
         run: |
           $start = Get-Date
           echo "::notice title=timing::package-windows core build started $($start.ToUniversalTime().ToString('o'))"
-          cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+          bazelisk build //core:niconeon-core
+          $coreBin = bazelisk cquery --output=files //core:niconeon-core |
+            Where-Object { $_ -match '(^|/|\\)niconeon-core\.exe$' } |
+            Select-Object -Last 1
+          if (-not $coreBin) {
+            throw "Bazel core binary output was not found"
+          }
+          New-Item -ItemType Directory -Force dist\bazel-windows-core | Out-Null
+          Copy-Item $coreBin dist\bazel-windows-core\niconeon-core.exe -Force
           $elapsed = [int]((Get-Date) - $start).TotalSeconds
           echo "::notice title=timing::package-windows core build finished (${elapsed}s)"
 
@@ -253,10 +265,7 @@ jobs:
           update: true
           install: >-
             mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
             mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-ccache
             mingw-w64-x86_64-qt6-base
             mingw-w64-x86_64-qt6-declarative
             mingw-w64-x86_64-qt6-tools
@@ -264,35 +273,49 @@ jobs:
             unzip
             zip
 
-      - name: Cache ccache (Windows release)
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}\\.ccache
-          key: ccache-windows-release-${{ runner.os }}-${{ hashFiles('app-ui/CMakeLists.txt', 'app-ui/src/**', 'app-ui/qml/**') }}
-          restore-keys: |
-            ccache-windows-release-${{ runner.os }}-
-
       - name: Show MSYS2 package versions
         shell: msys2 {0}
-        run: pacman -Q | grep -E '^mingw-w64-x86_64-(gcc|cmake|ninja|pkgconf|ccache|qt6-base|qt6-declarative|qt6-tools|mpv)( |$)' || true
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: pacman -Q | grep -E '^mingw-w64-x86_64-(gcc|pkgconf|qt6-base|qt6-declarative|qt6-tools|mpv)( |$)' || true
 
       - name: Build UI (release, MSYS2)
         shell: msys2 {0}
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
+          BAZEL_SH: C:/msys64/usr/bin/bash.exe
+          BAZEL_VC: ""
+          BAZEL_VS: ""
+          BAZEL_COMPILER: mingw-gcc
+          CC: x86_64-w64-mingw32-gcc
+          CXX: x86_64-w64-mingw32-g++
+          BAZEL_WINDOWS_UI_FLAGS: --compiler=mingw-gcc --features=compiler_param_file
         run: |
+          set -euo pipefail
+          export PATH="/mingw64/bin:/usr/bin:${PATH}"
           start_epoch="$(date +%s)"
           echo "::notice title=timing::package-windows ui build started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
-          ccache -z || true
-          cmake -S app-ui -B app-ui/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build app-ui/build-release --parallel
-          ccache -s || true
+          echo "MSYS2_ARG_CONV_EXCL=${MSYS2_ARG_CONV_EXCL}"
+          echo "BAZEL_SH=${BAZEL_SH}"
+          echo "BAZEL_COMPILER=${BAZEL_COMPILER}"
+          echo "CC=${CC}"
+          echo "CXX=${CXX}"
+          bazelisk cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=starlark --starlark:expr='providers(target)' @rules_cc//cc:current_cc_toolchain \
+            | grep -E 'compiler = "mingw-gcc"|toolchain_id = "msys_x64_mingw"'
+          bazelisk build ${BAZEL_WINDOWS_UI_FLAGS} //app-ui:niconeon-ui
+          mkdir -p dist/bazel-windows-ui
+          ui_bin="$(bazelisk cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
+          test -n "${ui_bin}"
+          cp "${ui_bin}" dist/bazel-windows-ui/niconeon-ui.exe
           end_epoch="$(date +%s)"
           echo "::notice title=timing::package-windows ui build finished ($((end_epoch - start_epoch))s)"
 
       - name: Package Windows binaries zip
         shell: msys2 {0}
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
+          NICONEON_UI_BUILD_DIR: dist/bazel-windows-ui
+          NICONEON_CORE_BUILD_DIR: dist/bazel-windows-core
         run: |
           start_epoch="$(date +%s)"
           echo "::notice title=timing::package-windows packaging started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -302,10 +325,14 @@ jobs:
 
       - name: Verify Windows binaries license bundle
         shell: msys2 {0}
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
         run: scripts/release/verify_binary_artifact_licenses.sh "dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip"
 
       - name: Verify Windows bundle includes qt.conf
         shell: msys2 {0}
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
         run: |
           unzip -Z1 "dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip" \
             | grep -E '/qt\.conf$'
@@ -313,7 +340,7 @@ jobs:
       - name: Upload Windows binaries artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-binaries-zip
+          name: release-windows-binaries
           path: dist/niconeon-${{ needs.prepare.outputs.version }}-windows-x86_64-binaries.zip
 
   publish-release:

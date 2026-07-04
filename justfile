@@ -1,22 +1,12 @@
 set windows-shell := ["cmd.exe", "/d", "/c"]
 
-core_bin := if os() == "windows" {
-  "core\\target\\debug\\niconeon-core.exe"
-} else {
-  "core/target/debug/niconeon-core"
-}
-
-ui_bin := if os() == "windows" {
-  "app-ui\\build\\niconeon-ui.exe"
-} else {
-  "app-ui/build/niconeon-ui"
-}
+bazel := "bazelisk"
 
 default:
     @just --list
 
 core-test:
-    cd core && cargo test
+    {{bazel}} test //core/...
 
 licenses:
     scripts/release/generate_third_party_notices.sh
@@ -25,32 +15,56 @@ license-check: licenses
     git diff --exit-code -- THIRD_PARTY_NOTICES.txt
 
 core-build:
-    cd core && cargo build -p niconeon-core
+    {{bazel}} build //core:niconeon-core
 
 ui-configure:
-    cd app-ui && cmake -S . -B build
+    {{bazel}} cquery //app-ui:niconeon-ui >/dev/null
 
 ui-build:
-    cd app-ui && cmake --build build -j
+    {{bazel}} build //app-ui:niconeon-ui
 
 ui-test:
-    cd app-ui && cmake -S . -B build-test -DBUILD_TESTING=ON
-    cd app-ui && cmake --build build-test -j
-    cd app-ui && ctest --test-dir build-test --output-on-failure
+    {{bazel}} test //app-ui:ui_unit_tests
 
 ui-e2e:
-    cd app-ui && cmake -S . -B build-e2e -DBUILD_TESTING=ON -DNICONEON_BUILD_UI_E2E=ON
-    cd app-ui && cmake --build build-e2e -j
-    cd app-ui && if [ -n "${DISPLAY:-}" ]; then ctest --test-dir build-e2e --output-on-failure -R rendernode_alignment_e2e; elif command -v xvfb-run >/dev/null 2>&1; then xvfb-run -a ctest --test-dir build-e2e --output-on-failure -R rendernode_alignment_e2e; else echo "DISPLAY is not set. install xvfb-run and retry." >&2; exit 1; fi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+      {{bazel}} test //app-ui:rendernode_alignment_e2e
+    elif command -v xvfb-run >/dev/null 2>&1; then
+      xvfb-run -a {{bazel}} test //app-ui:rendernode_alignment_e2e
+    else
+      echo "DISPLAY/WAYLAND_DISPLAY is not set and xvfb-run is unavailable; install xvfb-run or run from a desktop session." >&2
+      exit 1
+    fi
 
-build: licenses core-build ui-configure ui-build
+build: licenses core-build ui-build
 
 run: build
-    {{ if os() == "windows" { "set NICONEON_CORE_BIN=core\\target\\debug\\niconeon-core.exe && app-ui\\build\\niconeon-ui.exe" } else { "NICONEON_CORE_BIN=core/target/debug/niconeon-core app-ui/build/niconeon-ui" } }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bazel_file() {
+      {{bazel}} cquery --output=files "$1" 2>/dev/null | tail -n1
+    }
+    abs_file() {
+      case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        *) printf '%s/%s\n' "$PWD" "$1" ;;
+      esac
+    }
+    core_bin="$(abs_file "$(bazel_file //core:niconeon-core)")"
+    ui_bin="$(abs_file "$(bazel_file //app-ui:niconeon-ui)")"
+    NICONEON_CORE_BIN="$core_bin" "$ui_bin"
 
 perf-dummy out="perf-dummy.log" duration="60": build
     scripts/perf/run_dummy_profile.sh {{out}} {{duration}}
 
 clean:
-    cd core && cargo clean
-    cd app-ui && cmake --build build --target clean
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{bazel}} clean
+    for path in bazel-bin bazel-out bazel-testlogs "bazel-$(basename "$PWD")"; do
+      if [ -L "$path" ]; then
+        rm "$path"
+      fi
+    done

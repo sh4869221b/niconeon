@@ -1,0 +1,16 @@
+module Niconeon
+Main 1.0 Main.qml
+singleton AppTheme 1.0 theme/AppTheme.qml
+AboutDialog 1.0 components/AboutDialog.qml
+AppButton 1.0 components/AppButton.qml
+AppDialog 1.0 components/AppDialog.qml
+AppTabButton 1.0 components/AppTabButton.qml
+AppTextArea 1.0 components/AppTextArea.qml
+AppTextField 1.0 components/AppTextField.qml
+DanmakuOverlay 1.0 components/DanmakuOverlay.qml
+FilterDialog 1.0 components/FilterDialog.qml
+FontSizeDialog 1.0 components/FontSizeDialog.qml
+NgDropZone 1.0 components/NgDropZone.qml
+PlaybackSpeedDialog 1.0 components/PlaybackSpeedDialog.qml
+SettingsDialog 1.0 components/SettingsDialog.qml
+Toast 1.0 components/Toast.qml

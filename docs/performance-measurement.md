@@ -6,9 +6,7 @@ Issue `#4` の目的は、同一条件で再現可能なログを取り、ボト
 
 ## Prerequisites
 
-- `just build` または以下でビルド済みであること:
-  - `cd core && cargo build -p niconeon-core`
-  - `cd app-ui && cmake -S . -B build && cmake --build build -j`
+- `just build` または `bazelisk build //:all` で Bazel build 済みであること。
 - 動画ファイル名にニコニコ動画ID（`sm|nm|so + 数字`）が含まれていること
 - 初回再生でコメントキャッシュが作成されること
 
@@ -46,14 +44,19 @@ Issue `#4` の目的は、同一条件で再現可能なログを取り、ボト
 
 ## Profile Commands (Linux)
 
-すべて `LC_NUMERIC=C` を付与してください。
+すべて `LC_NUMERIC=C` を付与してください。UI/Core binary は Bazel output から取得します。
+
+```bash
+CORE_BIN="$(bazelisk cquery --output=files //core:niconeon-core | tail -n1)"
+UI_BIN="$(bazelisk cquery --output=files //app-ui:niconeon-ui | tail -n1)"
+```
 
 ### 1) baseline
 
 ```bash
 LC_NUMERIC=C \
-NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
-./app-ui/build/niconeon-ui 2>&1 | tee perf-baseline.log
+NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
+"$PWD/$UI_BIN" 2>&1 | tee perf-baseline.log
 ```
 
 ### 2) scenegraph
@@ -61,8 +64,8 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 ```bash
 LC_NUMERIC=C \
 QSG_RENDERER_DEBUG=render \
-NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
-./app-ui/build/niconeon-ui 2>&1 | tee perf-scenegraph.log
+NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
+"$PWD/$UI_BIN" 2>&1 | tee perf-scenegraph.log
 ```
 
 ### 3) glyph
@@ -70,8 +73,8 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 ```bash
 LC_NUMERIC=C \
 QT_LOGGING_RULES="qt.scenegraph.time.glyph=true" \
-NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
-./app-ui/build/niconeon-ui 2>&1 | tee perf-glyph.log
+NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
+"$PWD/$UI_BIN" 2>&1 | tee perf-glyph.log
 ```
 
 ### 4) combined
@@ -80,8 +83,8 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 LC_NUMERIC=C \
 QSG_RENDERER_DEBUG=render \
 QT_LOGGING_RULES="qt.scenegraph.time.glyph=true" \
-NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
-./app-ui/build/niconeon-ui 2>&1 | tee perf-combined.log
+NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
+"$PWD/$UI_BIN" 2>&1 | tee perf-combined.log
 ```
 
 ### 5) worker off + scalar (fallback baseline)
@@ -90,8 +93,8 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 LC_NUMERIC=C \
 NICONEON_DANMAKU_WORKER=off \
 NICONEON_SIMD_MODE=scalar \
-NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
-./app-ui/build/niconeon-ui 2>&1 | tee perf-worker-off-scalar.log
+NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
+"$PWD/$UI_BIN" 2>&1 | tee perf-worker-off-scalar.log
 ```
 
 ### 6) worker on + avx2 (R2 fast path)
@@ -100,8 +103,8 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 LC_NUMERIC=C \
 NICONEON_DANMAKU_WORKER=on \
 NICONEON_SIMD_MODE=avx2 \
-NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
-./app-ui/build/niconeon-ui 2>&1 | tee perf-worker-on-avx2.log
+NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
+"$PWD/$UI_BIN" 2>&1 | tee perf-worker-on-avx2.log
 ```
 
 ### 7) renderer fallback comparison
@@ -109,8 +112,8 @@ NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
 ```bash
 LC_NUMERIC=C \
 NICONEON_DANMAKU_RENDERER=frame_image \
-NICONEON_CORE_BIN="$PWD/core/target/debug/niconeon-core" \
-./app-ui/build/niconeon-ui 2>&1 | tee perf-renderer-frame-image.log
+NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
+"$PWD/$UI_BIN" 2>&1 | tee perf-renderer-frame-image.log
 ```
 
 ## CLI-only Dummy Profile
@@ -134,6 +137,10 @@ just perf-dummy perf-dummy.log 60
 - `NICONEON_AUTO_VIDEO_PATH` で UI 起動時に自動再生
 - `NICONEON_AUTO_PERF_LOG=1` で計測ログを自動有効化
 - 指定秒数後に自動終了し、`perf-dummy.log` へ出力
+
+`[perf-ui]` / `[perf-danmaku]` / `[perf-render]` が出ない完走は失敗として扱います。
+`DISPLAY` / `WAYLAND_DISPLAY` が無く、`xvfb-run` も無く、offscreen fallback でも perf marker が出ない環境では、既定で非ゼロ終了します。
+その制約自体を final evidence として記録する場合だけ、`NICONEON_ALLOW_HEADLESS_PERF_CONSTRAINT=1` を明示してください。
 
 比較時は必要に応じて `NICONEON_DANMAKU_RENDERER=atlas|frame_image` を付与してください。
 

@@ -29,8 +29,7 @@ Niconeon は、ローカル動画を再生しながらニコニココメント�
 
 ## 開発要件
 
-- Rust stable
-- CMake 3.21+
+- Bazelisk
 - Qt 6.4+
 - libmpv
 - python3
@@ -39,10 +38,12 @@ Niconeon は、ローカル動画を再生しながらニコニココメント�
 
 `python3` と `cargo-license` は `just licenses` / `just build` と CI の `license-check` で
 `THIRD_PARTY_NOTICES.txt` を再生成・検証するために使います。
+Rust toolchain と Qt/libmpv は Bazel から利用します。Cargo/CMake は依存関係・履歴上の
+メタデータとして残りますが、開発者向けのサポート済み build entrypoint ではありません。
 
-## タスク実行（推奨）
+## タスク実行
 
-`just` を使うと、Core/UI を横断するコマンドを共通化できます。
+Build/test/run は Bazel を canonical とし、通常は `just` 経由で呼び出します。
 
 ```bash
 # 一覧
@@ -54,10 +55,13 @@ just licenses
 # Core テスト
 just core-test
 
+# UI unit テスト
+just ui-test
+
 # UI E2E テスト（ヘッドレス環境は xvfb-run を使用）
 just ui-e2e
 
-# 全体ビルド（core + ui）
+# 全体ビルド（core + ui + license notices）
 just build
 
 # 起動（NICONEON_CORE_BIN を自動設定）
@@ -66,37 +70,42 @@ just run
 
 `just build` / `just run` は `THIRD_PARTY_NOTICES.txt` を先に自動生成します。
 
+## Bazel targets
+
+```bash
+# 全体ビルド
+bazelisk build //:all
+
+# 全テスト
+bazelisk test //...
+
+# Core binary
+bazelisk build //core:niconeon-core
+
+# UI binary
+bazelisk build //app-ui:niconeon-ui
+
+# Linux package input staging
+bazelisk build //packaging:linux_package_inputs
+```
+
 ## Core の起動
 
 ```bash
-cd core
-cargo run -p niconeon-core -- --stdio
+bazelisk run //core:niconeon-core -- --stdio
 ```
 
-## Core テスト
-
-```bash
-cd core
-cargo test
-```
-
-## UI のビルド（例）
-
-```bash
-cd app-ui
-cmake -S . -B build
-cmake --build build
-```
+UI は `just run` で、Bazel が生成した `niconeon-ui` と `niconeon-core` を組み合わせて起動します。
 
 ## CI
 
 GitHub Actions で以下を実行します。
 
-- `core-test`（Rust core のテスト）
-- `ui-build-linux`（Linux で UI リリースビルド）
-- `ui-unit-linux`（Linux で UI unit test）
-- `ui-e2e-linux-best-effort`（Linux + Xvfb で UI E2E テスト）
-- `ui-build-windows`（Windows/MSYS2 で UI リリースビルド）
+- `core-test`（Bazel による Rust core テスト）
+- `ui-build-linux`（Bazel による Linux UI リリースビルド）
+- `ui-unit-linux`（Bazel による Linux UI unit test）
+- `ui-e2e-linux-best-effort`（Bazel + Xvfb による UI E2E テスト）
+- `ui-build-windows`（Bazel + Windows/MSYS2 による UI リリースビルド）
 
 `main` への PR と `main` への push で実行され、`main` マージ時は必須チェックとして扱います。
 `main` への push では、加えて release-ready artifact を事前生成し、以下を workflow artifact として 14 日保持します。

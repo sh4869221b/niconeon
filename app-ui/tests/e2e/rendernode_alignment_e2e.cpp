@@ -220,4 +220,8 @@ Item {
 
 QTEST_MAIN(RenderNodeAlignmentE2E)
 
+#if defined(NICONEON_BAZEL_BUILD)
+#include "tests/e2e/rendernode_alignment_e2e.moc.h"
+#else
 #include "rendernode_alignment_e2e.moc"
+#endif

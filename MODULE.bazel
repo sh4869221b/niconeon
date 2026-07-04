@@ -1,0 +1,28 @@
+module(
+    name = "niconeon",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "rules_rust", version = "0.71.3")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+)
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+)
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//core:Cargo.lock",
+    manifests = ["//core:Cargo.toml"],
+)
+use_repo(crate, "crates")
+
+system_deps = use_extension("//tools/bazel:system_deps.bzl", "system_deps")
+use_repo(system_deps, "niconeon_system_deps")

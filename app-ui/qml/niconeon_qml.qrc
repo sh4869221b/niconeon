@@ -1,0 +1,20 @@
+<RCC>
+  <qresource prefix="/qt/qml/Niconeon">
+    <file alias="qmldir">qmldir</file>
+    <file alias="Main.qml">Main.qml</file>
+    <file alias="theme/AppTheme.qml">theme/AppTheme.qml</file>
+    <file alias="components/AboutDialog.qml">components/AboutDialog.qml</file>
+    <file alias="components/AppButton.qml">components/AppButton.qml</file>
+    <file alias="components/AppDialog.qml">components/AppDialog.qml</file>
+    <file alias="components/AppTabButton.qml">components/AppTabButton.qml</file>
+    <file alias="components/AppTextArea.qml">components/AppTextArea.qml</file>
+    <file alias="components/AppTextField.qml">components/AppTextField.qml</file>
+    <file alias="components/DanmakuOverlay.qml">components/DanmakuOverlay.qml</file>
+    <file alias="components/FilterDialog.qml">components/FilterDialog.qml</file>
+    <file alias="components/FontSizeDialog.qml">components/FontSizeDialog.qml</file>
+    <file alias="components/NgDropZone.qml">components/NgDropZone.qml</file>
+    <file alias="components/PlaybackSpeedDialog.qml">components/PlaybackSpeedDialog.qml</file>
+    <file alias="components/SettingsDialog.qml">components/SettingsDialog.qml</file>
+    <file alias="components/Toast.qml">components/Toast.qml</file>
+  </qresource>
+</RCC>

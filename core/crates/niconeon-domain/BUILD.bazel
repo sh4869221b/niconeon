@@ -1,0 +1,24 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//tools/bazel:rust_defs.bzl", "RUST_2021")
+
+rust_library(
+    name = "niconeon-domain",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "niconeon_domain",
+    crate_root = "src/lib.rs",
+    edition = RUST_2021,
+    visibility = ["//core:__subpackages__"],
+    deps = [
+        "@crates//:chrono",
+        "@crates//:serde",
+    ],
+)
+
+rust_test(
+    name = "unit_test",
+    crate = ":niconeon-domain",
+    deps = [
+        "@crates//:chrono",
+        "@crates//:serde",
+    ],
+)

@@ -107,4 +107,8 @@ void DanmakuSpriteCacheTest::clearKeepsSpriteIdsMonotonic() {
 
 QTEST_MAIN(DanmakuSpriteCacheTest)
 
+#if defined(NICONEON_BAZEL_BUILD)
+#include "tests/unit/danmaku_sprite_cache_test.moc.h"
+#else
 #include "danmaku_sprite_cache_test.moc"
+#endif
