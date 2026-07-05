@@ -216,7 +216,14 @@ jobs:
       - name: Export Bazelisk path for MSYS2
         shell: pwsh
         run: |
-          $bazelisk = (Get-Command bazelisk).Source
+          $bazelisk = (Get-Command bazelisk.exe -ErrorAction SilentlyContinue).Source
+          if (-not $bazelisk) {
+            $bazelisk = Get-ChildItem -Path "$env:RUNNER_TOOL_CACHE\bazelisk" -Recurse -Filter bazelisk*.exe |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $bazelisk) {
+            throw "bazelisk.exe was not found"
+          }
           "BAZELISK_WINDOWS_PATH=$bazelisk" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Setup MSYS2 (Qt6 + mpv)
