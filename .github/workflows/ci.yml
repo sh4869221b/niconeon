@@ -213,6 +213,12 @@ jobs:
       - name: Setup Bazelisk
         uses: bazelbuild/setup-bazelisk@v3
 
+      - name: Export Bazelisk path for MSYS2
+        shell: pwsh
+        run: |
+          $bazelisk = (Get-Command bazelisk).Source
+          "BAZELISK_WINDOWS_PATH=$bazelisk" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Setup MSYS2 (Qt6 + mpv)
         uses: msys2/setup-msys2@v2
         with:
@@ -243,16 +249,17 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/mingw64/bin:/usr/bin:${PATH}"
+          bazelisk_cmd="$(cygpath -u "${BAZELISK_WINDOWS_PATH}")"
           echo "MSYS2_ARG_CONV_EXCL=${MSYS2_ARG_CONV_EXCL}"
           echo "BAZEL_SH=${BAZEL_SH}"
           echo "BAZEL_COMPILER=${BAZEL_COMPILER}"
           echo "CC=${CC}"
           echo "CXX=${CXX}"
-          bazelisk cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=starlark --starlark:expr='providers(target)' @rules_cc//cc:current_cc_toolchain \
+          "${bazelisk_cmd}" cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=starlark --starlark:expr='providers(target)' @rules_cc//cc:current_cc_toolchain \
             | grep -E 'compiler = "mingw-gcc"|toolchain_id = "msys_x64_mingw"'
-          bazelisk build ${BAZEL_WINDOWS_UI_FLAGS} //app-ui:niconeon-ui
+          "${bazelisk_cmd}" build ${BAZEL_WINDOWS_UI_FLAGS} //app-ui:niconeon-ui
           mkdir -p dist/bazel-windows-ui
-          ui_bin="$(bazelisk cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
+          ui_bin="$("${bazelisk_cmd}" cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
           test -n "${ui_bin}"
           cp "${ui_bin}" dist/bazel-windows-ui/niconeon-ui.exe
 
