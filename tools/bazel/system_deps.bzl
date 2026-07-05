@@ -178,11 +178,13 @@ def _dirname(path):
         return "."
     return "/".join(parts[:-1])
 
-def _render_tool_wrapper(path, extra_args = [], path_dirs = []):
+def _render_tool_wrapper(path, extra_args = [], path_dirs = [], native_path_dirs = []):
     path_exports = "".join([
         "export PATH={}:\"$PATH\"\n".format(_quote_shell(path_dir))
         for path_dir in path_dirs
     ])
+    if native_path_dirs:
+        path_exports += "export PATH={}:\"$PATH\"\n".format(_quote_shell("{};".format(";".join(native_path_dirs))))
     command = [_quote_shell(str(path))] + [_quote_shell(arg) for arg in extra_args]
     return "#!/usr/bin/env bash\n{}exec {} \"$@\"\n".format(path_exports, " ".join(command))
 
@@ -235,16 +237,43 @@ stderr:
         ))
     return result.stdout.strip()
 
+def _native_path_dir(repository_ctx, path):
+    normalized = path.replace("\\", "/")
+    if not _is_windows(repository_ctx) or normalized.find(":/") != -1:
+        return normalized
+    if not normalized.startswith("/"):
+        return normalized
+
+    cygpath = repository_ctx.which("cygpath")
+    if not cygpath:
+        fail("Unable to locate cygpath while converting MSYS2 path `{}` for a Windows PATH entry.".format(path))
+
+    result = repository_ctx.execute([cygpath, "-m", normalized], quiet = True)
+    if result.return_code != 0 or not result.stdout.strip():
+        fail("""Unable to convert MSYS2 path `{path}` to a Windows PATH entry with cygpath.
+
+Exit code: {exit_code}
+stderr:
+{stderr}""".format(
+            path = path,
+            exit_code = result.return_code,
+            stderr = result.stderr.strip(),
+        ))
+    return result.stdout.strip()
+
 def _qt_tool_path_dirs(repository_ctx, tool_path):
     if not _is_windows(repository_ctx):
-        return []
+        return struct(shell = [], native = [])
 
     path = str(tool_path).replace("\\", "/")
     dirs = [_dirname(path)]
     parts = path.split("/share/qt6/bin/")
     if len(parts) == 2:
         dirs.append("{}/bin".format(parts[0]))
-    return _unique([_shell_path_dir(repository_ctx, path_dir) for path_dir in dirs])
+    return struct(
+        shell = _unique([_shell_path_dir(repository_ctx, path_dir) for path_dir in dirs]),
+        native = _unique([_native_path_dir(repository_ctx, path_dir) for path_dir in dirs]),
+    )
 
 def _system_deps_repository_impl(repository_ctx):
     if repository_ctx.os.name.lower().find("linux") == -1 and repository_ctx.os.name.lower().find("windows") == -1:
@@ -279,8 +308,10 @@ def _system_deps_repository_impl(repository_ctx):
     repository_ctx.file("runtime_paths.txt", "\n".join(runtime_dirs) + "\n")
     moc_tool = _qt_tool(repository_ctx, "moc")
     rcc_tool = _qt_tool(repository_ctx, "rcc")
-    repository_ctx.file("moc", _render_tool_wrapper(moc_tool, _unique(moc_flags), _qt_tool_path_dirs(repository_ctx, moc_tool)), executable = True)
-    repository_ctx.file("rcc", _render_tool_wrapper(rcc_tool, path_dirs = _qt_tool_path_dirs(repository_ctx, rcc_tool)), executable = True)
+    moc_path_dirs = _qt_tool_path_dirs(repository_ctx, moc_tool)
+    rcc_path_dirs = _qt_tool_path_dirs(repository_ctx, rcc_tool)
+    repository_ctx.file("moc", _render_tool_wrapper(moc_tool, _unique(moc_flags), moc_path_dirs.shell, moc_path_dirs.native), executable = True)
+    repository_ctx.file("rcc", _render_tool_wrapper(rcc_tool, path_dirs = rcc_path_dirs.shell, native_path_dirs = rcc_path_dirs.native), executable = True)
     repository_ctx.file("BUILD.bazel", """load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
