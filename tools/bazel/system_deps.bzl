@@ -61,10 +61,24 @@ def _qt_tool(repository_ctx, tool_name):
                 if _repository_path_exists(repository_ctx, candidate):
                     return candidate
 
-    for candidate in ["{}-qt6".format(tool_name), tool_name]:
+    for candidate in [
+        "{}-qt6".format(tool_name),
+        "{}-qt6.exe".format(tool_name),
+        tool_name,
+        "{}.exe".format(tool_name),
+    ]:
         path = repository_ctx.which(candidate)
         if path:
             return path
+
+    for candidate in [
+        "/mingw64/bin/{}".format(tool_name),
+        "/mingw64/bin/{}.exe".format(tool_name),
+        "/mingw64/share/qt6/bin/{}".format(tool_name),
+        "/mingw64/share/qt6/bin/{}.exe".format(tool_name),
+    ]:
+        if _repository_path_exists(repository_ctx, candidate):
+            return candidate
 
     fail("""Unable to locate Qt tool `{tool_name}` while detecting Niconeon UI dependencies.
 
