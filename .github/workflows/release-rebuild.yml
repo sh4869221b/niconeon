@@ -291,8 +291,6 @@ jobs:
         env:
           MSYS2_ARG_CONV_EXCL: "*"
           BAZEL_SH: C:/msys64/usr/bin/bash.exe
-          BAZEL_VC: ""
-          BAZEL_VS: ""
           BAZEL_COMPILER: mingw-gcc
           CC: x86_64-w64-mingw32-gcc
           CXX: x86_64-w64-mingw32-g++
