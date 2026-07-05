@@ -172,6 +172,12 @@ def _render_cc_library(dep, include_aliases):
 def _quote_shell(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
+def _dirname(path):
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) <= 1:
+        return "."
+    return "/".join(parts[:-1])
+
 def _render_tool_wrapper(path, extra_args = [], path_dirs = []):
     path_exports = "".join([
         "export PATH={}:\"$PATH\"\n".format(_quote_shell(path_dir))
@@ -207,10 +213,38 @@ stderr:
 def _repository_path_exists(repository_ctx, path):
     return repository_ctx.path(_repository_symlink_target(repository_ctx, path)).exists
 
-def _qt_tool_path_dirs(repository_ctx):
+def _shell_path_dir(repository_ctx, path):
+    normalized = path.replace("\\", "/")
+    if not _is_windows(repository_ctx) or normalized.find(":/") == -1:
+        return normalized
+
+    cygpath = repository_ctx.which("cygpath")
+    if not cygpath:
+        fail("Unable to locate cygpath while converting Windows path `{}` for a MSYS2 PATH entry.".format(path))
+
+    result = repository_ctx.execute([cygpath, "-u", normalized], quiet = True)
+    if result.return_code != 0 or not result.stdout.strip():
+        fail("""Unable to convert Windows path `{path}` to a MSYS2 PATH entry with cygpath.
+
+Exit code: {exit_code}
+stderr:
+{stderr}""".format(
+            path = path,
+            exit_code = result.return_code,
+            stderr = result.stderr.strip(),
+        ))
+    return result.stdout.strip()
+
+def _qt_tool_path_dirs(repository_ctx, tool_path):
     if not _is_windows(repository_ctx):
         return []
-    return ["/mingw64/bin"]
+
+    path = str(tool_path).replace("\\", "/")
+    dirs = [_dirname(path)]
+    parts = path.split("/share/qt6/bin/")
+    if len(parts) == 2:
+        dirs.append("{}/bin".format(parts[0]))
+    return _unique([_shell_path_dir(repository_ctx, path_dir) for path_dir in dirs])
 
 def _system_deps_repository_impl(repository_ctx):
     if repository_ctx.os.name.lower().find("linux") == -1 and repository_ctx.os.name.lower().find("windows") == -1:
@@ -243,9 +277,10 @@ def _system_deps_repository_impl(repository_ctx):
         moc_flags.extend(["-D{}".format(define) for define in dep.defines])
 
     repository_ctx.file("runtime_paths.txt", "\n".join(runtime_dirs) + "\n")
-    qt_tool_path_dirs = _qt_tool_path_dirs(repository_ctx)
-    repository_ctx.file("moc", _render_tool_wrapper(_qt_tool(repository_ctx, "moc"), _unique(moc_flags), qt_tool_path_dirs), executable = True)
-    repository_ctx.file("rcc", _render_tool_wrapper(_qt_tool(repository_ctx, "rcc"), path_dirs = qt_tool_path_dirs), executable = True)
+    moc_tool = _qt_tool(repository_ctx, "moc")
+    rcc_tool = _qt_tool(repository_ctx, "rcc")
+    repository_ctx.file("moc", _render_tool_wrapper(moc_tool, _unique(moc_flags), _qt_tool_path_dirs(repository_ctx, moc_tool)), executable = True)
+    repository_ctx.file("rcc", _render_tool_wrapper(rcc_tool, path_dirs = _qt_tool_path_dirs(repository_ctx, rcc_tool)), executable = True)
     repository_ctx.file("BUILD.bazel", """load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
