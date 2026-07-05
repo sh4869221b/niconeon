@@ -58,7 +58,7 @@ def _qt_tool(repository_ctx, tool_name):
                 "{}/libexec/{}".format(base, tool_name),
             ]
             for candidate in candidates:
-                if repository_ctx.path(candidate).exists:
+                if _repository_path_exists(repository_ctx, candidate):
                     return candidate
 
     for candidate in ["{}-qt6".format(tool_name), tool_name]:
@@ -180,6 +180,9 @@ stderr:
             stderr = result.stderr.strip(),
         ))
     return result.stdout.strip()
+
+def _repository_path_exists(repository_ctx, path):
+    return repository_ctx.path(_repository_symlink_target(repository_ctx, path)).exists
 
 def _system_deps_repository_impl(repository_ctx):
     if repository_ctx.os.name.lower().find("linux") == -1 and repository_ctx.os.name.lower().find("windows") == -1:

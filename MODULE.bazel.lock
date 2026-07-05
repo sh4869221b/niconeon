@@ -198,7 +198,7 @@
   "moduleExtensions": {
     "//tools/bazel:system_deps.bzl%system_deps": {
       "general": {
-        "bzlTransitiveDigest": "1SxfXQv/iO1DJA/9lhmbSLDKhyxsVPtxA03S/ot17jE=",
+        "bzlTransitiveDigest": "cHzT1QWGZfAHbp8FEO6A4BFjXLExXi5RncG5FnhYa7E=",
         "usagesDigest": "PJCCWzS+y4z1lqEIDF/CSaZ068sVEXub4xRTpwAwMIw=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
