@@ -239,16 +239,16 @@ stderr:
 
 def _native_path_dir(repository_ctx, path):
     normalized = path.replace("\\", "/")
-    if not _is_windows(repository_ctx) or normalized.find(":/") != -1:
+    if not _is_windows(repository_ctx):
         return normalized
-    if not normalized.startswith("/"):
+    if normalized.find(":/") == -1 and not normalized.startswith("/"):
         return normalized
 
     cygpath = repository_ctx.which("cygpath")
     if not cygpath:
         fail("Unable to locate cygpath while converting MSYS2 path `{}` for a Windows PATH entry.".format(path))
 
-    result = repository_ctx.execute([cygpath, "-m", normalized], quiet = True)
+    result = repository_ctx.execute([cygpath, "-w", normalized], quiet = True)
     if result.return_code != 0 or not result.stdout.strip():
         fail("""Unable to convert MSYS2 path `{path}` to a Windows PATH entry with cygpath.
 
