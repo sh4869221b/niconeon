@@ -172,9 +172,13 @@ def _render_cc_library(dep, include_aliases):
 def _quote_shell(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
-def _render_tool_wrapper(path, extra_args = []):
+def _render_tool_wrapper(path, extra_args = [], path_dirs = []):
+    path_exports = "".join([
+        "export PATH={}:\"$PATH\"\n".format(_quote_shell(path_dir))
+        for path_dir in path_dirs
+    ])
     command = [_quote_shell(str(path))] + [_quote_shell(arg) for arg in extra_args]
-    return "#!/usr/bin/env bash\nexec {} \"$@\"\n".format(" ".join(command))
+    return "#!/usr/bin/env bash\n{}exec {} \"$@\"\n".format(path_exports, " ".join(command))
 
 def _is_windows(repository_ctx):
     return repository_ctx.os.name.lower().find("windows") != -1
@@ -202,6 +206,11 @@ stderr:
 
 def _repository_path_exists(repository_ctx, path):
     return repository_ctx.path(_repository_symlink_target(repository_ctx, path)).exists
+
+def _qt_tool_path_dirs(repository_ctx):
+    if not _is_windows(repository_ctx):
+        return []
+    return ["/mingw64/bin"]
 
 def _system_deps_repository_impl(repository_ctx):
     if repository_ctx.os.name.lower().find("linux") == -1 and repository_ctx.os.name.lower().find("windows") == -1:
@@ -234,8 +243,9 @@ def _system_deps_repository_impl(repository_ctx):
         moc_flags.extend(["-D{}".format(define) for define in dep.defines])
 
     repository_ctx.file("runtime_paths.txt", "\n".join(runtime_dirs) + "\n")
-    repository_ctx.file("moc", _render_tool_wrapper(_qt_tool(repository_ctx, "moc"), _unique(moc_flags)), executable = True)
-    repository_ctx.file("rcc", _render_tool_wrapper(_qt_tool(repository_ctx, "rcc")), executable = True)
+    qt_tool_path_dirs = _qt_tool_path_dirs(repository_ctx)
+    repository_ctx.file("moc", _render_tool_wrapper(_qt_tool(repository_ctx, "moc"), _unique(moc_flags), qt_tool_path_dirs), executable = True)
+    repository_ctx.file("rcc", _render_tool_wrapper(_qt_tool(repository_ctx, "rcc"), path_dirs = qt_tool_path_dirs), executable = True)
     repository_ctx.file("BUILD.bazel", """load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
