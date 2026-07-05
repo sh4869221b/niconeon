@@ -306,8 +306,7 @@ jobs:
           echo "BAZEL_COMPILER=${BAZEL_COMPILER}"
           echo "CC=${CC}"
           echo "CXX=${CXX}"
-          "${bazelisk_cmd}" cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=starlark --starlark:expr='providers(target)' @rules_cc//cc:current_cc_toolchain \
-            | grep -E 'compiler = "mingw-gcc"|toolchain_id = "msys_x64_mingw"'
+          "${bazelisk_cmd}" cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=label @rules_cc//cc:current_cc_toolchain
           "${bazelisk_cmd}" build ${BAZEL_WINDOWS_UI_FLAGS} //app-ui:niconeon-ui
           mkdir -p dist/bazel-windows-ui
           ui_bin="$("${bazelisk_cmd}" cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
