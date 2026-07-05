@@ -157,6 +157,30 @@ def _render_tool_wrapper(path, extra_args = []):
     command = [_quote_shell(str(path))] + [_quote_shell(arg) for arg in extra_args]
     return "#!/usr/bin/env bash\nexec {} \"$@\"\n".format(" ".join(command))
 
+def _is_windows(repository_ctx):
+    return repository_ctx.os.name.lower().find("windows") != -1
+
+def _repository_symlink_target(repository_ctx, path):
+    if not _is_windows(repository_ctx) or not path.startswith("/"):
+        return path
+
+    cygpath = repository_ctx.which("cygpath")
+    if not cygpath:
+        fail("Unable to locate cygpath while converting MSYS2 path `{}` for Bazel on Windows.".format(path))
+
+    result = repository_ctx.execute([cygpath, "-m", path], quiet = True)
+    if result.return_code != 0 or not result.stdout.strip():
+        fail("""Unable to convert MSYS2 path `{path}` to a Windows path with cygpath.
+
+Exit code: {exit_code}
+stderr:
+{stderr}""".format(
+            path = path,
+            exit_code = result.return_code,
+            stderr = result.stderr.strip(),
+        ))
+    return result.stdout.strip()
+
 def _system_deps_repository_impl(repository_ctx):
     if repository_ctx.os.name.lower().find("linux") == -1 and repository_ctx.os.name.lower().find("windows") == -1:
         fail("Niconeon Bazel Qt/libmpv dependency detection supports Linux and MSYS2 Windows only; detected platform: {}".format(repository_ctx.os.name))
@@ -179,7 +203,7 @@ def _system_deps_repository_impl(repository_ctx):
     include_aliases = {}
     for index, include in enumerate(_unique([include for dep in detected for include in dep.includes])):
         alias = "include/{}".format(index)
-        repository_ctx.symlink(include, alias)
+        repository_ctx.symlink(_repository_symlink_target(repository_ctx, include), alias)
         include_aliases[include] = alias
 
     moc_flags = []
