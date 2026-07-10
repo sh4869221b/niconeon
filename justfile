@@ -31,12 +31,14 @@ ui-e2e:
     set -euo pipefail
     if [ -n "${DISPLAY:-}" ]; then
       {{bazel}} test \
+        --test_output=errors \
         --test_env=DISPLAY \
         --test_env=LIBGL_ALWAYS_SOFTWARE \
         --test_env=MESA_LOADER_DRIVER_OVERRIDE \
         //app-ui:rendernode_alignment_e2e
     elif [ -n "${WAYLAND_DISPLAY:-}" ]; then
       {{bazel}} test \
+        --test_output=errors \
         --test_env=WAYLAND_DISPLAY \
         --test_env=LIBGL_ALWAYS_SOFTWARE \
         --test_env=MESA_LOADER_DRIVER_OVERRIDE \
@@ -46,6 +48,7 @@ ui-e2e:
         LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" \
         MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-llvmpipe}" \
         {{bazel}} test \
+          --test_output=errors \
           --test_env=DISPLAY \
           --test_env=LIBGL_ALWAYS_SOFTWARE \
           --test_env=MESA_LOADER_DRIVER_OVERRIDE \
