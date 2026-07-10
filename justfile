@@ -33,6 +33,7 @@ ui-e2e:
       {{bazel}} test \
         --test_output=errors \
         --test_env=DISPLAY \
+        --test_env=GITHUB_ACTIONS \
         --test_env=LIBGL_ALWAYS_SOFTWARE \
         --test_env=MESA_LOADER_DRIVER_OVERRIDE \
         //app-ui:rendernode_alignment_e2e
@@ -40,6 +41,7 @@ ui-e2e:
       {{bazel}} test \
         --test_output=errors \
         --test_env=WAYLAND_DISPLAY \
+        --test_env=GITHUB_ACTIONS \
         --test_env=LIBGL_ALWAYS_SOFTWARE \
         --test_env=MESA_LOADER_DRIVER_OVERRIDE \
         //app-ui:rendernode_alignment_e2e
@@ -47,13 +49,12 @@ ui-e2e:
       xvfb-run -a -s "-screen 0 1280x1024x24 -ac" env \
         LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" \
         MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-llvmpipe}" \
-        NICONEON_DANMAKU_RENDERER="${NICONEON_DANMAKU_RENDERER:-frame_image}" \
         {{bazel}} test \
           --test_output=errors \
           --test_env=DISPLAY \
+          --test_env=GITHUB_ACTIONS \
           --test_env=LIBGL_ALWAYS_SOFTWARE \
           --test_env=MESA_LOADER_DRIVER_OVERRIDE \
-          --test_env=NICONEON_DANMAKU_RENDERER \
           //app-ui:rendernode_alignment_e2e
     else
       echo "DISPLAY/WAYLAND_DISPLAY is not set and xvfb-run is unavailable; install xvfb-run or run from a desktop session." >&2
