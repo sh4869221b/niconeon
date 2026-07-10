@@ -240,10 +240,10 @@ jobs:
         shell: msys2 {0}
         env:
           MSYS2_ARG_CONV_EXCL: "*"
-          BAZEL_SH: C:/msys64/usr/bin/bash.exe
         run: |
           set -euo pipefail
           export PATH="/mingw64/bin:/usr/bin:${PATH}"
+          export BAZEL_SH="$(cygpath -m /usr/bin/bash.exe)"
           bazelisk_cmd="$(cygpath -u "${BAZELISK_WINDOWS_PATH}")"
           echo "MSYS2_ARG_CONV_EXCL=${MSYS2_ARG_CONV_EXCL}"
           echo "BAZEL_SH=${BAZEL_SH}"
