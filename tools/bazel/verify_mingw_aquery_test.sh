@@ -19,4 +19,4 @@ if printf '%s\n' 'action without a compiler command line' | "${validator}"; then
   exit 1
 fi
 
-printf '%s\n' 'Command Line: [D:/a/_temp/msys64/mingw64/bin/gcc, -c, app.cpp]' | "${validator}"
+printf '%s\n' 'Command Line: [D:/a/_temp/msys64/mingw64/bin/gcc.exe, -c, app.cpp]' | "${validator}"

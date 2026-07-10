@@ -2,6 +2,7 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 exports_files([
     "qt_defs.bzl",
+    "rules_cc_windows_mingw_exe.patch",
     "rust_defs.bzl",
     "system_deps.bzl",
     "verify_mingw_aquery.sh",
