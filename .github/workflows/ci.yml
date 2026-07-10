@@ -241,23 +241,17 @@ jobs:
         env:
           MSYS2_ARG_CONV_EXCL: "*"
           BAZEL_SH: C:/msys64/usr/bin/bash.exe
-          BAZEL_COMPILER: mingw-gcc
-          CC: x86_64-w64-mingw32-gcc
-          CXX: x86_64-w64-mingw32-g++
-          BAZEL_WINDOWS_UI_FLAGS: --compiler=mingw-gcc --features=compiler_param_file
         run: |
           set -euo pipefail
           export PATH="/mingw64/bin:/usr/bin:${PATH}"
           bazelisk_cmd="$(cygpath -u "${BAZELISK_WINDOWS_PATH}")"
           echo "MSYS2_ARG_CONV_EXCL=${MSYS2_ARG_CONV_EXCL}"
           echo "BAZEL_SH=${BAZEL_SH}"
-          echo "BAZEL_COMPILER=${BAZEL_COMPILER}"
-          echo "CC=${CC}"
-          echo "CXX=${CXX}"
-          "${bazelisk_cmd}" cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=label @rules_cc//cc:current_cc_toolchain
-          "${bazelisk_cmd}" build ${BAZEL_WINDOWS_UI_FLAGS} //app-ui:niconeon-ui
+          "${bazelisk_cmd}" aquery --config=windows_mingw 'mnemonic("CppCompile", //app-ui:niconeon-ui)' --include_commandline |
+            tools/bazel/verify_mingw_aquery.sh
+          "${bazelisk_cmd}" build --config=windows_mingw //app-ui:niconeon-ui
           mkdir -p dist/bazel-windows-ui
-          ui_bin="$("${bazelisk_cmd}" cquery ${BAZEL_WINDOWS_UI_FLAGS} --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
+          ui_bin="$("${bazelisk_cmd}" cquery --config=windows_mingw --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
           test -n "${ui_bin}"
           cp "${ui_bin}" dist/bazel-windows-ui/niconeon-ui.exe
 
