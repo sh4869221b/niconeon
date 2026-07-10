@@ -42,11 +42,14 @@ ui-e2e:
         --test_env=MESA_LOADER_DRIVER_OVERRIDE \
         //app-ui:rendernode_alignment_e2e
     elif command -v xvfb-run >/dev/null 2>&1; then
-      xvfb-run -a {{bazel}} test \
-        --test_env=DISPLAY \
-        --test_env=LIBGL_ALWAYS_SOFTWARE \
-        --test_env=MESA_LOADER_DRIVER_OVERRIDE \
-        //app-ui:rendernode_alignment_e2e
+      xvfb-run -a env \
+        LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" \
+        MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-llvmpipe}" \
+        {{bazel}} test \
+          --test_env=DISPLAY \
+          --test_env=LIBGL_ALWAYS_SOFTWARE \
+          --test_env=MESA_LOADER_DRIVER_OVERRIDE \
+          //app-ui:rendernode_alignment_e2e
     else
       echo "DISPLAY/WAYLAND_DISPLAY is not set and xvfb-run is unavailable; install xvfb-run or run from a desktop session." >&2
       exit 1
