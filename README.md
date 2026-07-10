@@ -111,6 +111,8 @@ GitHub Actions で以下を実行します。
 - `ui-build-windows`（Bazel + Windows/MSYS2 による UI リリースビルド）
 
 `main` への PR と `main` への push で実行され、`main` マージ時は必須チェックとして扱います。
+Bazel job は Bazelisk download、外部 repository、disk action cache を Linux/Windows 間で
+OS ごとに再利用し、license job は `cargo-license` と Cargo registry を再利用します。
 `main` への push では、加えて release-ready artifact を事前生成し、以下を workflow artifact として 14 日保持します。
 
 - `release-linux-binaries`

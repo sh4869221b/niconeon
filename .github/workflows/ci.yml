@@ -28,6 +28,16 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo-license
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-license
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: cargo-license-${{ runner.os }}-v1
+          restore-keys: cargo-license-${{ runner.os }}-
+
       - name: Install cargo-license
         run: cargo install --locked cargo-license
 
@@ -50,8 +60,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Bazelisk
-        uses: bazelbuild/setup-bazelisk@v3
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: core
 
       - name: Run core tests
         run: bazelisk test //core/...
@@ -75,8 +89,12 @@ jobs:
             qt6-declarative-dev \
             qt6-declarative-dev-tools
 
-      - name: Setup Bazelisk
-        uses: bazelbuild/setup-bazelisk@v3
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: linux
 
       - name: Build UI (Linux)
         run: bazelisk build //app-ui:niconeon-ui
@@ -165,8 +183,12 @@ jobs:
             qt6-declarative-dev \
             qt6-declarative-dev-tools
 
-      - name: Setup Bazelisk
-        uses: bazelbuild/setup-bazelisk@v3
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: ui-unit-linux
 
       - name: Run UI unit tests (Linux)
         run: bazelisk test //app-ui:ui_unit_tests
@@ -192,8 +214,12 @@ jobs:
             qml6-module-qtqml-workerscript \
             xvfb
 
-      - name: Setup Bazelisk
-        uses: bazelbuild/setup-bazelisk@v3
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: ui-e2e-linux
 
       - name: Run UI E2E (Linux, best effort)
         run: |
@@ -216,8 +242,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Bazelisk
-        uses: bazelbuild/setup-bazelisk@v3
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: windows
 
       - name: Export Bazelisk path for MSYS2
         shell: pwsh

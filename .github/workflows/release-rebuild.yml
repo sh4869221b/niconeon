@@ -74,6 +74,16 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo-license
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-license
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: cargo-license-${{ runner.os }}-v1
+          restore-keys: cargo-license-${{ runner.os }}-
+
       - name: Install cargo-license
         run: cargo install --locked cargo-license
 
@@ -120,8 +130,12 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
-      - name: Setup Bazelisk
-        uses: bazelbuild/setup-bazelisk@v3
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: linux
 
       - name: Install Linux build dependencies
         run: |
@@ -176,8 +190,12 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
-      - name: Setup Bazelisk
-        uses: bazelbuild/setup-bazelisk@v3
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: linux
 
       - name: Install Linux build dependencies
         run: |
@@ -234,8 +252,12 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
-      - name: Setup Bazelisk
-        uses: bazelbuild/setup-bazelisk@v3
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: windows
 
       - name: Export Bazelisk path for MSYS2
         shell: pwsh
