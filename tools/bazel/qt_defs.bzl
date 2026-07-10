@@ -9,13 +9,13 @@ def qt_moc_srcs(name, hdrs, extra_includes = {}):
     for hdr in hdrs:
         out = "{}_{}.moc.cpp".format(name, _label_safe_name(hdr))
         includes = extra_includes.get(hdr, [])
-        include_args = " ".join(["-b $(location {})".format(include) for include in includes])
+        include_args = " ".join(["-b $(rootpath {})".format(include) for include in includes])
         native.genrule(
             name = "{}_moc_{}".format(name, _label_safe_name(hdr)),
             srcs = [hdr] + includes,
             outs = [out],
             tools = ["@niconeon_system_deps//:moc"],
-            cmd = "$(location @niconeon_system_deps//:moc) {} -o $@ $(location {})".format(include_args, hdr),
+            cmd = "$(location @niconeon_system_deps//:moc) {} -f $(rootpath {}) -o $@ $(location {})".format(include_args, hdr, hdr),
         )
         outs.append(out)
     return outs
