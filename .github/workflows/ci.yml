@@ -91,15 +91,15 @@ jobs:
 
       - name: Build release binaries with Bazel
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: bazelisk build //core:niconeon-core //app-ui:niconeon-ui
+        run: bazelisk build --config=release //core:niconeon-core //app-ui:niconeon-ui
 
       - name: Stage Bazel release binaries
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
           mkdir -p dist/bazel-linux-ui dist/bazel-linux-core
-          ui_bin="$(bazelisk cquery --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui$' | tail -n1)"
-          core_bin="$(bazelisk cquery --output=files //core:niconeon-core | grep -E '(^|/)niconeon-core$' | tail -n1)"
+          ui_bin="$(bazelisk cquery --config=release --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui$' | tail -n1)"
+          core_bin="$(bazelisk cquery --config=release --output=files //core:niconeon-core | grep -E '(^|/)niconeon-core$' | tail -n1)"
           test -n "${ui_bin}"
           test -n "${core_bin}"
           cp "${ui_bin}" dist/bazel-linux-ui/niconeon-ui
@@ -200,7 +200,11 @@ jobs:
           xvfb-run -a env \
             LIBGL_ALWAYS_SOFTWARE=1 \
             MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
-            bazelisk test //app-ui:rendernode_alignment_e2e
+            bazelisk test \
+              --test_env=DISPLAY \
+              --test_env=LIBGL_ALWAYS_SOFTWARE \
+              --test_env=MESA_LOADER_DRIVER_OVERRIDE \
+              //app-ui:rendernode_alignment_e2e
 
   ui-build-windows:
     name: ui-build-windows
@@ -247,11 +251,11 @@ jobs:
           bazelisk_cmd="$(cygpath -u "${BAZELISK_WINDOWS_PATH}")"
           echo "MSYS2_ARG_CONV_EXCL=${MSYS2_ARG_CONV_EXCL}"
           echo "BAZEL_SH=${BAZEL_SH}"
-          "${bazelisk_cmd}" aquery --config=windows_mingw 'mnemonic("CppCompile", //app-ui:niconeon-ui)' --include_commandline |
+          "${bazelisk_cmd}" aquery --config=windows_mingw --config=release 'mnemonic("CppCompile", //app-ui:niconeon-ui)' --include_commandline |
             tools/bazel/verify_mingw_aquery.sh
-          "${bazelisk_cmd}" build --config=windows_mingw //app-ui:niconeon-ui
+          "${bazelisk_cmd}" build --config=windows_mingw --config=release //app-ui:niconeon-ui
           mkdir -p dist/bazel-windows-ui
-          ui_bin="$("${bazelisk_cmd}" cquery --config=windows_mingw --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
+          ui_bin="$("${bazelisk_cmd}" cquery --config=windows_mingw --config=release --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
           test -n "${ui_bin}"
           cp "${ui_bin}" dist/bazel-windows-ui/niconeon-ui.exe
 
@@ -263,8 +267,8 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
-          bazelisk build //core:niconeon-core
-          $coreBin = bazelisk cquery --output=files //core:niconeon-core |
+          bazelisk build --config=release //core:niconeon-core
+          $coreBin = bazelisk cquery --config=release --output=files //core:niconeon-core |
             Where-Object { $_ -match '(^|/|\\)niconeon-core\.exe$' } |
             Select-Object -Last 1
           if (-not $coreBin) {

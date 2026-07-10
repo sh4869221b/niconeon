@@ -136,14 +136,14 @@ jobs:
             zip
 
       - name: Build release binaries with Bazel
-        run: bazelisk build //core:niconeon-core //app-ui:niconeon-ui
+        run: bazelisk build --config=release //core:niconeon-core //app-ui:niconeon-ui
 
       - name: Stage Bazel release binaries
         run: |
           set -euo pipefail
           mkdir -p dist/bazel-linux-ui dist/bazel-linux-core
-          ui_bin="$(bazelisk cquery --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui$' | tail -n1)"
-          core_bin="$(bazelisk cquery --output=files //core:niconeon-core | grep -E '(^|/)niconeon-core$' | tail -n1)"
+          ui_bin="$(bazelisk cquery --config=release --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui$' | tail -n1)"
+          core_bin="$(bazelisk cquery --config=release --output=files //core:niconeon-core | grep -E '(^|/)niconeon-core$' | tail -n1)"
           test -n "${ui_bin}"
           test -n "${core_bin}"
           cp "${ui_bin}" dist/bazel-linux-ui/niconeon-ui
@@ -194,14 +194,14 @@ jobs:
             desktop-file-utils
 
       - name: Build release binaries with Bazel
-        run: bazelisk build //core:niconeon-core //app-ui:niconeon-ui
+        run: bazelisk build --config=release //core:niconeon-core //app-ui:niconeon-ui
 
       - name: Stage Bazel release binaries
         run: |
           set -euo pipefail
           mkdir -p dist/bazel-linux-ui dist/bazel-linux-core
-          ui_bin="$(bazelisk cquery --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui$' | tail -n1)"
-          core_bin="$(bazelisk cquery --output=files //core:niconeon-core | grep -E '(^|/)niconeon-core$' | tail -n1)"
+          ui_bin="$(bazelisk cquery --config=release --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui$' | tail -n1)"
+          core_bin="$(bazelisk cquery --config=release --output=files //core:niconeon-core | grep -E '(^|/)niconeon-core$' | tail -n1)"
           test -n "${ui_bin}"
           test -n "${core_bin}"
           cp "${ui_bin}" dist/bazel-linux-ui/niconeon-ui
@@ -252,8 +252,8 @@ jobs:
         run: |
           $start = Get-Date
           echo "::notice title=timing::package-windows core build started $($start.ToUniversalTime().ToString('o'))"
-          bazelisk build //core:niconeon-core
-          $coreBin = bazelisk cquery --output=files //core:niconeon-core |
+          bazelisk build --config=release //core:niconeon-core
+          $coreBin = bazelisk cquery --config=release --output=files //core:niconeon-core |
             Where-Object { $_ -match '(^|/|\\)niconeon-core\.exe$' } |
             Select-Object -Last 1
           if (-not $coreBin) {
@@ -299,11 +299,11 @@ jobs:
           echo "::notice title=timing::package-windows ui build started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "MSYS2_ARG_CONV_EXCL=${MSYS2_ARG_CONV_EXCL}"
           echo "BAZEL_SH=${BAZEL_SH}"
-          "${bazelisk_cmd}" aquery --config=windows_mingw 'mnemonic("CppCompile", //app-ui:niconeon-ui)' --include_commandline |
+          "${bazelisk_cmd}" aquery --config=windows_mingw --config=release 'mnemonic("CppCompile", //app-ui:niconeon-ui)' --include_commandline |
             tools/bazel/verify_mingw_aquery.sh
-          "${bazelisk_cmd}" build --config=windows_mingw //app-ui:niconeon-ui
+          "${bazelisk_cmd}" build --config=windows_mingw --config=release //app-ui:niconeon-ui
           mkdir -p dist/bazel-windows-ui
-          ui_bin="$("${bazelisk_cmd}" cquery --config=windows_mingw --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
+          ui_bin="$("${bazelisk_cmd}" cquery --config=windows_mingw --config=release --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
           test -n "${ui_bin}"
           cp "${ui_bin}" dist/bazel-windows-ui/niconeon-ui.exe
           end_epoch="$(date +%s)"

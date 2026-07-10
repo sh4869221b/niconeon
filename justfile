@@ -29,10 +29,12 @@ ui-test:
 ui-e2e:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
-      {{bazel}} test //app-ui:rendernode_alignment_e2e
+    if [ -n "${DISPLAY:-}" ]; then
+      {{bazel}} test --test_env=DISPLAY //app-ui:rendernode_alignment_e2e
+    elif [ -n "${WAYLAND_DISPLAY:-}" ]; then
+      {{bazel}} test --test_env=WAYLAND_DISPLAY //app-ui:rendernode_alignment_e2e
     elif command -v xvfb-run >/dev/null 2>&1; then
-      xvfb-run -a {{bazel}} test //app-ui:rendernode_alignment_e2e
+      xvfb-run -a {{bazel}} test --test_env=DISPLAY //app-ui:rendernode_alignment_e2e
     else
       echo "DISPLAY/WAYLAND_DISPLAY is not set and xvfb-run is unavailable; install xvfb-run or run from a desktop session." >&2
       exit 1
