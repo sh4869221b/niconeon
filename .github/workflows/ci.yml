@@ -197,7 +197,7 @@ jobs:
 
       - name: Run UI E2E (Linux, best effort)
         run: |
-          xvfb-run -a env \
+          xvfb-run -a -s "-screen 0 1280x1024x24 -ac" env \
             LIBGL_ALWAYS_SOFTWARE=1 \
             MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
             bazelisk test \

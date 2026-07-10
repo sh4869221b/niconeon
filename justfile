@@ -44,7 +44,7 @@ ui-e2e:
         --test_env=MESA_LOADER_DRIVER_OVERRIDE \
         //app-ui:rendernode_alignment_e2e
     elif command -v xvfb-run >/dev/null 2>&1; then
-      xvfb-run -a env \
+      xvfb-run -a -s "-screen 0 1280x1024x24 -ac" env \
         LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" \
         MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-llvmpipe}" \
         {{bazel}} test \
