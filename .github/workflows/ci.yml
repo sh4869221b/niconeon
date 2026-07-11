@@ -28,8 +28,33 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore cargo-license cache
+        id: cargo-license-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.local/share/niconeon/cargo-license
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: cargo-license-${{ runner.os }}-0.7.0-v1
+          restore-keys: cargo-license-${{ runner.os }}-
+
       - name: Install cargo-license
-        run: cargo install --locked cargo-license
+        if: steps.cargo-license-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --version 0.7.0 --root ~/.local/share/niconeon/cargo-license cargo-license
+
+      - name: Add cargo-license to PATH
+        run: echo "$HOME/.local/share/niconeon/cargo-license/bin" >> "$GITHUB_PATH"
+
+      - name: Save cargo-license cache
+        if: github.event_name != 'pull_request' && steps.cargo-license-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.local/share/niconeon/cargo-license
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: cargo-license-${{ runner.os }}-0.7.0-v1
 
       - name: Verify third-party notices are up to date
         run: |
@@ -50,16 +75,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
         with:
-          workspaces: core
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: core
+          cache-save: ${{ github.event_name != 'pull_request' }}
 
       - name: Run core tests
-        run: cargo test --manifest-path core/Cargo.toml
+        run: bazelisk test //core/...
 
   ui-build-linux:
     name: ui-build-linux
@@ -73,8 +98,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
             pkg-config \
             libmpv-dev \
             qt6-base-dev \
@@ -82,21 +105,16 @@ jobs:
             qt6-declarative-dev \
             qt6-declarative-dev-tools
 
-      - name: Configure UI (Linux)
-        run: cmake -S app-ui -B app-ui/build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: linux
+          cache-save: ${{ github.event_name != 'pull_request' }}
 
       - name: Build UI (Linux)
-        run: cmake --build app-ui/build-ci --parallel
-
-      - name: Setup Rust
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core
+        run: bazelisk build --config=release //app-ui:niconeon-ui
 
       - name: Install Linux release packaging dependencies
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -106,15 +124,28 @@ jobs:
             patchelf \
             desktop-file-utils
 
-      - name: Build core (release)
+      - name: Build release binaries with Bazel
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+        run: bazelisk build --config=release //core:niconeon-core //app-ui:niconeon-ui
+
+      - name: Stage Bazel release binaries
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bazel-linux-ui dist/bazel-linux-core
+          ui_bin="$(bazelisk cquery --config=release --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui$' | tail -n1)"
+          core_bin="$(bazelisk cquery --config=release --output=files //core:niconeon-core | grep -E '(^|/)niconeon-core$' | tail -n1)"
+          test -n "${ui_bin}"
+          test -n "${core_bin}"
+          cp "${ui_bin}" dist/bazel-linux-ui/niconeon-ui
+          cp "${core_bin}" dist/bazel-linux-core/niconeon-core
+          chmod 755 dist/bazel-linux-ui/niconeon-ui dist/bazel-linux-core/niconeon-core
 
       - name: Package Linux binaries zip
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
-          NICONEON_UI_BUILD_DIR: app-ui/build-ci
-          NICONEON_CORE_BUILD_DIR: core/target/release
+          NICONEON_UI_BUILD_DIR: dist/bazel-linux-ui
+          NICONEON_CORE_BUILD_DIR: dist/bazel-linux-core
           NICONEON_RELEASE_BASENAME: niconeon-linux-x86_64
         run: scripts/release/package_linux.sh ci
 
@@ -125,8 +156,8 @@ jobs:
       - name: Package Linux AppImage
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
-          NICONEON_UI_BUILD_DIR: app-ui/build-ci
-          NICONEON_CORE_BUILD_DIR: core/target/release
+          NICONEON_UI_BUILD_DIR: dist/bazel-linux-ui
+          NICONEON_CORE_BUILD_DIR: dist/bazel-linux-core
           NICONEON_RELEASE_BASENAME: niconeon-linux-x86_64
         run: scripts/release/package_linux_appimage.sh ci
 
@@ -162,8 +193,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
             pkg-config \
             libmpv-dev \
             qt6-base-dev \
@@ -171,17 +200,16 @@ jobs:
             qt6-declarative-dev \
             qt6-declarative-dev-tools
 
-      - name: Configure UI unit tests (Linux)
-        run: |
-          cmake -S app-ui -B app-ui/build-test-ci -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=ON
-
-      - name: Build UI unit tests (Linux)
-        run: cmake --build app-ui/build-test-ci --parallel
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: ui-unit-linux
+          cache-save: ${{ github.event_name != 'pull_request' }}
 
       - name: Run UI unit tests (Linux)
-        run: ctest --test-dir app-ui/build-test-ci --output-on-failure
+        run: bazelisk test //app-ui:ui_unit_tests
 
   ui-e2e-linux-best-effort:
     name: ui-e2e-linux-best-effort
@@ -195,8 +223,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
             pkg-config \
             libmpv-dev \
             qt6-base-dev \
@@ -206,22 +232,26 @@ jobs:
             qml6-module-qtqml-workerscript \
             xvfb
 
-      - name: Configure UI E2E (Linux)
-        run: |
-          cmake -S app-ui -B app-ui/build-e2e-ci -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=ON \
-            -DNICONEON_BUILD_UI_E2E=ON
-
-      - name: Build UI E2E (Linux)
-        run: cmake --build app-ui/build-e2e-ci --parallel
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: ui-e2e-linux
+          cache-save: ${{ github.event_name != 'pull_request' }}
 
       - name: Run UI E2E (Linux, best effort)
         run: |
-          xvfb-run -a env \
+          xvfb-run -a -s "-screen 0 1280x1024x24 -ac" env \
             LIBGL_ALWAYS_SOFTWARE=1 \
             MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
-            ctest --test-dir app-ui/build-e2e-ci --output-on-failure -R rendernode_alignment_e2e
+            bazelisk test \
+              --test_output=errors \
+              --test_env=DISPLAY \
+              --test_env=GITHUB_ACTIONS \
+              --test_env=LIBGL_ALWAYS_SOFTWARE \
+              --test_env=MESA_LOADER_DRIVER_OVERRIDE \
+              //app-ui:rendernode_alignment_e2e
 
   ui-build-windows:
     name: ui-build-windows
@@ -231,6 +261,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Bazel with cache
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: windows
+          cache-save: ${{ github.event_name != 'pull_request' }}
+
+      - name: Restore native Bazelisk cache
+        id: native-bazelisk-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.tool_cache }}/bazelisk/1.29.0/bazelisk.exe
+          key: bazelisk-${{ runner.os }}-1.29.0-v1
+
+      - name: Install native Bazelisk for MSYS2
+        if: steps.native-bazelisk-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $bazelisk = Join-Path $env:RUNNER_TOOL_CACHE "bazelisk/1.29.0/bazelisk.exe"
+          New-Item -ItemType Directory -Force -Path (Split-Path $bazelisk) | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-windows-amd64.exe" -OutFile $bazelisk
+          $actualHash = (Get-FileHash -Algorithm SHA256 $bazelisk).Hash.ToLowerInvariant()
+          if ($actualHash -ne "092a8738d5b41aae7a85c42cc961b1034e3389aba43ffc20c0fabda7b43e095b") {
+            throw "Unexpected Bazelisk SHA-256: $actualHash"
+          }
+
+      - name: Export Bazelisk path for MSYS2
+        shell: pwsh
+        run: |
+          $bazelisk = Join-Path $env:RUNNER_TOOL_CACHE "bazelisk/1.29.0/bazelisk.exe"
+          "BAZELISK_WINDOWS_PATH=$bazelisk" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Save native Bazelisk cache
+        if: github.event_name != 'pull_request' && steps.native-bazelisk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.tool_cache }}/bazelisk/1.29.0/bazelisk.exe
+          key: bazelisk-${{ runner.os }}-1.29.0-v1
+
       - name: Setup MSYS2 (Qt6 + mpv)
         uses: msys2/setup-msys2@v2
         with:
@@ -239,10 +309,7 @@ jobs:
           update: true
           install: >-
             mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
             mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-ccache
             mingw-w64-x86_64-qt6-base
             mingw-w64-x86_64-qt6-declarative
             mingw-w64-x86_64-qt6-tools
@@ -250,62 +317,65 @@ jobs:
             unzip
             zip
 
-      - name: Cache ccache (Windows UI)
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}\\.ccache
-          key: ccache-windows-ui-${{ runner.os }}-${{ hashFiles('app-ui/CMakeLists.txt', 'app-ui/src/**', 'app-ui/qml/**') }}
-          restore-keys: |
-            ccache-windows-ui-${{ runner.os }}-
-
-      - name: Configure UI (Windows)
+      - name: Build and stage UI (Windows, MSYS2)
         shell: msys2 {0}
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
         run: |
-          export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
-          ccache -z || true
-          cmake -S app-ui -B app-ui/build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-
-      - name: Build UI (Windows)
-        shell: msys2 {0}
-        run: |
-          export CCACHE_DIR="$(cygpath -u "$GITHUB_WORKSPACE")/.ccache"
-          cmake --build app-ui/build-ci --parallel
-          ccache -s || true
+          set -euo pipefail
+          export PATH="/mingw64/bin:/usr/bin:${PATH}"
+          export BAZEL_SH="$(cygpath -m /usr/bin/bash.exe)"
+          bazelisk_cmd="$(cygpath -u "${BAZELISK_WINDOWS_PATH}")"
+          echo "MSYS2_ARG_CONV_EXCL=${MSYS2_ARG_CONV_EXCL}"
+          echo "BAZEL_SH=${BAZEL_SH}"
+          "${bazelisk_cmd}" aquery --config=windows_mingw --config=release 'mnemonic("CppCompile", //app-ui:niconeon-ui)' --include_commandline |
+            tools/bazel/verify_mingw_aquery.sh
+          "${bazelisk_cmd}" build --config=windows_mingw --config=release //app-ui:niconeon-ui
+          mkdir -p dist/bazel-windows-ui
+          ui_bin="$("${bazelisk_cmd}" cquery --config=windows_mingw --config=release --output=files //app-ui:niconeon-ui | grep -E '(^|/)niconeon-ui\.exe$' | tail -n1)"
+          test -n "${ui_bin}"
+          cp "${ui_bin}" dist/bazel-windows-ui/niconeon-ui.exe
 
       - name: Setup Rust
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust artifacts
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core
-
-      - name: Build core (release, MSVC)
+      - name: Build and stage core (release, MSVC)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
-        run: cargo build --release --manifest-path core/Cargo.toml -p niconeon-core
+        run: |
+          bazelisk build --config=release //core:niconeon-core
+          $coreBin = bazelisk cquery --config=release --output=files //core:niconeon-core |
+            Where-Object { $_ -match '(^|/|\\)niconeon-core\.exe$' } |
+            Select-Object -Last 1
+          if (-not $coreBin) {
+            throw "Bazel core binary output was not found"
+          }
+          New-Item -ItemType Directory -Force dist\bazel-windows-core | Out-Null
+          Copy-Item $coreBin dist\bazel-windows-core\niconeon-core.exe -Force
 
       - name: Package Windows binaries zip
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: msys2 {0}
         env:
-          NICONEON_UI_BUILD_DIR: app-ui/build-ci
-          NICONEON_CORE_BUILD_DIR: core/target/release
+          MSYS2_ARG_CONV_EXCL: "*"
+          NICONEON_UI_BUILD_DIR: dist/bazel-windows-ui
+          NICONEON_CORE_BUILD_DIR: dist/bazel-windows-core
           NICONEON_RELEASE_BASENAME: niconeon-windows-x86_64
         run: scripts/release/package_windows_msys2.sh ci
 
       - name: Verify Windows binaries license bundle
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: msys2 {0}
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
         run: scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-windows-x86_64-binaries.zip
 
       - name: Verify Windows bundle includes qt.conf
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: msys2 {0}
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
         run: unzip -Z1 dist/niconeon-windows-x86_64-binaries.zip | grep -E '/qt\.conf$'
 
       - name: Upload Windows binaries artifact

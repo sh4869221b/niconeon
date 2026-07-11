@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="/licenses">
+    <file alias="LICENSE">../LICENSE</file>
+    <file alias="COPYING">../COPYING</file>
+    <file alias="THIRD_PARTY_NOTICES.txt">../THIRD_PARTY_NOTICES.txt</file>
+  </qresource>
+</RCC>

@@ -20,18 +20,19 @@
 - `danmaku_text_width_test`: 全角文字/日本語文字列を含むコメントで `widthEstimate` が `QFontMetrics` 実測幅 + 左右余白以上になること、およびシーク復帰時の長めの lag compensation でシーク前から流れていたコメントが途中位置に再配置されることを検証する。
 - `danmaku_ng_drop_test`: NG ドロップ失敗時に pending fade が rollback され、ドラッグ起点コメントが同一レーン優先で復帰することを検証する。
 - `danmaku_sprite_cache_test`: atlas packer の矩形が重ならないこと、同一 text の width 計測が再利用されること、DPR 差分で別 sprite が生成されること、pending raster queue が budget どおり分割消化されることを検証する。
+- `license_resource_test`: About ダイアログ用のライセンス resource に `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES.txt` が含まれることを検証する。
 - 実行コマンド例:
   - `just ui-test`
-  - `cd app-ui && cmake -S . -B build-test -DBUILD_TESTING=ON`
-  - `cd app-ui && cmake --build build-test -j`
-  - `cd app-ui && ctest --test-dir build-test --output-on-failure`
-  - GUI を使う unit test は CTest 側で `QT_QPA_PLATFORM=offscreen` を固定する。
+  - `bazelisk test //app-ui:ui_unit_tests`
+  - 個別実行: `bazelisk test //app-ui:license_resource_test //app-ui:spatial_grid_incremental_test //app-ui:core_client_test //app-ui:danmaku_text_width_test //app-ui:danmaku_ng_drop_test //app-ui:danmaku_sprite_cache_test`
+  - GUI を使う unit test は Bazel test 側で `QT_QPA_PLATFORM=offscreen` を固定する。
 
 ## UI E2E Tests (Automated)
 
 - `rendernode_alignment_e2e`: `DanmakuRenderNodeItem` をオフセット付きコンテナに配置して描画し、弾幕ピクセルがコンテナ内に出ることを検証する（座標変換漏れ回帰の検知）。
 - 実行コマンド: `just ui-e2e`
-- `just ui-e2e` は OpenGL scenegraph backend を使えるセッションで実行し、ヘッドレス環境では `xvfb-run` を利用する。
+- `just ui-e2e` は OpenGL scenegraph backend を使えるセッションで実行し、ヘッドレス環境では `xvfb-run` を利用する。`DISPLAY` / `WAYLAND_DISPLAY` が無く、`xvfb-run` も無い場合は、実描画検証ができないため非ゼロ終了する。
+- Bazel の `//app-ui:rendernode_alignment_e2e` は個別 E2E target として定義し、`DISPLAY` / `WAYLAND_DISPLAY` が無い環境では wrapper が明示メッセージを出して deterministic skip（exit 0）する。`bazelisk test //...` の安定性を保つための skip であり、実描画検証は必要な環境変数を Bazel に転送する `just ui-e2e` で行う。
 - CI job 名は `ui-e2e-linux-best-effort` とし、GitHub Actions 上では best-effort 実行に留める。
 - 画面修正（`app-ui/qml` や `app-ui/src/danmaku`）を含む変更では、CI結果に関わらずローカルで `just ui-e2e` を実行して結果を確認する。
 - GitHub Actions の runner では OpenGL scenegraph backend を安定確保できないため、このテストは `SKIP` になりうる。回帰判定はローカル実行を正とする。

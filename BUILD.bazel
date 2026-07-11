@@ -1,0 +1,23 @@
+exports_files([
+    "COPYING",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.txt",
+])
+
+alias(
+    name = "niconeon-core",
+    actual = "//core:niconeon-core",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "niconeon-ui",
+    actual = "//app-ui:niconeon-ui",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "linux-package-inputs",
+    actual = "//packaging:linux_package_inputs",
+    visibility = ["//visibility:public"],
+)

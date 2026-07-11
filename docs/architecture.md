@@ -58,11 +58,12 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
   - Trigger: pull requests and pushes to `main`.
   - Verifies:
     - License notice generation consistency (`THIRD_PARTY_NOTICES.txt`).
-    - Rust core tests (`cargo test` on `core` workspace).
-    - UI release build on Linux (Qt6 + libmpv).
-    - UI unit tests on Linux (`ui-unit-linux`, headless/offscreen).
-    - UI E2E best-effort run on Linux (`ui-e2e-linux-best-effort`; local `just ui-e2e` remains authoritative for rendernode pixel assertions).
-    - UI release build on Windows (MSYS2 + Qt6 + libmpv).
+    - Rust core tests through Bazel (`//core/...`).
+    - UI release build on Linux through Bazel (Qt6 + libmpv as system dependencies).
+    - UI unit tests on Linux through Bazel (`ui-unit-linux`, headless/offscreen).
+    - UI E2E best-effort run on Linux through Bazel (`ui-e2e-linux-best-effort`; local `just ui-e2e` remains authoritative for rendernode pixel assertions).
+    - UI release build on Windows through Bazel (MSYS2 + Qt6 + libmpv).
+  - Reuses Bazelisk downloads, external repositories, and per-target disk caches across compatible runs; license validation also caches a pinned `cargo-license` installation and Cargo registry data.
   - On pushes to `main`, additionally produces prebuilt release artifacts (`release-linux-binaries`, `release-linux-appimage`, `release-windows-binaries`) for 14-day retention.
 - Release (`.github/workflows/release.yml`)
   - Trigger: `v*` tags.

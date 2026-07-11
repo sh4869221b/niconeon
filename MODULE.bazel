@@ -1,0 +1,40 @@
+module(
+    name = "niconeon",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "rules_rust", version = "0.71.3")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+single_version_override(
+    module_name = "rules_cc",
+    patch_strip = 1,
+    patches = ["//tools/bazel:rules_cc_windows_mingw_exe.patch"],
+    version = "0.2.17",
+)
+
+cc_configure = use_extension("@rules_cc//cc:extensions.bzl", "cc_configure_extension")
+use_repo(cc_configure, "local_config_cc")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+)
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+)
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//core:Cargo.lock",
+    manifests = ["//core:Cargo.toml"],
+)
+use_repo(crate, "crates")
+
+system_deps = use_extension("//tools/bazel:system_deps.bzl", "system_deps")
+use_repo(system_deps, "niconeon_system_deps")

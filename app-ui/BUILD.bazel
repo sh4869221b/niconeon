@@ -1,0 +1,352 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_test")
+load("//tools/bazel:qt_defs.bzl", "qt_inline_moc_headers", "qt_moc_srcs", "qt_resource_src")
+
+package(default_visibility = ["//visibility:public"])
+
+APP_SRCS = [
+    "src/LicenseProvider.cpp",
+    "src/danmaku/DanmakuAtlasPacker.cpp",
+    "src/danmaku/DanmakuController.cpp",
+    "src/danmaku/DanmakuRenderNodeItem.cpp",
+    "src/danmaku/DanmakuSimdUpdater.cpp",
+    "src/danmaku/DanmakuSpatialGrid.cpp",
+    "src/danmaku/DanmakuTextSpriteCache.cpp",
+    "src/danmaku/DanmakuUpdateWorker.cpp",
+    "src/ipc/CoreClient.cpp",
+    "src/main.cpp",
+    "src/mpv/MpvItem.cpp",
+]
+
+APP_HDRS = glob(["src/**/*.hpp"])
+
+APP_MOC_HDRS = [
+    "src/LicenseProvider.hpp",
+    "src/danmaku/DanmakuController.hpp",
+    "src/danmaku/DanmakuRenderNodeItem.hpp",
+    "src/danmaku/DanmakuUpdateWorker.hpp",
+    "src/ipc/CoreClient.hpp",
+    "src/mpv/MpvItem.hpp",
+]
+
+QML_FILES = [
+    "qml/Main.qml",
+    "qml/components/AboutDialog.qml",
+    "qml/components/AppButton.qml",
+    "qml/components/AppDialog.qml",
+    "qml/components/AppTabButton.qml",
+    "qml/components/AppTextArea.qml",
+    "qml/components/AppTextField.qml",
+    "qml/components/DanmakuOverlay.qml",
+    "qml/components/FilterDialog.qml",
+    "qml/components/FontSizeDialog.qml",
+    "qml/components/NgDropZone.qml",
+    "qml/components/PlaybackSpeedDialog.qml",
+    "qml/components/SettingsDialog.qml",
+    "qml/components/Toast.qml",
+    "qml/theme/AppTheme.qml",
+]
+
+LICENSE_FILES = [
+    "//:COPYING",
+    "//:LICENSE",
+    "//:THIRD_PARTY_NOTICES.txt",
+]
+
+QT_COPTS = [
+    "-std=c++17",
+    "-fPIC",
+]
+
+QT_TEST_COPTS = QT_COPTS + ["-DNICONEON_BAZEL_BUILD"]
+
+QT_APP_DEPS = [
+    "@niconeon_system_deps//:mpv",
+    "@niconeon_system_deps//:qt6_qml",
+    "@niconeon_system_deps//:qt6_quick",
+]
+
+APP_MOC_SRCS = qt_moc_srcs(
+    name = "niconeon_ui",
+    hdrs = APP_MOC_HDRS,
+    project_headers = APP_HDRS,
+    extra_includes = {
+        "src/danmaku/DanmakuRenderNodeItem.hpp": ["src/danmaku/DanmakuController.hpp"],
+    },
+)
+
+CORE_CLIENT_MOC_SRCS = qt_moc_srcs(
+    name = "core_client_test",
+    hdrs = ["src/ipc/CoreClient.hpp"],
+    project_headers = APP_HDRS,
+)
+
+DANMAKU_CONTROLLER_MOC_SRCS = qt_moc_srcs(
+    name = "danmaku_controller_test",
+    hdrs = [
+        "src/danmaku/DanmakuController.hpp",
+        "src/danmaku/DanmakuUpdateWorker.hpp",
+    ],
+    project_headers = APP_HDRS,
+)
+
+RENDERNODE_MOC_SRCS = qt_moc_srcs(
+    name = "rendernode_alignment_e2e",
+    hdrs = [
+        "src/danmaku/DanmakuController.hpp",
+        "src/danmaku/DanmakuRenderNodeItem.hpp",
+        "src/danmaku/DanmakuUpdateWorker.hpp",
+    ],
+    project_headers = APP_HDRS,
+    extra_includes = {
+        "src/danmaku/DanmakuRenderNodeItem.hpp": ["src/danmaku/DanmakuController.hpp"],
+    },
+)
+
+SPATIAL_GRID_TEST_MOC = qt_inline_moc_headers(
+    name = "spatial_grid_incremental_test",
+    srcs = ["tests/unit/spatial_grid_incremental_test.cpp"],
+    project_headers = APP_HDRS,
+)
+
+CORE_CLIENT_TEST_MOC = qt_inline_moc_headers(
+    name = "core_client_test",
+    srcs = ["tests/unit/core_client_test.cpp"],
+    project_headers = APP_HDRS,
+)
+
+DANMAKU_TEXT_WIDTH_TEST_MOC = qt_inline_moc_headers(
+    name = "danmaku_text_width_test",
+    srcs = ["tests/unit/danmaku_text_width_test.cpp"],
+    project_headers = APP_HDRS,
+)
+
+DANMAKU_NG_DROP_TEST_MOC = qt_inline_moc_headers(
+    name = "danmaku_ng_drop_test",
+    srcs = ["tests/unit/danmaku_ng_drop_test.cpp"],
+    project_headers = APP_HDRS,
+)
+
+DANMAKU_SPRITE_CACHE_TEST_MOC = qt_inline_moc_headers(
+    name = "danmaku_sprite_cache_test",
+    srcs = ["tests/unit/danmaku_sprite_cache_test.cpp"],
+    project_headers = APP_HDRS,
+)
+
+RENDERNODE_ALIGNMENT_E2E_MOC = qt_inline_moc_headers(
+    name = "rendernode_alignment_e2e",
+    srcs = ["tests/e2e/rendernode_alignment_e2e.cpp"],
+    project_headers = APP_HDRS,
+)
+
+QML_RESOURCE_SRC = qt_resource_src(
+    name = "niconeon_qml",
+    qrc = "qml/niconeon_qml.qrc",
+    srcs = QML_FILES + ["qml/qmldir"],
+)
+
+LICENSE_RESOURCE_SRC = qt_resource_src(
+    name = "license_resources",
+    qrc = "license_resources.qrc",
+    srcs = LICENSE_FILES,
+)
+
+cc_binary(
+    name = "niconeon-ui",
+    srcs = APP_SRCS + APP_HDRS + APP_MOC_SRCS + [
+        QML_RESOURCE_SRC,
+        LICENSE_RESOURCE_SRC,
+    ],
+    copts = QT_COPTS,
+    includes = ["src"],
+    deps = QT_APP_DEPS,
+)
+
+cc_test(
+    name = "license_resource_test",
+    srcs = [
+        "tests/unit/license_resource_test.cpp",
+        LICENSE_RESOURCE_SRC,
+    ],
+    copts = QT_COPTS,
+    deps = ["@niconeon_system_deps//:qt6_core"],
+)
+
+cc_binary(
+    name = "niconeon-fake-core",
+    srcs = ["tests/support/fake_core.cpp"],
+    copts = QT_COPTS,
+    deps = ["@niconeon_system_deps//:qt6_core"],
+)
+
+cc_test(
+    name = "spatial_grid_incremental_test",
+    srcs = [
+        "src/danmaku/DanmakuSpatialGrid.cpp",
+        "tests/unit/spatial_grid_incremental_test.cpp",
+    ] + APP_HDRS + SPATIAL_GRID_TEST_MOC,
+    copts = QT_TEST_COPTS,
+    includes = [
+        ".",
+        "src",
+    ],
+    deps = [
+        "@niconeon_system_deps//:qt6_core",
+        "@niconeon_system_deps//:qt6_test",
+    ],
+)
+
+cc_binary(
+    name = "core_client_test_bin",
+    testonly = True,
+    srcs = [
+        "src/ipc/CoreClient.cpp",
+        "tests/unit/core_client_test.cpp",
+    ] + APP_HDRS + CORE_CLIENT_MOC_SRCS + CORE_CLIENT_TEST_MOC,
+    copts = QT_TEST_COPTS,
+    includes = [
+        ".",
+        "src",
+    ],
+    deps = [
+        "@niconeon_system_deps//:qt6_core",
+        "@niconeon_system_deps//:qt6_test",
+    ],
+)
+
+cc_test(
+    name = "core_client_test",
+    srcs = ["tests/unit/core_client_test_wrapper.cpp"],
+    data = [
+        ":core_client_test_bin",
+        ":niconeon-fake-core",
+    ],
+    copts = QT_TEST_COPTS,
+    deps = ["@rules_cc//cc/runfiles"],
+    env_inherit = ["NICONEON_FAKE_CORE_BIN"],
+    tags = ["no-cache"],
+)
+
+cc_test(
+    name = "danmaku_text_width_test",
+    srcs = [
+        "src/danmaku/DanmakuAtlasPacker.cpp",
+        "src/danmaku/DanmakuController.cpp",
+        "src/danmaku/DanmakuSimdUpdater.cpp",
+        "src/danmaku/DanmakuSpatialGrid.cpp",
+        "src/danmaku/DanmakuTextSpriteCache.cpp",
+        "src/danmaku/DanmakuUpdateWorker.cpp",
+        "tests/unit/danmaku_text_width_test.cpp",
+    ] + APP_HDRS + DANMAKU_CONTROLLER_MOC_SRCS + DANMAKU_TEXT_WIDTH_TEST_MOC,
+    copts = QT_TEST_COPTS,
+    env = {"QT_QPA_PLATFORM": "offscreen"},
+    includes = [
+        ".",
+        "src",
+    ],
+    deps = [
+        "@niconeon_system_deps//:qt6_core",
+        "@niconeon_system_deps//:qt6_gui",
+        "@niconeon_system_deps//:qt6_test",
+    ],
+)
+
+cc_test(
+    name = "danmaku_ng_drop_test",
+    srcs = [
+        "src/danmaku/DanmakuAtlasPacker.cpp",
+        "src/danmaku/DanmakuController.cpp",
+        "src/danmaku/DanmakuSimdUpdater.cpp",
+        "src/danmaku/DanmakuSpatialGrid.cpp",
+        "src/danmaku/DanmakuTextSpriteCache.cpp",
+        "src/danmaku/DanmakuUpdateWorker.cpp",
+        "tests/unit/danmaku_ng_drop_test.cpp",
+    ] + APP_HDRS + DANMAKU_CONTROLLER_MOC_SRCS + DANMAKU_NG_DROP_TEST_MOC,
+    copts = QT_TEST_COPTS,
+    env = {"QT_QPA_PLATFORM": "offscreen"},
+    includes = [
+        ".",
+        "src",
+    ],
+    deps = [
+        "@niconeon_system_deps//:qt6_core",
+        "@niconeon_system_deps//:qt6_gui",
+        "@niconeon_system_deps//:qt6_test",
+    ],
+)
+
+cc_test(
+    name = "danmaku_sprite_cache_test",
+    srcs = [
+        "src/danmaku/DanmakuAtlasPacker.cpp",
+        "src/danmaku/DanmakuTextSpriteCache.cpp",
+        "tests/unit/danmaku_sprite_cache_test.cpp",
+    ] + APP_HDRS + DANMAKU_SPRITE_CACHE_TEST_MOC,
+    copts = QT_TEST_COPTS,
+    env = {"QT_QPA_PLATFORM": "offscreen"},
+    includes = [
+        ".",
+        "src",
+    ],
+    deps = [
+        "@niconeon_system_deps//:qt6_core",
+        "@niconeon_system_deps//:qt6_gui",
+        "@niconeon_system_deps//:qt6_test",
+    ],
+)
+
+cc_binary(
+    name = "rendernode_alignment_e2e_bin",
+    testonly = True,
+    srcs = [
+        "src/danmaku/DanmakuAtlasPacker.cpp",
+        "src/danmaku/DanmakuController.cpp",
+        "src/danmaku/DanmakuRenderNodeItem.cpp",
+        "src/danmaku/DanmakuSimdUpdater.cpp",
+        "src/danmaku/DanmakuSpatialGrid.cpp",
+        "src/danmaku/DanmakuTextSpriteCache.cpp",
+        "src/danmaku/DanmakuUpdateWorker.cpp",
+        "tests/e2e/rendernode_alignment_e2e.cpp",
+    ] + APP_HDRS + RENDERNODE_MOC_SRCS + RENDERNODE_ALIGNMENT_E2E_MOC,
+    copts = QT_TEST_COPTS,
+    includes = [
+        ".",
+        "src",
+    ],
+    deps = [
+        "@niconeon_system_deps//:qt6_core",
+        "@niconeon_system_deps//:qt6_gui",
+        "@niconeon_system_deps//:qt6_qml",
+        "@niconeon_system_deps//:qt6_quick",
+        "@niconeon_system_deps//:qt6_test",
+    ],
+)
+
+cc_test(
+    name = "rendernode_alignment_e2e",
+    srcs = ["tests/e2e/rendernode_alignment_e2e_wrapper.cpp"],
+    data = [
+        ":rendernode_alignment_e2e_bin",
+    ],
+    copts = QT_COPTS,
+    tags = [
+        "e2e",
+        "requires-x11-or-wayland",
+    ],
+)
+
+test_suite(
+    name = "ui_unit_tests",
+    tests = [
+        ":license_resource_test",
+        ":spatial_grid_incremental_test",
+        ":core_client_test",
+        ":danmaku_text_width_test",
+        ":danmaku_ng_drop_test",
+        ":danmaku_sprite_cache_test",
+    ],
+)
+
+alias(
+    name = "qt_mpv_deps",
+    actual = "@niconeon_system_deps//:qt_mpv_deps",
+)

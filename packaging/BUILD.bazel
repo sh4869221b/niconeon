@@ -1,0 +1,47 @@
+load(":package_dirs.bzl", "binary_package_dir")
+
+package(default_visibility = ["//visibility:public"])
+
+binary_package_dir(
+    name = "linux_ui_package_dir",
+    binary = "//app-ui:niconeon-ui",
+    dirname = "linux_ui_package_dir",
+    output_name = "niconeon-ui",
+)
+
+binary_package_dir(
+    name = "linux_core_package_dir",
+    binary = "//core:niconeon-core",
+    dirname = "linux_core_package_dir",
+    output_name = "niconeon-core",
+)
+
+filegroup(
+    name = "linux_package_inputs",
+    srcs = [
+        ":linux_core_package_dir",
+        ":linux_ui_package_dir",
+    ],
+)
+
+binary_package_dir(
+    name = "windows_ui_package_dir",
+    binary = "//app-ui:niconeon-ui",
+    dirname = "windows_ui_package_dir",
+    output_name = "niconeon-ui.exe",
+)
+
+binary_package_dir(
+    name = "windows_core_package_dir",
+    binary = "//core:niconeon-core",
+    dirname = "windows_core_package_dir",
+    output_name = "niconeon-core.exe",
+)
+
+filegroup(
+    name = "windows_package_inputs",
+    srcs = [
+        ":windows_core_package_dir",
+        ":windows_ui_package_dir",
+    ],
+)

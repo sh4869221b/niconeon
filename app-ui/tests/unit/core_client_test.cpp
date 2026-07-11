@@ -167,4 +167,8 @@ void CoreClientTest::jsonRpcErrorObjectIsExposedAsMessage() {
 
 QTEST_APPLESS_MAIN(CoreClientTest)
 
+#if defined(NICONEON_BAZEL_BUILD)
+#include "tests/unit/core_client_test.moc.h"
+#else
 #include "core_client_test.moc"
+#endif

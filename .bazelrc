@@ -1,0 +1,4 @@
+common:release --compilation_mode=opt
+common:windows_mingw --extra_execution_platforms=//tools/bazel:windows_x86_64_mingw
+common:windows_mingw --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows_mingw
+common:windows_mingw --action_env=MSYS2_ARG_CONV_EXCL=*

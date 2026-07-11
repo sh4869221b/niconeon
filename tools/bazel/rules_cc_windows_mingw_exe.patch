@@ -1,0 +1,7 @@
+--- a/cc/private/toolchain/windows_cc_configure.bzl
++++ b/cc/private/toolchain/windows_cc_configure.bzl
+@@ -96,0 +97 @@
++    executable_suffix = ".exe" if use_mingw else ""
+@@ -100 +101 @@
+-            tool_path[tool] = tool_bin_path + "/" + tool
++            tool_path[tool] = tool_bin_path + "/" + tool + executable_suffix

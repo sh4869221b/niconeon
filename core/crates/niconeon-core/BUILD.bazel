@@ -1,0 +1,45 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("//tools/bazel:rust_defs.bzl", "RUST_2021")
+
+CORE_DEPS = [
+    "//core/crates/niconeon-domain",
+    "//core/crates/niconeon-fetcher",
+    "//core/crates/niconeon-filter",
+    "//core/crates/niconeon-protocol",
+    "//core/crates/niconeon-store",
+    "@crates//:anyhow",
+    "@crates//:chrono",
+    "@crates//:regex",
+    "@crates//:serde",
+    "@crates//:serde_json",
+    "@crates//:uuid",
+]
+
+rust_library(
+    name = "niconeon-core-lib",
+    srcs = glob(["src/**/*.rs"], exclude = ["src/main.rs"]),
+    crate_name = "niconeon_core",
+    crate_root = "src/lib.rs",
+    edition = RUST_2021,
+    visibility = ["//core:__subpackages__"],
+    deps = CORE_DEPS,
+)
+
+rust_binary(
+    name = "niconeon-core",
+    srcs = ["src/main.rs"],
+    crate_name = "niconeon_core_bin",
+    edition = RUST_2021,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":niconeon-core-lib",
+    ] + CORE_DEPS,
+)
+
+rust_test(
+    name = "unit_test",
+    crate = ":niconeon-core-lib",
+    deps = CORE_DEPS + [
+        "@crates//:rusqlite",
+    ],
+)

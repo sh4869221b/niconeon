@@ -94,4 +94,8 @@ void SpatialGridIncrementalTest::incrementalUpdatesMatchRebuild() {
 
 QTEST_APPLESS_MAIN(SpatialGridIncrementalTest)
 
+#if defined(NICONEON_BAZEL_BUILD)
+#include "tests/unit/spatial_grid_incremental_test.moc.h"
+#else
 #include "spatial_grid_incremental_test.moc"
+#endif

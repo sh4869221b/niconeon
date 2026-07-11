@@ -10,16 +10,30 @@ if ! [[ "$DURATION_SEC" =~ ^[0-9]+$ ]] || [ "$DURATION_SEC" -le 0 ]; then
   exit 1
 fi
 
-CORE_BIN="${NICONEON_CORE_BIN:-$ROOT_DIR/core/target/debug/niconeon-core}"
-UI_BIN="${NICONEON_UI_BIN:-$ROOT_DIR/app-ui/build/niconeon-ui}"
+bazel_output() {
+  local target="$1"
+  local output
+  output="$(cd "$ROOT_DIR" && bazelisk cquery --output=files "$target" 2>/dev/null | tail -n1)"
+  if [ -z "$output" ]; then
+    echo "Bazel output discovery failed for $target" >&2
+    exit 1
+  fi
+  case "$output" in
+    /*) printf '%s\n' "$output" ;;
+    *) printf '%s/%s\n' "$ROOT_DIR" "$output" ;;
+  esac
+}
+
+CORE_BIN="${NICONEON_CORE_BIN:-$(bazel_output //core:niconeon-core)}"
+UI_BIN="${NICONEON_UI_BIN:-$(bazel_output //app-ui:niconeon-ui)}"
 VIDEO_PATH="${NICONEON_DUMMY_VIDEO_PATH:-/tmp/niconeon-sm9-dummy.mp4}"
 
 if [ ! -x "$CORE_BIN" ]; then
-  echo "core binary not found: $CORE_BIN" >&2
+  echo "core binary not found: $CORE_BIN; run just build or set NICONEON_CORE_BIN" >&2
   exit 1
 fi
 if [ ! -x "$UI_BIN" ]; then
-  echo "ui binary not found: $UI_BIN" >&2
+  echo "ui binary not found: $UI_BIN; run just build or set NICONEON_UI_BIN" >&2
   exit 1
 fi
 if ! [[ "$(basename "$VIDEO_PATH")" =~ (sm|nm|so)[0-9]+ ]]; then
@@ -104,8 +118,15 @@ else
 fi
 
 if ! command -v xvfb-run >/dev/null 2>&1; then
-  cat "$TMP_LOG" >&2
-  echo "DISPLAY is not set and xvfb-run is unavailable." >&2
+  {
+    echo "deterministic environment constraint: DISPLAY and WAYLAND_DISPLAY are unset, xvfb-run is unavailable, and the offscreen run did not emit required perf markers."
+    cat "$TMP_LOG"
+  } | tee "$OUT_LOG" >&2
+  if [ "${NICONEON_ALLOW_HEADLESS_PERF_CONSTRAINT:-0}" = "1" ]; then
+    echo "headless perf constraint accepted because NICONEON_ALLOW_HEADLESS_PERF_CONSTRAINT=1" | tee -a "$OUT_LOG" >&2
+    exit 0
+  fi
+  echo "set NICONEON_ALLOW_HEADLESS_PERF_CONSTRAINT=1 only when recording constrained headless evidence intentionally" | tee -a "$OUT_LOG" >&2
   exit 1
 fi
 
