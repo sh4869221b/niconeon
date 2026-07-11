@@ -74,17 +74,33 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo-license
-        uses: actions/cache@v4
+      - name: Restore cargo-license cache
+        id: cargo-license-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
+            ~/.local/share/niconeon/cargo-license
             ~/.cargo/registry/cache
             ~/.cargo/registry/index
-          key: cargo-license-${{ runner.os }}-v1
+          key: cargo-license-${{ runner.os }}-0.7.0-v1
           restore-keys: cargo-license-${{ runner.os }}-
 
       - name: Install cargo-license
-        run: cargo install --locked cargo-license
+        if: steps.cargo-license-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --version 0.7.0 --root ~/.local/share/niconeon/cargo-license cargo-license
+
+      - name: Add cargo-license to PATH
+        run: echo "$HOME/.local/share/niconeon/cargo-license/bin" >> "$GITHUB_PATH"
+
+      - name: Save cargo-license cache
+        if: github.event_name != 'pull_request' && steps.cargo-license-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.local/share/niconeon/cargo-license
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: cargo-license-${{ runner.os }}-0.7.0-v1
 
       - name: Verify third-party notices are up to date
         run: |
@@ -264,8 +280,7 @@ jobs:
       - name: Export Bazelisk path for MSYS2
         shell: pwsh
         run: |
-          $bazelisk = Join-Path $env:RUNNER_TEMP "bazelisk.exe"
-          Invoke-WebRequest -Uri "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-windows-amd64.exe" -OutFile $bazelisk
+          $bazelisk = (Get-Command bazelisk -ErrorAction Stop).Source
           "BAZELISK_WINDOWS_PATH=$bazelisk" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Setup Rust
