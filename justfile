@@ -28,8 +28,13 @@ ui-build:
 ui-build:
     {{bazel}} build --config=windows_mingw //app-ui:niconeon-ui
 
+[unix]
 ui-test:
     {{bazel}} test //app-ui:ui_unit_tests
+
+[windows]
+ui-test:
+    {{bazel}} test --config=windows_mingw //app-ui:ui_unit_tests
 
 ui-e2e:
     #!/usr/bin/env bash
