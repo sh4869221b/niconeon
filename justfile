@@ -8,8 +8,13 @@ default:
 core-test:
     {{bazel}} test //core/...
 
+[unix]
 licenses:
     scripts/release/generate_third_party_notices.sh
+
+[windows]
+licenses:
+    bash scripts/release/generate_third_party_notices.sh
 
 license-check: licenses
     git diff --exit-code -- THIRD_PARTY_NOTICES.txt
