@@ -63,6 +63,7 @@ ui-e2e:
 
 build: licenses core-build ui-build
 
+[unix]
 run: build
     #!/usr/bin/env bash
     set -euo pipefail
@@ -78,6 +79,25 @@ run: build
     core_bin="$(abs_file "$(bazel_file //core:niconeon-core)")"
     ui_bin="$(abs_file "$(bazel_file //app-ui:niconeon-ui)")"
     NICONEON_CORE_BIN="$core_bin" "$ui_bin"
+
+[windows]
+run: build
+    #!powershell.exe -NoLogo -NoProfile -File
+    $ErrorActionPreference = "Stop"
+    function Bazel-File([string] $target) {
+      $path = & {{bazel}} cquery --output=files $target 2>$null | Select-Object -Last 1
+      if ($LASTEXITCODE -ne 0 -or -not $path) {
+        throw "Bazel output was not found for $target"
+      }
+      if (-not [System.IO.Path]::IsPathRooted($path)) {
+        $path = Join-Path (Get-Location) $path
+      }
+      [System.IO.Path]::GetFullPath($path)
+    }
+    $env:NICONEON_CORE_BIN = Bazel-File "//core:niconeon-core"
+    $uiBin = Bazel-File "//app-ui:niconeon-ui"
+    & $uiBin
+    exit $LASTEXITCODE
 
 perf-dummy out="perf-dummy.log" duration="60": build
     scripts/perf/run_dummy_profile.sh {{out}} {{duration}}
