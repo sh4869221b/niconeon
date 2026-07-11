@@ -269,11 +269,37 @@ jobs:
           disk-cache: windows
           cache-save: ${{ github.event_name != 'pull_request' }}
 
+      - name: Restore native Bazelisk cache
+        id: native-bazelisk-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.tool_cache }}/bazelisk/1.29.0/bazelisk.exe
+          key: bazelisk-${{ runner.os }}-1.29.0-v1
+
+      - name: Install native Bazelisk for MSYS2
+        if: steps.native-bazelisk-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $bazelisk = Join-Path $env:RUNNER_TOOL_CACHE "bazelisk/1.29.0/bazelisk.exe"
+          New-Item -ItemType Directory -Force -Path (Split-Path $bazelisk) | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-windows-amd64.exe" -OutFile $bazelisk
+          $actualHash = (Get-FileHash -Algorithm SHA256 $bazelisk).Hash.ToLowerInvariant()
+          if ($actualHash -ne "092a8738d5b41aae7a85c42cc961b1034e3389aba43ffc20c0fabda7b43e095b") {
+            throw "Unexpected Bazelisk SHA-256: $actualHash"
+          }
+
       - name: Export Bazelisk path for MSYS2
         shell: pwsh
         run: |
-          $bazelisk = (Get-Command bazelisk -ErrorAction Stop).Source
+          $bazelisk = Join-Path $env:RUNNER_TOOL_CACHE "bazelisk/1.29.0/bazelisk.exe"
           "BAZELISK_WINDOWS_PATH=$bazelisk" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Save native Bazelisk cache
+        if: github.event_name != 'pull_request' && steps.native-bazelisk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.tool_cache }}/bazelisk/1.29.0/bazelisk.exe
+          key: bazelisk-${{ runner.os }}-1.29.0-v1
 
       - name: Setup MSYS2 (Qt6 + mpv)
         uses: msys2/setup-msys2@v2
