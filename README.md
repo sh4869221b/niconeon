@@ -87,7 +87,7 @@ bazelisk build //core:niconeon-core
 bazelisk build //app-ui:niconeon-ui
 
 # Windows/MSYS2 UI binary (run from an MINGW64 shell)
-bazelisk build --config=windows_mingw //app-ui:niconeon-ui
+MSYS2_ARG_CONV_EXCL='*' bazelisk build --config=windows_mingw //app-ui:niconeon-ui
 
 # Linux package input staging
 bazelisk build //packaging:linux_package_inputs

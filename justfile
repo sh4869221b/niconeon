@@ -43,6 +43,7 @@ ui-e2e:
       {{bazel}} test \
         --test_output=errors \
         --test_env=DISPLAY \
+        --test_env=XAUTHORITY \
         --test_env=GITHUB_ACTIONS \
         --test_env=LIBGL_ALWAYS_SOFTWARE \
         --test_env=MESA_LOADER_DRIVER_OVERRIDE \

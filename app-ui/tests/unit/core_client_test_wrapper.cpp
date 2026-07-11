@@ -1,19 +1,23 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <unistd.h>
 #include <vector>
 
+#include "rules_cc/cc/runfiles/runfiles.h"
+
 namespace {
 
-std::filesystem::path runfilePath(const char *relativePath) {
-    const char *testSrcdir = std::getenv("TEST_SRCDIR");
+using rules_cc::cc::runfiles::Runfiles;
+
+std::filesystem::path runfilePath(const Runfiles &runfiles, const char *relativePath) {
     const char *workspace = std::getenv("TEST_WORKSPACE");
-    if (testSrcdir == nullptr || workspace == nullptr) {
+    if (workspace == nullptr) {
         return {};
     }
-    return std::filesystem::path(testSrcdir) / workspace / relativePath;
+    return runfiles.Rlocation(std::string(workspace) + "/" + relativePath);
 }
 
 int execProgram(const std::filesystem::path &program) {
@@ -30,14 +34,25 @@ int execProgram(const std::filesystem::path &program) {
 }
 
 int main() {
-    const std::filesystem::path testBin = runfilePath("app-ui/core_client_test_bin");
+    std::string error;
+    std::unique_ptr<Runfiles> runfiles(Runfiles::CreateForTest(&error));
+    if (runfiles == nullptr) {
+        std::cerr << "failed to initialize Bazel runfiles: " << error << '\n';
+        return 127;
+    }
+
+    const std::filesystem::path testBin = runfilePath(*runfiles, "app-ui/core_client_test_bin");
     if (testBin.empty()) {
-        std::cerr << "Bazel runfiles environment is missing TEST_SRCDIR or TEST_WORKSPACE\n";
+        std::cerr << "failed to locate core_client_test_bin in Bazel runfiles\n";
         return 127;
     }
 
     if (std::getenv("NICONEON_FAKE_CORE_BIN") == nullptr) {
-        const std::filesystem::path fakeCore = runfilePath("app-ui/niconeon-fake-core");
+        const std::filesystem::path fakeCore = runfilePath(*runfiles, "app-ui/niconeon-fake-core");
+        if (fakeCore.empty()) {
+            std::cerr << "failed to locate niconeon-fake-core in Bazel runfiles\n";
+            return 127;
+        }
         setenv("NICONEON_FAKE_CORE_BIN", fakeCore.c_str(), 1);
     }
 

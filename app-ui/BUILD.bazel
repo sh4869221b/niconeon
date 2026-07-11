@@ -221,6 +221,7 @@ cc_test(
         ":niconeon-fake-core",
     ],
     copts = QT_TEST_COPTS,
+    deps = ["@rules_cc//cc/runfiles"],
     env_inherit = ["NICONEON_FAKE_CORE_BIN"],
     tags = ["no-cache"],
 )
