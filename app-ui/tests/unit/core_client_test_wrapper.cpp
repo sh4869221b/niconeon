@@ -12,12 +12,16 @@ namespace {
 
 using rules_cc::cc::runfiles::Runfiles;
 
-std::filesystem::path runfilePath(const Runfiles &runfiles, const char *relativePath) {
+std::filesystem::path executableRunfilePath(const Runfiles &runfiles, const char *relativePath) {
     const char *workspace = std::getenv("TEST_WORKSPACE");
     if (workspace == nullptr) {
         return {};
     }
-    return runfiles.Rlocation(std::string(workspace) + "/" + relativePath);
+    std::string path = std::string(workspace) + "/" + relativePath;
+#ifdef _WIN32
+    path += ".exe";
+#endif
+    return runfiles.Rlocation(path);
 }
 
 int execProgram(const std::filesystem::path &program) {
@@ -41,14 +45,14 @@ int main() {
         return 127;
     }
 
-    const std::filesystem::path testBin = runfilePath(*runfiles, "app-ui/core_client_test_bin");
+    const std::filesystem::path testBin = executableRunfilePath(*runfiles, "app-ui/core_client_test_bin");
     if (testBin.empty()) {
         std::cerr << "failed to locate core_client_test_bin in Bazel runfiles\n";
         return 127;
     }
 
     if (std::getenv("NICONEON_FAKE_CORE_BIN") == nullptr) {
-        const std::filesystem::path fakeCore = runfilePath(*runfiles, "app-ui/niconeon-fake-core");
+        const std::filesystem::path fakeCore = executableRunfilePath(*runfiles, "app-ui/niconeon-fake-core");
         if (fakeCore.empty()) {
             std::cerr << "failed to locate niconeon-fake-core in Bazel runfiles\n";
             return 127;
