@@ -30,13 +30,14 @@ Niconeon は、ローカル動画を再生しながらニコニココメント�
 ## 開発要件
 
 - Bazelisk
+- Rust toolchain（`cargo`）
 - Qt 6.4+
 - libmpv
 - python3
 - cargo-license
 - just（任意だが推奨）
 
-`python3` と `cargo-license` は `just licenses` / `just build` と CI の `license-check` で
+`cargo`、`python3`、`cargo-license` は `just licenses` / `just build` と CI の `license-check` で
 `THIRD_PARTY_NOTICES.txt` を再生成・検証するために使います。
 Rust toolchain と Qt/libmpv は Bazel から利用します。Cargo/CMake は依存関係・履歴上の
 メタデータとして残りますが、開発者向けのサポート済み build entrypoint ではありません。

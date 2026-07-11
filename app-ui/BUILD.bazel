@@ -68,6 +68,7 @@ QT_APP_DEPS = [
 APP_MOC_SRCS = qt_moc_srcs(
     name = "niconeon_ui",
     hdrs = APP_MOC_HDRS,
+    project_headers = APP_HDRS,
     extra_includes = {
         "src/danmaku/DanmakuRenderNodeItem.hpp": ["src/danmaku/DanmakuController.hpp"],
     },
@@ -76,6 +77,7 @@ APP_MOC_SRCS = qt_moc_srcs(
 CORE_CLIENT_MOC_SRCS = qt_moc_srcs(
     name = "core_client_test",
     hdrs = ["src/ipc/CoreClient.hpp"],
+    project_headers = APP_HDRS,
 )
 
 DANMAKU_CONTROLLER_MOC_SRCS = qt_moc_srcs(
@@ -84,6 +86,7 @@ DANMAKU_CONTROLLER_MOC_SRCS = qt_moc_srcs(
         "src/danmaku/DanmakuController.hpp",
         "src/danmaku/DanmakuUpdateWorker.hpp",
     ],
+    project_headers = APP_HDRS,
 )
 
 RENDERNODE_MOC_SRCS = qt_moc_srcs(
@@ -93,6 +96,7 @@ RENDERNODE_MOC_SRCS = qt_moc_srcs(
         "src/danmaku/DanmakuRenderNodeItem.hpp",
         "src/danmaku/DanmakuUpdateWorker.hpp",
     ],
+    project_headers = APP_HDRS,
     extra_includes = {
         "src/danmaku/DanmakuRenderNodeItem.hpp": ["src/danmaku/DanmakuController.hpp"],
     },
@@ -101,31 +105,37 @@ RENDERNODE_MOC_SRCS = qt_moc_srcs(
 SPATIAL_GRID_TEST_MOC = qt_inline_moc_headers(
     name = "spatial_grid_incremental_test",
     srcs = ["tests/unit/spatial_grid_incremental_test.cpp"],
+    project_headers = APP_HDRS,
 )
 
 CORE_CLIENT_TEST_MOC = qt_inline_moc_headers(
     name = "core_client_test",
     srcs = ["tests/unit/core_client_test.cpp"],
+    project_headers = APP_HDRS,
 )
 
 DANMAKU_TEXT_WIDTH_TEST_MOC = qt_inline_moc_headers(
     name = "danmaku_text_width_test",
     srcs = ["tests/unit/danmaku_text_width_test.cpp"],
+    project_headers = APP_HDRS,
 )
 
 DANMAKU_NG_DROP_TEST_MOC = qt_inline_moc_headers(
     name = "danmaku_ng_drop_test",
     srcs = ["tests/unit/danmaku_ng_drop_test.cpp"],
+    project_headers = APP_HDRS,
 )
 
 DANMAKU_SPRITE_CACHE_TEST_MOC = qt_inline_moc_headers(
     name = "danmaku_sprite_cache_test",
     srcs = ["tests/unit/danmaku_sprite_cache_test.cpp"],
+    project_headers = APP_HDRS,
 )
 
 RENDERNODE_ALIGNMENT_E2E_MOC = qt_inline_moc_headers(
     name = "rendernode_alignment_e2e",
     srcs = ["tests/e2e/rendernode_alignment_e2e.cpp"],
+    project_headers = APP_HDRS,
 )
 
 QML_RESOURCE_SRC = qt_resource_src(
