@@ -20,8 +20,13 @@ core-build:
 ui-configure:
     {{bazel}} cquery //app-ui:niconeon-ui >/dev/null
 
+[unix]
 ui-build:
     {{bazel}} build //app-ui:niconeon-ui
+
+[windows]
+ui-build:
+    {{bazel}} build --config=windows_mingw //app-ui:niconeon-ui
 
 ui-test:
     {{bazel}} test //app-ui:ui_unit_tests
@@ -41,6 +46,7 @@ ui-e2e:
       {{bazel}} test \
         --test_output=errors \
         --test_env=WAYLAND_DISPLAY \
+        --test_env=XDG_RUNTIME_DIR \
         --test_env=GITHUB_ACTIONS \
         --test_env=LIBGL_ALWAYS_SOFTWARE \
         --test_env=MESA_LOADER_DRIVER_OVERRIDE \
@@ -84,8 +90,9 @@ run: build
 run: build
     #!powershell.exe -NoLogo -NoProfile -File
     $ErrorActionPreference = "Stop"
-    function Bazel-File([string] $target) {
-      $path = & {{bazel}} cquery --output=files $target 2>$null | Select-Object -Last 1
+    function Bazel-File([string] $target, [switch] $mingw) {
+      $config = if ($mingw) { @("--config=windows_mingw") } else { @() }
+      $path = & {{bazel}} cquery @config --output=files $target 2>$null | Select-Object -Last 1
       if ($LASTEXITCODE -ne 0 -or -not $path) {
         throw "Bazel output was not found for $target"
       }
@@ -95,7 +102,7 @@ run: build
       [System.IO.Path]::GetFullPath($path)
     }
     $env:NICONEON_CORE_BIN = Bazel-File "//core:niconeon-core"
-    $uiBin = Bazel-File "//app-ui:niconeon-ui"
+    $uiBin = Bazel-File "//app-ui:niconeon-ui" -mingw
     & $uiBin
     exit $LASTEXITCODE
 
