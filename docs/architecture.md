@@ -63,7 +63,7 @@ They communicate via JSON-RPC 2.0 over NDJSON on stdio.
     - UI unit tests on Linux through Bazel (`ui-unit-linux`, headless/offscreen).
     - UI E2E best-effort run on Linux through Bazel (`ui-e2e-linux-best-effort`; local `just ui-e2e` remains authoritative for rendernode pixel assertions).
     - UI release build on Windows through Bazel (MSYS2 + Qt6 + libmpv).
-  - Reuses Bazelisk downloads, external repositories, and per-target disk caches across compatible runs; license validation also caches Cargo registry data and `cargo-license`.
+  - Reuses Bazelisk downloads, external repositories, and per-target disk caches across compatible runs; license validation also caches Cargo registry data.
   - On pushes to `main`, additionally produces prebuilt release artifacts (`release-linux-binaries`, `release-linux-appimage`, `release-windows-binaries`) for 14-day retention.
 - Release (`.github/workflows/release.yml`)
   - Trigger: `v*` tags.

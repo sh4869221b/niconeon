@@ -78,7 +78,6 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/cargo-license
             ~/.cargo/registry/cache
             ~/.cargo/registry/index
           key: cargo-license-${{ runner.os }}-v1
@@ -131,11 +130,12 @@ jobs:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Setup Bazel with cache
-        uses: bazel-contrib/setup-bazel@0.19.0
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
         with:
           bazelisk-cache: true
           repository-cache: true
           disk-cache: linux
+          cache-save: ${{ github.event_name != 'pull_request' }}
 
       - name: Install Linux build dependencies
         run: |
@@ -191,11 +191,12 @@ jobs:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Setup Bazel with cache
-        uses: bazel-contrib/setup-bazel@0.19.0
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
         with:
           bazelisk-cache: true
           repository-cache: true
           disk-cache: linux
+          cache-save: ${{ github.event_name != 'pull_request' }}
 
       - name: Install Linux build dependencies
         run: |
@@ -253,11 +254,12 @@ jobs:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Setup Bazel with cache
-        uses: bazel-contrib/setup-bazel@0.19.0
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86
         with:
           bazelisk-cache: true
           repository-cache: true
           disk-cache: windows
+          cache-save: ${{ github.event_name != 'pull_request' }}
 
       - name: Export Bazelisk path for MSYS2
         shell: pwsh
