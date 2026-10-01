@@ -144,6 +144,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-declarative
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-mpv
+            mingw-w64-ucrt-x86_64-mesa
             python zip unzip
       - name: Build and test single C++23 application
         shell: msys2 {0}

@@ -35,7 +35,7 @@ Qt prefixes set `CMAKE_PREFIX_PATH`; make pkgconf resolve the corresponding mpv 
 
 Use an MSYS2 **UCRT64** shell, not MINGW64 and not MSVC. Install the
 `mingw-w64-ucrt-x86_64-` packages for gcc, cmake, ninja, pkgconf, qt6-base,
-qt6-declarative, qt6-tools and mpv. Run the `windows-debug` or `windows-release`
+qt6-declarative, qt6-tools, mpv and mesa. Run the `windows-debug` or `windows-release`
 configure/build/test presets; their outputs are in `build/windows-debug` and `build/windows-release`.
 The Qt, libmpv, C++ runtime and application must all use the same UCRT64 toolchain.
 
@@ -173,3 +173,16 @@ On Debian, install `qt6-base-private-dev` matching the exact installed Qt build.
 `mingw-w64-ucrt-x86_64-qt6-base` package already supplies the private headers and CMake config.
 These private interfaces are not guaranteed source/ABI-stable between Qt minor releases: rebuild
 against matching headers/runtime and rerun both strict OpenGL integration tests on every Qt upgrade.
+
+## Windows OpenGL fallback packaging
+
+The Windows distribution includes the official UCRT64 Mesa software renderer under
+Qt's `opengl32sw.dll` fallback name, plus its recursively validated dependencies.
+It does not ship `opengl32.dll` or override a working system GPU driver: Qt keeps its
+[hardware-first selection](https://doc.qt.io/qt-6/windows-graphics.html).
+Install `mingw-w64-ucrt-x86_64-mesa` in the packaging SDK. Package versions, source
+ownership, SHA-256 inventory and installed license texts are retained under
+`licenses/software-opengl`; the closure report is `software-opengl-dependencies.txt`.
+The native clean-startup check requires a real OpenGL QRhi context, not the Qt Quick
+software backend. A software-fallback startup pass is not real-GPU, media, HDR or
+60fps qualification.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the release layout and AppRun contract without downloading release tools."""
 from pathlib import Path
+import hashlib
 import importlib.util
 import os
 import shutil
@@ -22,6 +23,97 @@ class WindowsDependencyCollectorTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
+
+    def test_mesa_fallback_keeps_hardware_loader_and_collects_its_own_closure(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle, sdk, system = (root / name for name in ["bundle", "sdk", "system"])
+            for folder in [bundle, sdk, system]:
+                folder.mkdir()
+            for name in ["opengl32.dll", "libgallium_wgl.dll", "libLLVM.dll"]:
+                (sdk / name).write_bytes(name.encode())
+            (bundle / "niconeon.exe").write_bytes(b"not part of fallback closure")
+            (system / "opengl32.dll").write_bytes(b"system hardware loader")
+            (system / "KERNEL32.dll").write_bytes(b"system")
+            aliases = collector.deploy_mesa_fallback(bundle, sdk)
+            self.assertEqual((bundle / "opengl32sw.dll").read_bytes(), b"opengl32.dll")
+            self.assertFalse((bundle / "opengl32.dll").exists())
+            imports = {"opengl32sw.dll": ["libgallium_wgl.dll", "KERNEL32.dll"],
+                       "libgallium_wgl.dll": ["libLLVM.dll", "opengl32.dll"], "libllvm.dll": []}
+            def inspect(command, **_):
+                return SimpleNamespace(stdout="\n".join(
+                    f"  DLL Name: {name}" for name in imports[Path(command[-1]).name.casefold()]))
+            with patch.object(collector.subprocess, "run", side_effect=inspect):
+                binaries = collector.collect(bundle, sdk, system, root / "report.txt", "objdump", roots=aliases)
+            self.assertEqual({file.name for file in binaries},
+                             {"opengl32sw.dll", "libgallium_wgl.dll", "libLLVM.dll"})
+            self.assertFalse((bundle / "opengl32.dll").exists())
+            self.assertEqual((system / "opengl32.dll").read_bytes(), b"system hardware loader")
+
+    def test_mesa_fallback_requires_both_runtime_roots_before_copying(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, sdk = Path(directory) / "bundle", Path(directory) / "sdk"
+            bundle.mkdir()
+            sdk.mkdir()
+            (sdk / "opengl32.dll").write_bytes(b"mesa")
+            with self.assertRaisesRegex(RuntimeError, "libgallium_wgl.dll"):
+                collector.deploy_mesa_fallback(bundle, sdk)
+            self.assertFalse(list(bundle.iterdir()))
+
+    def test_mesa_fallback_rejects_bundled_hardware_loader_override(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, sdk = Path(directory) / "bundle", Path(directory) / "sdk"
+            bundle.mkdir()
+            sdk.mkdir()
+            (bundle / "OpenGL32.DLL").write_bytes(b"unexpected override")
+            with self.assertRaisesRegex(RuntimeError, "override the system OpenGL"):
+                collector.deploy_mesa_fallback(bundle, sdk)
+
+    def test_mesa_notices_record_renamed_source_hash_package_and_nested_licenses(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle, sdk = root / "bundle", root / "ucrt64/bin"
+            bundle.mkdir()
+            sdk.mkdir(parents=True)
+            (sdk / "opengl32.dll").write_bytes(b"mesa")
+            binary = bundle / "opengl32sw.dll"
+            binary.write_bytes(b"mesa")
+            license_file = sdk.parent / "share/licenses/mesa/exceptions/Linux-Syscall-Note"
+            license_file.parent.mkdir(parents=True)
+            license_file.write_text("original notice")
+            package = "mingw-w64-ucrt-x86_64-mesa"
+            responses = {"-Qqo": package, "-Qi": "Name : mesa\nVersion : fixture\nLicenses : MIT",
+                         "-Qlq": str(license_file) + "\n" + str(sdk / "opengl32.dll")}
+            with patch.object(collector.subprocess, "run", side_effect=lambda command, **_:
+                              SimpleNamespace(stdout=responses[command[1]])):
+                collector.capture_msys2_notices(bundle, sdk, {binary}, {binary: sdk / "opengl32.dll"})
+            notices = bundle / "licenses/software-opengl"
+            self.assertEqual((notices / "mesa/exceptions/Linux-Syscall-Note").read_text(), "original notice")
+            self.assertIn("Version : fixture", (notices / f"{package}.txt").read_text())
+            inventory = (notices / "inventory.tsv").read_text()
+            self.assertIn(f"opengl32sw.dll\topengl32.dll\t{package}\t", inventory)
+            self.assertIn(hashlib.sha256(b"mesa").hexdigest(), inventory)
+            self.assertFalse((notices / "opengl32.dll").exists())
+
+    def test_mesa_notices_fail_when_dependency_license_texts_are_missing(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle, sdk = root / "bundle", root / "ucrt64/bin"
+            bundle.mkdir()
+            sdk.mkdir(parents=True)
+            binary = bundle / "libLLVM.dll"
+            binary.write_bytes(b"llvm")
+            (sdk / binary.name).write_bytes(b"llvm")
+            responses = {"-Qqo": "mingw-w64-ucrt-x86_64-llvm-libs", "-Qi": "license metadata", "-Qlq": ""}
+            with patch.object(collector.subprocess, "run", side_effect=lambda command, **_:
+                              SimpleNamespace(stdout=responses[command[1]])):
+                with self.assertRaisesRegex(RuntimeError, "No installed license texts"):
+                    collector.capture_msys2_notices(bundle, sdk, {binary}, {})
 
     def test_sqlite_selection_omits_unsupported_database_plugins(self):
         collector = self.collector()

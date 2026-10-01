@@ -116,7 +116,7 @@ done
 # sufficient to qualify an SDK-path-independent Windows distribution.
 system_root="$(cygpath -u "${SYSTEMROOT:-${WINDIR:-C:\Windows}}")"
 python3 "${repo_root}/scripts/release/collect_windows_dlls.py" \
-  --bundle "${staging}/${base}" --sqlite-only \
+  --bundle "${staging}/${base}" --sqlite-only --software-opengl \
   --sdk-bin /ucrt64/bin \
   --system-dir "${system_root}/System32" \
   --report "${out_dir}/${base}-dependency-report.txt"

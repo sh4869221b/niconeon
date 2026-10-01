@@ -24,6 +24,11 @@ Native Runtime Components
   Source: https://github.com/mpv-player/mpv/blob/master/Copyright
   Notes: Bundled as runtime shared library/DLL from platform packages.
 
+- Mesa / LLVM (Windows OpenGL fallback)
+  License: MIT (Mesa), Apache-2.0 WITH LLVM-exception (LLVM); component-dependent notices
+  Source: https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-mesa
+  Notes: MSYS2 Mesa is deployed as opengl32sw.dll for Qt's automatic fallback when system OpenGL is unavailable. Windows bundles include licenses/software-opengl with installed dependency package versions, DLL hashes and license texts. System OpenGL remains preferred.
+
 - MinGW-w64 Runtime Libraries
   License: GPL-3.0-with-GCC-exception OR ZPL-2.1 (component dependent)
   Source: https://www.mingw-w64.org/
