@@ -12,8 +12,22 @@ include(GNUInstallDirs)
 include(cmake/ProjectOptions.cmake)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui OpenGL Quick Qml QuickControls2 Network Sql Concurrent)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+if(WIN32 AND MINGW)
+  # MSYS2's mpv.pc exposes POSIX /ucrt64 paths, which native CMake cannot
+  # consume as imported include directories. Resolve the same UCRT64 SDK
+  # next to the selected compiler, using native paths throughout.
+  get_filename_component(niconeon_compiler_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  get_filename_component(niconeon_mingw_prefix "${niconeon_compiler_bin}" DIRECTORY)
+  find_path(MPV_INCLUDE_DIR NAMES mpv/client.h HINTS "${niconeon_mingw_prefix}/include" REQUIRED)
+  find_library(MPV_LIBRARY NAMES mpv libmpv HINTS "${niconeon_mingw_prefix}/lib" REQUIRED)
+  add_library(niconeon_mpv UNKNOWN IMPORTED)
+  set_target_properties(niconeon_mpv PROPERTIES IMPORTED_LOCATION "${MPV_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${MPV_INCLUDE_DIR}")
+else()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+  add_library(niconeon_mpv ALIAS PkgConfig::MPV)
+endif()
 qt_standard_project_setup(REQUIRES 6.8)
 
 add_library(niconeon_domain STATIC
@@ -62,7 +76,7 @@ if(NICONEON_BUILD_APP)
 
   add_library(niconeon_playback STATIC src/playback/MpvItem.cpp)
   target_include_directories(niconeon_playback PUBLIC src)
-  target_link_libraries(niconeon_playback PUBLIC Qt6::Quick Qt6::OpenGL PkgConfig::MPV niconeon_options)
+  target_link_libraries(niconeon_playback PUBLIC Qt6::Quick Qt6::OpenGL niconeon_mpv niconeon_options)
 
   qt_add_executable(niconeon src/app/main.cpp src/ui/LicenseProvider.cpp)
   target_link_libraries(niconeon PRIVATE niconeon_services niconeon_playback Qt6::QuickControls2)
