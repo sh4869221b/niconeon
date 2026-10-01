@@ -1,106 +1,39 @@
-# AGENTS.md (Repository Guide)
+# Repository guide
 
-このファイルは `niconeon` リポジトリで作業するエージェント向けの、リポジトリ固有ルールです。
+ユーザー向け説明は日本語を基本とする。このガイドはリポジトリ全体に適用する。
+作業前に README.md、docs/architecture.md、docs/application-contracts.md、docs/test-plan.md を読む。
 
-## 1. 適用範囲と優先順位
+## Architecture invariants
 
-- この `AGENTS.md` はリポジトリ全体に適用する。
-- より深い階層に `AGENTS.md` / `AGENTS.override.md` がある場合はそちらを優先する。
-- ユーザー向け説明は日本語を基本とする。
+- C++23 / Qt 6 single-process application。CMake + Ninjaだけを正式build入口とする
+- QMLはViewのみ。network、JSON、DB、timeline、filter、player state、QoSはC++に置く
+- GUI / render threadへnetwork・JSON・SQL処理を持ち込まない
+- Cross-thread ownership、queue上限、overflow、generation、shutdown契約をdocsとtestsで維持する
+- 既存rendererのraster/queue残件は#65/#78。移行をruntime最終qualification済みと扱わない
+- NG user IDを先に、regexを後に適用する
+- 掴んだコメントのみ停止、NG zoneはdrag中のみ、外dropは同一lane優先で復帰、失敗したNG登録はfadeをrollbackする
+- 既存DB/cache schemaとplatform path互換性を保つ。変更時は移行とtestsも同時更新
 
-## 2. まず理解すべき前提
+## Validation
 
-- UI: `app-ui/` (Qt 6 + QML + libmpv, C++)
-- Core: `core/` (Rust)
-- UI と Core は別プロセスで、`stdio` の NDJSON(JSON-RPC 2.0) で通信する。
-- 責務境界を守ること:
-  - 再生制御・描画・ドラッグ操作は UI 側。
-  - コメント取得・キャッシュ・フィルタ・永続化は Core 側。
+```sh
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug
+cmake --build build/debug --target format-check
+```
 
-作業前に以下を確認すること:
+変更に応じてRelease、ASan/UBSan、TSan、clang-tidy、QML、OpenGL integrationを実行する。
+実行不能・skip・未検証はpassと区別する。画面上のコメント可視性はactive countだけで判断しない。
+詳細はdocs/build-and-validation.mdを参照。
 
-- `README.md`
-- `docs/architecture.md`
-- `docs/protocol.md`
-- `docs/test-plan.md`
+## Change and Git policy
 
-## 3. 変更方針（重要）
-
-- 依頼範囲を超えたリファクタや仕様変更をしない。
-- 既存 API/挙動を変える場合は、ドキュメントとテストを同じ変更セットで更新する。
-- UI と Core の結合を強めない。新機能は既存の JSON-RPC 契約に沿って拡張する。
-- フィルタ順序は要件固定:
-  - `NG user ID` を先に適用。
-  - `regex` を後に適用。
-- ドラッグ操作の要件を壊さない:
-  - 掴んだコメントだけ停止。
-  - NGドロップゾーンはドラッグ中のみ表示。
-  - ゾーン外ドロップは復帰（同一レーン優先）。
-
-## 4. プロトコル変更ルール
-
-JSON-RPC のメソッド/パラメータ/レスポンスを変える場合は、必ず同時に更新すること:
-
-- `core/crates/niconeon-protocol/src/lib.rs`
-- `core/crates/niconeon-core/src/lib.rs`（実装）
-- `app-ui/src/ipc/CoreClient.cpp` / `app-ui/src/ipc/CoreClient.hpp`（呼び出し）
-- `docs/protocol.md`
-- 関連テスト
-
-互換性を壊す場合は、変更理由と移行方法を明記する。
-
-## 5. コーディング規約
-
-- 既存スタイルを優先し、差分は最小化する。
-- Rust:
-  - 失敗しうる処理は `Result` で返す。
-  - 本番コードで安易な `unwrap()` を使わない（テストは可）。
-  - 永続化や外部 I/O は `context` を付けてエラー原因を追跡可能にする。
-- C++/Qt:
-  - QObject の責務を明確にし、状態変化は signal で通知する。
-  - UI スレッドで重い処理をしない。
-- QML:
-  - 見た目と軽量な操作ロジックを担当し、ドメインロジックは C++/Core に寄せる。
-  - 座標系の違い（item/overlay/global）を明示的に扱う。
-
-## 6. 検証手順
-
-変更箇所に応じて最低限以下を実行する:
-
-- Core変更時:
-  - `just core-test` または `cd core && cargo test`
-- UI変更時:
-  - `cd app-ui && cmake -S . -B build`
-  - `cd app-ui && cmake --build build -j`
-- 横断変更時:
-  - `just build`
-  - 可能なら `just run` で起動確認
-
-実行できなかった検証は、何を未実施かを必ず報告する。
-
-## 7. テスト観点（特にUI）
-
-UI 変更時は次を重点確認する:
-
-- 再生/一時停止/シーク/音量の基本操作
-- コメント同期（通常再生・一時停止・シーク後）
-- ドラッグ中の他コメント挙動
-- NGドロップ判定と即時反映（フェード）
-- Undo（直近1件）
-- 正規表現不正入力時のエラー表示
-
-## 8. 依存関係とセキュリティ
-
-- 新しい本番依存を追加する場合は、必要性と代替不能性を説明する。
-- 秘密情報（トークン、Cookie、`.env`）をコミットしない。
-- 外部コードを大量コピーしない。必要なら出典とライセンス整合を確認する。
-
-## 9. Git運用
-
-- コミットは小さく、目的単位で分ける。
-- コミットメッセージは Conventional Commits 推奨（例: `fix(ui): ...`, `feat(core): ...`）。
-- コミットメッセージは英語のみを使用する。
-- Issue を解決する変更を含むコミットでは、コミットメッセージに `Closes #<issue番号>`（または `Fixes #<issue番号>`）を必ず含め、GitHub で自動クローズされる形にする。
-- リリース（タグ push / Release workflow 起動）後は、明示的な依頼がない限り `gh run watch` 等で監視を開始しない。必要な場合は実行URLのみ共有する。
-- 自分が作っていない変更は勝手に巻き戻さない。
-- 破壊的コマンド（`git reset --hard` など）は明示指示なしで実行しない。
+- 依頼範囲外の仕様変更・リファクタをしない。変更するAPI/挙動にはdocs/testsを付ける
+- QObjectの所有者とthreadを明確にし、状態変化はtyped signals/slotsで通知する
+- 自分が作っていない変更は巻き戻さない。破壊的Git操作は明示指示なしで行わない
+- 目的単位の小さなConventional Commit、英語commit messageを推奨する
+- Issue全体を実際に解決したcommitにのみCloses/Fixesを付ける。部分実装やqualification未完了のdraftにはRefsを使う
+- Draft PR作成はmerge・tag・release公開の許可ではない
+- credentials、cookies、private local paths、build directory、toolchain binariesをcommitしない
+- 外部コードの大量copyや依存追加には必要性・出典・licenseを確認する

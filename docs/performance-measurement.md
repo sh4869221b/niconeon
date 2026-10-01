@@ -1,19 +1,21 @@
 # Performance Measurement Guide
 
+> #59移行後も比較条件を固定するためのガイドです。旧測定値は履歴であり、新構成の性能passを意味しません。
+
 ## Goal
 
 Issue `#4` の目的は、同一条件で再現可能なログを取り、ボトルネックを定量比較できる状態にすることです。
 
 ## Prerequisites
 
-- `just build` または `bazelisk build //:all` で Bazel build 済みであること。
+- `cmake --preset release && cmake --build --preset release` でbuild済みであること。
 - 動画ファイル名にニコニコ動画ID（`sm|nm|so + 数字`）が含まれていること
 - 初回再生でコメントキャッシュが作成されること
 
 ## Reproducibility Rules
 
 1. 初回実行でコメントを取得し、同じ動画を2回目以降に再生する。
-2. トーストに `comment_source: cache` が出る状態で計測する。
+2. Networkとcacheの条件を混同せず記録する。再生開始時にはnetworkを試し、失敗時のみcacheを使う。
 3. 同じ区間（例: 0秒〜60秒）を毎回測定する。
 4. 速度設定は固定（例: `1.0x`）にする。
 5. 比較時は同一プロファイルで2回以上採取する。
@@ -44,19 +46,17 @@ Issue `#4` の目的は、同一条件で再現可能なログを取り、ボト
 
 ## Profile Commands (Linux)
 
-すべて `LC_NUMERIC=C` を付与してください。UI/Core binary は Bazel output から取得します。
+すべて `LC_NUMERIC=C` を付与してください。単一のアプリ実行ファイルを指定します。
 
 ```bash
-CORE_BIN="$(bazelisk cquery --output=files //core:niconeon-core | tail -n1)"
-UI_BIN="$(bazelisk cquery --output=files //app-ui:niconeon-ui | tail -n1)"
+APP_BIN="$PWD/build/release/niconeon"
 ```
 
 ### 1) baseline
 
 ```bash
 LC_NUMERIC=C \
-NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
-"$PWD/$UI_BIN" 2>&1 | tee perf-baseline.log
+"$APP_BIN" 2>&1 | tee perf-baseline.log
 ```
 
 ### 2) scenegraph
@@ -64,8 +64,7 @@ NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
 ```bash
 LC_NUMERIC=C \
 QSG_RENDERER_DEBUG=render \
-NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
-"$PWD/$UI_BIN" 2>&1 | tee perf-scenegraph.log
+"$APP_BIN" 2>&1 | tee perf-scenegraph.log
 ```
 
 ### 3) glyph
@@ -73,8 +72,7 @@ NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
 ```bash
 LC_NUMERIC=C \
 QT_LOGGING_RULES="qt.scenegraph.time.glyph=true" \
-NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
-"$PWD/$UI_BIN" 2>&1 | tee perf-glyph.log
+"$APP_BIN" 2>&1 | tee perf-glyph.log
 ```
 
 ### 4) combined
@@ -83,8 +81,7 @@ NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
 LC_NUMERIC=C \
 QSG_RENDERER_DEBUG=render \
 QT_LOGGING_RULES="qt.scenegraph.time.glyph=true" \
-NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
-"$PWD/$UI_BIN" 2>&1 | tee perf-combined.log
+"$APP_BIN" 2>&1 | tee perf-combined.log
 ```
 
 ### 5) worker off + scalar (fallback baseline)
@@ -93,8 +90,7 @@ NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
 LC_NUMERIC=C \
 NICONEON_DANMAKU_WORKER=off \
 NICONEON_SIMD_MODE=scalar \
-NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
-"$PWD/$UI_BIN" 2>&1 | tee perf-worker-off-scalar.log
+"$APP_BIN" 2>&1 | tee perf-worker-off-scalar.log
 ```
 
 ### 6) worker on + avx2 (R2 fast path)
@@ -103,8 +99,7 @@ NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
 LC_NUMERIC=C \
 NICONEON_DANMAKU_WORKER=on \
 NICONEON_SIMD_MODE=avx2 \
-NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
-"$PWD/$UI_BIN" 2>&1 | tee perf-worker-on-avx2.log
+"$APP_BIN" 2>&1 | tee perf-worker-on-avx2.log
 ```
 
 ### 7) renderer fallback comparison
@@ -112,8 +107,7 @@ NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
 ```bash
 LC_NUMERIC=C \
 NICONEON_DANMAKU_RENDERER=frame_image \
-NICONEON_CORE_BIN="$PWD/$CORE_BIN" \
-"$PWD/$UI_BIN" 2>&1 | tee perf-renderer-frame-image.log
+"$APP_BIN" 2>&1 | tee perf-renderer-frame-image.log
 ```
 
 ## CLI-only Dummy Profile
@@ -128,7 +122,7 @@ Prerequisites:
 Run:
 
 ```bash
-just perf-dummy perf-dummy.log 60
+scripts/perf/run_dummy_profile.sh perf-dummy.log 60
 ```
 
 このコマンドは以下を自動実行します。

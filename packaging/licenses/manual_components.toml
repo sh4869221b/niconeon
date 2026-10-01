@@ -21,3 +21,9 @@ name = "MinGW-w64 Runtime Libraries"
 license = "GPL-3.0-with-GCC-exception OR ZPL-2.1 (component dependent)"
 source = "https://www.mingw-w64.org/"
 notes = "Windows package may include libstdc++, libgcc, and winpthread runtime DLLs."
+
+[[component]]
+name = "SQLite (via Qt SQL)"
+license = "Public-Domain"
+source = "https://www.sqlite.org/copyright.html"
+notes = "The QSQLITE driver dynamically links the platform SQLite library or uses Qt's bundled copy, depending on the Qt distribution."

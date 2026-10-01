@@ -9,21 +9,16 @@ fi
 version="$1"
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 out_dir="${repo_root}/dist"
-ui_build_dir="${NICONEON_UI_BUILD_DIR:-app-ui/build-release}"
-core_build_dir="${NICONEON_CORE_BUILD_DIR:-core/target/release}"
+build_dir="${NICONEON_BUILD_DIR:-build/release}"
 
-if [[ "${ui_build_dir}" != /* ]]; then
-  ui_build_dir="${repo_root}/${ui_build_dir}"
+if [[ "${build_dir}" != /* ]]; then
+  build_dir="${repo_root}/${build_dir}"
 fi
 
-if [[ "${core_build_dir}" != /* ]]; then
-  core_build_dir="${repo_root}/${core_build_dir}"
-fi
 
 base="${NICONEON_RELEASE_BASENAME:-niconeon-${version}-linux-x86_64}"
 out_zip="${out_dir}/${base}-binaries.zip"
-ui_bin="${ui_build_dir}/niconeon-ui"
-core_bin="${core_build_dir}/niconeon-core"
+app_bin="${build_dir}/niconeon"
 license_file="${repo_root}/LICENSE"
 gpl_file="${repo_root}/COPYING"
 source_code_file="${repo_root}/SOURCE_CODE.md"
@@ -40,8 +35,7 @@ require_file() {
   fi
 }
 
-require_file "ui binary" "${ui_bin}"
-require_file "core binary" "${core_bin}"
+require_file "application binary" "${app_bin}"
 require_file "license file" "${license_file}"
 require_file "gpl file" "${gpl_file}"
 require_file "source code file" "${source_code_file}"
@@ -55,13 +49,12 @@ staging="$(mktemp -d "${TMPDIR:-/tmp}/niconeon-linux-XXXXXX")"
 trap 'rm -rf "${staging}"' EXIT
 
 mkdir -p "${staging}/${base}"
-cp "${ui_bin}" "${staging}/${base}/niconeon-ui"
-cp "${core_bin}" "${staging}/${base}/niconeon-core"
+cp "${app_bin}" "${staging}/${base}/niconeon"
 cp "${license_file}" "${staging}/${base}/LICENSE"
 cp "${gpl_file}" "${staging}/${base}/COPYING"
 cp "${source_code_file}" "${staging}/${base}/SOURCE_CODE.md"
 cp "${notices_file}" "${staging}/${base}/THIRD_PARTY_NOTICES.txt"
-chmod 755 "${staging}/${base}/niconeon-ui" "${staging}/${base}/niconeon-core"
+chmod 755 "${staging}/${base}/niconeon"
 
 (
   cd "${staging}"

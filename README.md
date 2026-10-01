@@ -2,183 +2,82 @@
 
 Niconeon は、ローカル動画を再生しながらニコニココメントを時刻同期で弾幕表示する Windows / Linux 向けデスクトップアプリです。
 
-## MVP 機能
-
-- ローカル動画再生（再生/一時停止、シーク、音量）
-- 再生速度変更（トグル切替 + プリセット編集、前回値保持）
-- ニコニココメント自動取得（`sm|nm|so + 数字` の動画IDをファイル名から抽出）
-- 再生時刻同期の弾幕オーバーレイ
-- コメント表示/非表示トグル（低負荷化用）
-- マウスドラッグで NG ユーザー登録（NG ドロップゾーン）
-- NG ユーザー即時反映 + Undo（直近1件）
-- 正規表現フィルタの登録/削除
-- 計測ログ（UI/弾幕更新 + render backend + フレーム時間分布: avg/p50/p95/p99/max）
-- Glyph warmup（初出文字の段階プリウォーム、常時ON）
-- Runtime profile（`high` / `balanced` / `low_spec`）によるコメント放出制御
-  - 既定のコメント描画 target は 60fps
-- SQLite 永続化（NG/正規表現/コメントキャッシュ）
-- About ダイアログでライセンス情報表示（MIT / GPLv3+ / Third-Party Notices）
-
 ## 構成
 
-- `app-ui/` : Qt 6 + QML + libmpv 埋め込み UI
-- `core/` : Rust 製コア（取得、キャッシュ、フィルタ、永続化、JSON-RPC）
-- `docs/` : 設計・プロトコル・テスト計画
-- `docs/ui-design.md` : UI画面レイアウト設計書（主画面構成、配置方針、操作導線）
-- `docs/licensing.md` : ライセンス方針と再生成手順
+C++23 / Qt 6 の **単一プロセス・単一アプリケーション `niconeon`** です。
+QML はレイアウト、見た目、操作の通知を担当し、再生制御・設定・コメント取得・SQLite・フィルタ・コメント放出は C++ が所有します。
 
-## 開発要件
+- `src/app/`: ApplicationController、非同期 CommentService、エントリーポイント
+- `src/domain/`, `src/comments/`, `src/filters/`, `src/storage/`: 型付きモデル、取得、timeline、NG/Undo、SQLite
+- `src/playback/`, `src/danmaku/`: libmpv、既存 sprite/atlas renderer
+- `src/ui/qml/`: View と presentation-only components
+- `tests/`, `cmake/`, `packaging/`: Qt Test / Quick Test、CMake、単一アプリ配布
 
-- Bazelisk
-- Rust toolchain（`cargo`）
-- Qt 6.4+
-- libmpv
-- python3
-- cargo-license
-- just（任意だが推奨）
+Rust、Cargo、Bazel、独立 core executable、stdio JSON-RPC は使用しません。
 
-`cargo`、`python3`、`cargo-license` は `just licenses` / `just build` と CI の `license-check` で
-`THIRD_PARTY_NOTICES.txt` を再生成・検証するために使います。
-Rust toolchain と Qt/libmpv は Bazel から利用します。Cargo/CMake は依存関係・履歴上の
-メタデータとして残りますが、開発者向けのサポート済み build entrypoint ではありません。
+## 主な機能
 
-## タスク実行
+- ローカル動画再生、Pause/Resume、Seek、音量、速度プリセット
+- ファイル名の `sm` / `nm` / `so` + 数字からコメント取得
+- NGユーザーのドラッグ登録、即時フェード、直近1件のUndo
+- 正規表現フィルタ、SQLite永続化、取得失敗時のキャッシュfallback
+- コメント表示切替、runtime profile (`high` / `balanced` / `low_spec`)、放出上限・同一内容coalesce
+- 計測ログ、About / ライセンス表示
 
-Build/test/run は Bazel を canonical とし、通常は `just` 経由で呼び出します。
+IDなし・コメント取得失敗・キャッシュ不正でも、有効なローカル動画の再生は継続します。
+初回ロードは描画contextの準備完了まで保持し、手動で開き直す必要がない構成です。
 
-```bash
-# 一覧
-just
+## 開発
 
-# ライセンス通知ファイル再生成
-just licenses
+採用環境は C++23 対応 compiler、CMake 3.25+、Ninja、Qt 6.8+、libmpv、pkg-config、Qt SQL SQLite driver です。
+Linux はディストリビューションの依存を使い、Windows は MSYS2 UCRT64 を使用します。
 
-# Core テスト
-just core-test
+```sh
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug
+./build/debug/niconeon
 
-# UI unit テスト
-just ui-test
-
-# UI E2E テスト（ヘッドレス環境は xvfb-run を使用）
-just ui-e2e
-
-# 全体ビルド（core + ui + license notices）
-just build
-
-# 起動（NICONEON_CORE_BIN を自動設定）
-just run
+cmake --preset linux-release
+cmake --build --preset linux-release
+ctest --preset linux-release
 ```
 
-`just build` / `just run` は `THIRD_PARTY_NOTICES.txt` を先に自動生成します。
+Windows、Sanitizer、clang-format / clang-tidy、パッケージングの詳細は [build-and-validation](docs/build-and-validation.md) を参照してください。
+`CMAKE_EXPORT_COMPILE_COMMANDS=ON` が既定で有効です。
 
-## Bazel targets
+## 設定・データ互換性
 
-```bash
-# 全体ビルド
-bazelisk build //:all
+既存のNG/regex DBと分離済みコメントcache DBのパス・schemaを維持します。
+旧データDB内 `comment_cache` は、cache DBへのtransaction commit後に移行元tableを削除します。移行失敗時は元データを保持します。
 
-# 全テスト
-bazelisk test //...
+- Linux: `$XDG_DATA_HOME/niconeon/niconeon.db` / `$XDG_CACHE_HOME/niconeon/comment-cache.db`（未設定時は標準HOME配下）
+- Windows: `%APPDATA%/sh4869221b/niconeon/data/niconeon.db` / `%LOCALAPPDATA%/sh4869221b/niconeon/cache/comment-cache.db`
+- UI設定は従来のQt organization/application (`sh4869221b` / `Niconeon`) を維持
+- regex は `QRegularExpression` (PCRE2) に移行。一般的な既存patternとUnicodeは試験し、無効な保存patternを黙って破棄しません。Rust regex固有の構文との完全互換は保証しません
 
-# Core binary
-bazelisk build //core:niconeon-core
+## 計測・再現
 
-# UI binary
-bazelisk build //app-ui:niconeon-ui
-
-# Windows/MSYS2 UI binary (run from an MINGW64 shell)
-MSYS2_ARG_CONV_EXCL='*' bazelisk build --config=windows_mingw //app-ui:niconeon-ui
-
-# Linux package input staging
-bazelisk build //packaging:linux_package_inputs
+```sh
+NICONEON_AUTO_VIDEO_PATH=/path/to/movie_sm9.mp4 \
+NICONEON_SYNTHETIC_COMMENTS=ramp NICONEON_AUTO_PERF_LOG=1 \
+NICONEON_AUTO_EXIT_MS=60000 ./build/release/niconeon
 ```
 
-## Core の起動
+描画targetは既定60fpsです。`NICONEON_DANMAKU_RENDERER=atlas|frame_image`、`NICONEON_DANMAKU_WORKER=on|off`、`NICONEON_SIMD_MODE=auto|scalar|avx2` を維持しています。
+60fpsの正式達成や実GPU性能はビルド成功・headless testから推定しません。
 
-```bash
-bazelisk run //core:niconeon-core -- --stdio
-```
+## 移行と後続gate
 
-UI は `just run` で、Bazel が生成した `niconeon-ui` と `niconeon-core` を組み合わせて起動します。
+この変更は [#59](https://github.com/sh4869221b/niconeon/issues/59) の移行です。
+新規network/JSON/SQLite/filter処理は専有workerで実行し、queue上限・generation cancellation・停止処理を実装しています。
+既存rendererのGUI raster・cache/queue上限を含む全runtime qualificationは [#65](https://github.com/sh4869221b/niconeon/issues/65) / [#78](https://github.com/sh4869221b/niconeon/issues/78) のblocking follow-upです。
+media clock/cursor、production video/text方式、60fps性能、Windows実GPU、Wayland、HDR、長時間安定性の正式gateは [#75](https://github.com/sh4869221b/niconeon/issues/75) に従います。
 
-## CI
-
-GitHub Actions で以下を実行します。
-
-- `core-test`（Bazel による Rust core テスト）
-- `ui-build-linux`（Bazel による Linux UI リリースビルド）
-- `ui-unit-linux`（Bazel による Linux UI unit test）
-- `ui-e2e-linux-best-effort`（Bazel + Xvfb による UI E2E テスト）
-- `ui-build-windows`（Bazel + Windows/MSYS2 による UI リリースビルド）
-
-`main` への PR と `main` への push で実行され、`main` マージ時は必須チェックとして扱います。
-Bazel job は Bazelisk download、外部 repository、disk action cache を Linux/Windows 間で
-OS ごとに再利用し、license job は固定版の `cargo-license` と Cargo registry を再利用します。
-`main` への push では、加えて release-ready artifact を事前生成し、以下を workflow artifact として 14 日保持します。
-
-- `release-linux-binaries`
-- `release-linux-appimage`
-- `release-windows-binaries`
-
-## リリース成果物
-
-`vX.Y.Z` タグを push すると、Release ワークフローが同一 SHA の `main` CI artifact を昇格し、以下を公開します。
-
-- `niconeon-X.Y.Z-source.zip`
-- `niconeon-X.Y.Z-linux-x86_64-binaries.zip`
-- `niconeon-X.Y.Z-linux-x86_64.AppImage`
-- `niconeon-X.Y.Z-windows-x86_64-binaries.zip`
-- `niconeon-X.Y.Z-sha256sums.txt`
-
-GitHub Release 本文には、前回 `v*` タグから今回タグまでのコミットメッセージ（merge commit 除外）を自動で追加し、続けて GitHub 自動生成のリリースノートを併記します。
-全バージョン履歴はリポジトリ直下の `CHANGELOG.md` に配置し、タグリリース時にワークフローが自動更新して `main`（既定ブランチ）へ反映します。
-
-通常の tag release では Linux/Windows の再ビルドは行わず、`main` CI 側で検証済みの成果物を再検証して GitHub Release に載せます。
-artifact の欠落・期限切れ・promotion 失敗時は、`Release Rebuild` workflow を手動実行して full rebuild + publish を行います。
-
-## 制約
-
-- コメント自動取得は、動画ファイル名にニコニコ動画ID（例: `sm9`, `so123456`）が含まれる前提です。
-- ID 抽出に失敗した場合、動画再生は継続し、コメントは表示されません。
-
-## 低スペック端末での推奨設定
-
-- `コメント非表示` ボタンで弾幕描画を停止すると、CPU負荷を下げられます。
-- `計測ログ開始` ボタンで、2秒ごとの UI 計測ログ（`tick_sent`/`tick_result`/`tick_backlog`）と弾幕ログ（`fps`/`p95`/`p99` など）を標準出力に出せます。
-- `Profile` ボタンで runtime profile を切り替え、`max_emit_per_tick` を調整しながら負荷を抑制できます。
-- Glyph warmup は常時ONです（文字生成スパイク対策）。
-- 計測プロファイル（baseline / scenegraph / glyph / combined）は `docs/performance-measurement.md` を参照してください。
-
-## 弾幕描画バックエンド
-
-- 既定は `QSGRenderNode` ベースの atlas/sprite 描画（`DanmakuRenderNodeItem`）です。
-- `NICONEON_DANMAKU_RENDERER`:
-  - 既定 `atlas`
-  - `frame_image` で旧来のフルフレーム画像合成へフォールバック
-  - `atlas` は OpenGL instancing を優先し、非対応環境では atlas 頂点展開へフォールバック
-
-## 弾幕更新モード（R2）
-
-- `NICONEON_DANMAKU_WORKER`:
-  - 既定 `on`（ワーカースレッド更新）
-  - `off` で単スレッド更新へフォールバック
-  - `on` では persistent SoA + row diff 同期を使い、シーク/DPR/profile変更時だけ full reset する
-- `NICONEON_SIMD_MODE`:
-  - 既定 `auto`（AVX2 対応CPUで `avx2`、それ以外は `scalar`）
-  - 明示指定: `avx2` / `scalar`
-
-```bash
-# 例: 安全系（単スレッド + scalar）
-NICONEON_DANMAKU_WORKER=off NICONEON_SIMD_MODE=scalar just run
-
-# 例: 描画 backend を frame_image へ切替
-NICONEON_DANMAKU_RENDERER=frame_image just run
-```
+[Architecture / ownership](docs/architecture.md) と [test plan](docs/test-plan.md) に検証範囲と残件を記載しています。
 
 ## ライセンス
 
-- 本リポジトリの自作ソースコードは `MIT` ライセンスです（`LICENSE`）。
-- 配布バイナリは `GPL-3.0-or-later` 条件で提供します（`COPYING`）。
-- 対応ソースコードの入手方法は `SOURCE_CODE.md` に記載します。
-- 依存ライセンス情報は `THIRD_PARTY_NOTICES.txt` に集約しています。
-- 配布バイナリには最低限 `LICENSE` / `COPYING` / `SOURCE_CODE.md` / `THIRD_PARTY_NOTICES.txt` を同梱します。
+自作ソースはMIT (`LICENSE`)、配布バイナリはGPL-3.0-or-later (`COPYING`) 条件です。
+配布物には `LICENSE` / `COPYING` / `SOURCE_CODE.md` / `THIRD_PARTY_NOTICES.txt` を同梱します。
+実際に同梱するQt/libmpvと推移依存のライセンス・対応ソース義務はリリースごとに確認してください。

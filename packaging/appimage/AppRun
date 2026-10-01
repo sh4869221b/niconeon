@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+app_dir="$(cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)"
+export LD_LIBRARY_PATH="${app_dir}/usr/lib:${app_dir}/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+export QT_PLUGIN_PATH="${app_dir}/usr/plugins:${app_dir}/usr/lib/qt6/plugins${QT_PLUGIN_PATH:+:${QT_PLUGIN_PATH}}"
+export QML_IMPORT_PATH="${app_dir}/usr/qml:${app_dir}/usr/lib/qt6/qml${QML_IMPORT_PATH:+:${QML_IMPORT_PATH}}"
+export QML2_IMPORT_PATH="${QML_IMPORT_PATH}"
+exec "${app_dir}/usr/bin/niconeon" "$@"
