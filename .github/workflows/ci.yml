@@ -54,13 +54,21 @@ jobs:
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -DNICONEON_BUILD_UI_E2E=ON
       - name: Build
+        id: build
         run: cmake --build --preset ${{ matrix.preset }} --parallel 2
       - name: Unit and QML tests
         run: ctest --preset ${{ matrix.preset }} -LE opengl --output-junit tests.xml
-      - name: OpenGL renderer integration test
-        run: xvfb-run -a -s '-screen 0 1280x1024x24 -ac' ctest --preset ${{ matrix.preset }} -L opengl
+      - name: Strict OpenGL integration with default scaling
+        env:
+          NICONEON_MPV_SCALE: default
+        run: xvfb-run -a -s '-screen 0 1280x1024x24 -ac' ctest --preset ${{ matrix.preset }} -L opengl --output-junit opengl-default.xml
+      - name: Strict OpenGL integration with explicit bilinear compatibility scaling
+        if: ${{ !cancelled() && (success() || failure()) && steps.build.outcome == 'success' }}
+        env:
+          NICONEON_MPV_SCALE: bilinear
+        run: xvfb-run -a -s '-screen 0 1280x1024x24 -ac' ctest --preset ${{ matrix.preset }} -L opengl --output-junit opengl-bilinear.xml
       - name: Package single Linux executable
-        if: matrix.preset == 'release'
+        if: ${{ !cancelled() && (success() || failure()) && steps.build.outcome == 'success' && matrix.preset == 'release' }}
         env:
           NICONEON_RELEASE_BASENAME: niconeon-linux-x86_64
         run: |
@@ -76,19 +84,21 @@ jobs:
         with:
           name: test-results-linux-${{ matrix.preset }}
           path: |
-            tests.xml
+            build/${{ matrix.preset }}/tests.xml
+            build/${{ matrix.preset }}/opengl-default.xml
+            build/${{ matrix.preset }}/opengl-bilinear.xml
             build/${{ matrix.preset }}/Testing/Temporary/
             build/${{ matrix.preset }}/rendernode-alignment-failure.png
             build/${{ matrix.preset }}/video-overlay-*.png
       - uses: actions/upload-artifact@v4
-        if: matrix.preset == 'release'
+        if: ${{ !cancelled() && (success() || failure()) && matrix.preset == 'release' && hashFiles('dist/niconeon-linux-x86_64-binaries.zip') != '' }}
         with:
           name: release-linux-binaries
           path: dist/niconeon-linux-x86_64-binaries.zip
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4
-        if: matrix.preset == 'release'
+        if: ${{ !cancelled() && (success() || failure()) && matrix.preset == 'release' && hashFiles('dist/niconeon-linux-x86_64.AppImage') != '' }}
         with:
           name: release-linux-appimage
           path: dist/niconeon-linux-x86_64.AppImage
@@ -159,7 +169,7 @@ jobs:
         with:
           name: test-results-windows-ucrt64
           path: |
-            tests.xml
+            build/windows-release/tests.xml
             build/windows-release/Testing/Temporary/
             dist/windows-runtime-smoke.log
             dist/niconeon-windows-x86_64-dependency-report.txt

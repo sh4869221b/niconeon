@@ -68,6 +68,32 @@ xvfb-run -a -s '-screen 0 1280x1024x24 -ac' ctest --preset debug -L opengl
 A missing or blocked display is an unverified integration stage; passing software/offscreen tests
 must not be reported as GPU/OpenGL validation. Linux CI runs this separately using Mesa + Xvfb.
 
+## Optional software-renderer scaling workaround
+
+`NICONEON_MPV_SCALE=default` (or an unset/empty value) leaves libmpv's inherited scaling
+options unchanged. `NICONEON_MPV_SCALE=bilinear` explicitly changes only the `scale`
+option before initialization, checks acceptance, and logs the selected mode. Unknown values
+warn and retain the default. No automatic renderer detection or silent fallback is used.
+
+On the tested Mesa llvmpipe / libmpv 0.40 software-renderer path, inherited Lanczos scaling
+produced incorrect video pixels; five interleaved complete video/overlay runs passed with
+bilinear scaling, while five default runs failed. Bilinear sampling is softer than Lanczos.
+This is an opt-in compatibility workaround, not hardware-GPU, HDR, or general quality
+qualification. Chroma/downscaling, hardware decoding and other rendering settings remain
+unchanged. The default strict integration test continues to expose the affected path:
+
+```sh
+ctest --preset debug -L opengl
+# Explicit compatibility validation, with identical pixel and seek assertions:
+NICONEON_MPV_SCALE=bilinear ctest --preset debug -L opengl
+NICONEON_MPV_SCALE=bilinear ./build/debug/niconeon
+```
+
+CI records default and explicit compatibility runs separately, with the same strict assertions.
+A default failure still fails the job even if compatibility passes. After a successful build,
+Release packaging and artifact collection can continue despite a graphics-test failure; this
+preserves distribution evidence without converting the failed graphics gate into a pass.
+
 ## Sanitizers and analysis
 
 `asan-ubsan` combines AddressSanitizer and UndefinedBehaviorSanitizer, retains frame pointers and

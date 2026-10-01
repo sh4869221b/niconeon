@@ -128,6 +128,16 @@ MpvItem::MpvItem(QQuickItem *parent) : QQuickFramebufferObject(parent), m_state(
     mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
     mpv_set_option_string(m_mpv, "terminal", "no");
     mpv_set_option_string(m_mpv, "keep-open", "yes");
+    const auto scale = qgetenv("NICONEON_MPV_SCALE").trimmed();
+    if (scale == "bilinear") {
+        const int result = mpv_set_option_string(m_mpv, "scale", "bilinear");
+        if (result < 0)
+            qWarning() << "[mpv] bilinear compatibility scaling was rejected:" << mpv_error_string(result);
+        else
+            qInfo() << "[mpv] NICONEON_MPV_SCALE=bilinear: softer compatibility scaling enabled";
+    } else if (!scale.isEmpty() && scale != "default") {
+        qWarning() << "[mpv] unknown NICONEON_MPV_SCALE; using default scaling (valid: default, bilinear)";
+    }
     const auto audioOutput = qgetenv("NICONEON_MPV_AO").trimmed();
     if (!audioOutput.isEmpty())
         mpv_set_option_string(m_mpv, "ao", audioOutput.constData());

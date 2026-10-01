@@ -63,6 +63,17 @@ if(NICONEON_BUILD_UI_E2E)
   set_tests_properties(rendernode_alignment_e2e PROPERTIES TIMEOUT 60 LABELS "e2e;opengl"
     ENVIRONMENT_MODIFICATION "${niconeon_test_environment}"
     ENVIRONMENT "QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;NICONEON_REQUIRE_OPENGL=1")
+  if(NICONEON_BUILD_APP)
+    qt_add_executable(video_overlay_e2e tests/e2e/video_overlay_e2e.cpp)
+    target_link_libraries(video_overlay_e2e PRIVATE niconeon_playback niconeon_render Qt6::Test)
+    if(qt_qml_type STREQUAL "SHARED_LIBRARY")
+      set_target_properties(video_overlay_e2e PROPERTIES QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+    endif()
+    add_test(NAME video_overlay_e2e COMMAND video_overlay_e2e)
+    set_tests_properties(video_overlay_e2e PROPERTIES TIMEOUT 90 LABELS "e2e;opengl"
+      ENVIRONMENT_MODIFICATION "${niconeon_test_environment}"
+      ENVIRONMENT "QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;NICONEON_REQUIRE_OPENGL=1")
+  endif()
 endif()
 
 if(UNIX AND NOT APPLE)

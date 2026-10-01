@@ -20,10 +20,20 @@ with tempfile.TemporaryDirectory(prefix="niconeon-exit-test-") as directory:
         "XDG_DATA_HOME": str(root / "data"),
         "XDG_CACHE_HOME": str(root / "cache"),
     })
-    result = subprocess.run([sys.argv[1]], env=environment, timeout=15,
-                            text=True, capture_output=True)
-    print(result.stdout, end="")
-    print(result.stderr, end="", file=sys.stderr)
-    if result.returncode != 0:
-        raise SystemExit(result.returncode)
-    print("Full application entered and exited its QML event loop successfully")
+    for mode in ("", "default", "bilinear", "invalid-test-value"):
+        environment["NICONEON_MPV_SCALE"] = mode
+        result = subprocess.run([sys.argv[1]], env=environment, timeout=15,
+                                text=True, capture_output=True)
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        if result.returncode != 0:
+            raise SystemExit(result.returncode)
+        if mode == "bilinear":
+            assert result.stderr.count("softer compatibility scaling enabled") == 1
+            assert "was rejected" not in result.stderr
+        elif mode == "invalid-test-value":
+            assert result.stderr.count("unknown NICONEON_MPV_SCALE") == 1
+            assert "compatibility scaling enabled" not in result.stderr
+        else:
+            assert "NICONEON_MPV_SCALE" not in result.stderr
+        print(f"Full application entered and exited its QML event loop: scale={mode or '<empty>'}")
