@@ -12,6 +12,11 @@ include(GNUInstallDirs)
 include(cmake/ProjectOptions.cmake)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui OpenGL Quick Qml QuickControls2 Network Sql Concurrent)
+# Qt 6.8 distributions export GuiPrivate from Gui; newer Qt installs may
+# provide it as a separate package. Both require matching private headers.
+if(NOT TARGET Qt6::GuiPrivate)
+  find_package(Qt6 6.8 REQUIRED COMPONENTS GuiPrivate)
+endif()
 if(WIN32 AND MINGW)
   # MSYS2's mpv.pc exposes POSIX /ucrt64 paths, which native CMake cannot
   # consume as imported include directories. Resolve the same UCRT64 SDK
@@ -41,7 +46,7 @@ add_library(niconeon_domain STATIC
 target_include_directories(niconeon_domain PUBLIC src)
 target_link_libraries(niconeon_domain PUBLIC Qt6::Core Qt6::Sql niconeon_options)
 if(WIN32)
-  target_link_libraries(niconeon_domain PRIVATE shell32 ole32)
+  target_link_libraries(niconeon_domain PRIVATE shell32 ole32 uuid)
 endif()
 
 add_library(niconeon_render STATIC
@@ -55,6 +60,7 @@ add_library(niconeon_render STATIC
 )
 target_include_directories(niconeon_render PUBLIC src)
 target_link_libraries(niconeon_render PUBLIC Qt6::Core Qt6::Gui Qt6::OpenGL Qt6::Quick Qt6::Qml niconeon_options)
+target_link_libraries(niconeon_render PRIVATE Qt6::GuiPrivate)
 
 function(niconeon_license_resources target)
   foreach(name LICENSE COPYING THIRD_PARTY_NOTICES.txt)

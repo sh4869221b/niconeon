@@ -29,7 +29,7 @@ IDなし・コメント取得失敗・キャッシュ不正でも、有効なロ
 
 ## 開発
 
-採用環境は C++23 対応 compiler、CMake 3.25+、Ninja、Qt 6.8+、libmpv、pkg-config、Qt SQL SQLite driver です。
+採用環境は C++23 対応 compiler、CMake 3.25+、Ninja、Qt 6.8+、同一 Qt build の GuiPrivate 開発ヘッダー（Debian: `qt6-base-private-dev`）、libmpv、pkg-config、Qt SQL SQLite driver です。GuiPrivate は renderer の render-target pixel size 取得だけに使い、Qt minor 更新時には rebuild と OpenGL 回帰テストが必要です。Windows UCRT64 は `qt6-base` package に同ヘッダーを含みます。
 Linux はディストリビューションの依存を使い、Windows は MSYS2 UCRT64 を使用します。
 
 ```sh

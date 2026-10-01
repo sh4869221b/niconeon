@@ -36,7 +36,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates git g++ cmake ninja-build pkgconf python3 \
-            qt6-base-dev qt6-base-dev-tools qt6-declarative-dev \
+            qt6-base-dev qt6-base-private-dev qt6-base-dev-tools qt6-declarative-dev \
             qt6-declarative-dev-tools libqt6sql6-sqlite libmpv-dev \
             qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
             qml6-module-qtquick-layouts qml6-module-qtqml-workerscript \
@@ -78,6 +78,8 @@ jobs:
           path: |
             tests.xml
             build/${{ matrix.preset }}/Testing/Temporary/
+            build/${{ matrix.preset }}/rendernode-alignment-failure.png
+            build/${{ matrix.preset }}/video-overlay-*.png
       - uses: actions/upload-artifact@v4
         if: matrix.preset == 'release'
         with:
@@ -101,7 +103,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git g++ cmake ninja-build pkgconf \
-            clang-format-19 clang-tidy-19 qt6-base-dev qt6-declarative-dev libmpv-dev
+            clang-format-19 clang-tidy-19 qt6-base-dev qt6-base-private-dev qt6-declarative-dev libmpv-dev
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_ref || github.ref }}
@@ -149,9 +151,9 @@ jobs:
           scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-windows-x86_64-binaries.zip
           unzip -Z1 dist/niconeon-windows-x86_64-binaries.zip | grep -E '/qt\.conf$'
           unzip -Z1 dist/niconeon-windows-x86_64-binaries.zip | grep -E '/sqldrivers/qsqlite\.dll$'
-          unzip -q dist/niconeon-windows-x86_64-binaries.zip -d dist/windows-runtime-smoke
-          timeout 30s env PATH=/usr/bin:/bin NICONEON_AUTO_EXIT_MS=1500 \
-            "${PWD}/dist/windows-runtime-smoke/niconeon-windows-x86_64/niconeon.exe"
+      - name: Diagnose clean Windows bundle startup
+        shell: pwsh
+        run: scripts/release/verify_windows_startup.ps1 -Archive dist/niconeon-windows-x86_64-binaries.zip
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -159,7 +161,10 @@ jobs:
           path: |
             tests.xml
             build/windows-release/Testing/Temporary/
+            dist/windows-runtime-smoke.log
+            dist/niconeon-windows-x86_64-dependency-report.txt
       - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('dist/niconeon-windows-x86_64-binaries.zip') != ''
         with:
           name: release-windows-binaries
           path: dist/niconeon-windows-x86_64-binaries.zip

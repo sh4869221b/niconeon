@@ -44,64 +44,6 @@ staging="$(mktemp -d "${TMPDIR:-/tmp}/niconeon-win-XXXXXX")"
 tool_shim_dir=""
 trap 'rm -rf "${staging}" "${tool_shim_dir}"' EXIT
 
-collect_ucrt_dll_deps() {
-  local output_file="$1"
-  shift
-  local -a pending=("$@")
-  local current=""
-  local dep=""
-  declare -A visited=()
-
-  : > "${output_file}"
-
-  while [[ ${#pending[@]} -gt 0 ]]; do
-    current="${pending[0]}"
-    pending=("${pending[@]:1}")
-    [[ -f "${current}" ]] || continue
-
-    while IFS= read -r dep; do
-      [[ -n "${dep}" ]] || continue
-      [[ -f "${dep}" ]] || continue
-
-      if [[ "${dep}" != /ucrt64/bin/*.dll ]]; then
-        continue
-      fi
-
-      if [[ -n "${visited["${dep}"]:-}" ]]; then
-        continue
-      fi
-
-      visited["${dep}"]=1
-      pending+=("${dep}")
-      printf '%s\n' "${dep}" >> "${output_file}"
-    done < <(
-      ldd "${current}" 2>/dev/null | awk '
-        /=>/ {
-          if ($3 ~ /^\/ucrt64\/bin\/.*\.dll$/) print $3
-        }
-        /^[[:space:]]*\/ucrt64\/bin\/.*\.dll/ {
-          path = $1
-          sub(/^[[:space:]]+/, "", path)
-          if (path ~ /^\/ucrt64\/bin\/.*\.dll$/) print path
-        }
-      '
-    )
-  done
-}
-
-copy_ucrt_dep_tree() {
-  local dep_file="$1"
-  local output_dir="$2"
-  local dep=""
-
-  [[ -f "${dep_file}" ]] || return 0
-
-  while IFS= read -r dep; do
-    [[ -n "${dep}" ]] || continue
-    cp -n "${dep}" "${output_dir}/$(basename "${dep}")"
-  done < "${dep_file}"
-}
-
 # MSYS2 Qt packages place helper tools under /ucrt64/share/qt6/bin.
 # Ensure windeployqt can find qmlimportscanner from PATH.
 if [[ -d "/ucrt64/share/qt6/bin" ]]; then
@@ -168,18 +110,14 @@ done
   --qmldir "${repo_root}/src/ui/qml" \
   "${staging}/${base}/niconeon.exe"
 
-# Ensure transitive runtime dependencies for all packaged binaries/plugins
-# are present in the top-level app directory.
-dep_list_file="${staging}/ucrt-deps.txt"
-dep_roots=("${staging}/${base}/niconeon.exe")
-if [[ -f "/ucrt64/bin/libmpv-2.dll" ]]; then
-  dep_roots+=("/ucrt64/bin/libmpv-2.dll")
-fi
-while IFS= read -r -d '' binary; do
-  dep_roots+=("${binary}")
-done < <(find "${staging}/${base}" -type f \( -iname "*.exe" -o -iname "*.dll" \) -print0)
-collect_ucrt_dll_deps "${dep_list_file}" "${dep_roots[@]}"
-copy_ucrt_dep_tree "${dep_list_file}" "${staging}/${base}"
+# Resolve PE imports directly: ldd can silently omit loader failures and is not
+# sufficient to qualify an SDK-path-independent Windows distribution.
+system_root="$(cygpath -u "${SYSTEMROOT:-${WINDIR:-C:\Windows}}")"
+python3 "${repo_root}/scripts/release/collect_windows_dlls.py" \
+  --bundle "${staging}/${base}" \
+  --sdk-bin /ucrt64/bin \
+  --system-dir "${system_root}/System32" \
+  --report "${out_dir}/${base}-dependency-report.txt"
 
 echo "staging size before zip:"
 du -sh "${staging}/${base}" || true

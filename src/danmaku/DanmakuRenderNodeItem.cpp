@@ -29,6 +29,7 @@
 #include <QSurfaceFormat>
 #include <QVector>
 #include <QtGlobal>
+#include <rhi/qrhi.h>
 
 #include <algorithm>
 #include <cmath>
@@ -170,7 +171,7 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
     }
 
     StateFlags changedStates() const override {
-        return BlendState | ScissorState | DepthState | StencilState | ColorState | CullState;
+        return ViewportState | BlendState | ScissorState | DepthState | StencilState | ColorState | CullState;
     }
 
     QRectF rect() const override {
@@ -191,6 +192,15 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         if (!projection) {
             return;
         }
+
+        // Qt 6 does not establish dynamic GL state before a custom render node.
+        // Query the actual target, including layer FBOs and high-DPI surfaces.
+        const auto *target = renderTarget();
+        if (!target || target->pixelSize().isEmpty()) {
+            return;
+        }
+        const QSize targetSize = target->pixelSize();
+        glViewport(0, 0, targetSize.width(), targetSize.height());
 
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);

@@ -1,15 +1,63 @@
 #!/usr/bin/env python3
 """Check the release layout and AppRun contract without downloading release tools."""
 from pathlib import Path
+import importlib.util
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class WindowsDependencyCollectorTests(unittest.TestCase):
+    def collector(self):
+        spec = importlib.util.spec_from_file_location(
+            "collect_windows_dlls", ROOT / "scripts/release/collect_windows_dlls.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_recursive_sdk_imports_and_system_allowances(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle, sdk, system = (root / name for name in ["bundle", "sdk", "system"])
+            for folder in [bundle, sdk, system]:
+                folder.mkdir()
+            (bundle / "niconeon.exe").write_bytes(b"fixture")
+            (sdk / "first.dll").write_bytes(b"first")
+            (sdk / "second.dll").write_bytes(b"second")
+            (system / "KERNEL32.dll").write_bytes(b"system")
+            imports = {"niconeon.exe": ["FIRST.dll", "KERNEL32.dll", "api-ms-win-core-test.dll"],
+                       "first.dll": ["second.dll"], "second.dll": ["KERNEL32.dll"]}
+            def inspect(command, **_):
+                return SimpleNamespace(stdout="\n".join(
+                    f"  DLL Name: {name}" for name in imports[Path(command[-1]).name.casefold()]))
+            with patch.object(collector.subprocess, "run", side_effect=inspect):
+                collector.collect(bundle, sdk, system, root / "report.txt", "objdump")
+            self.assertEqual((bundle / "first.dll").read_bytes(), b"first")
+            self.assertEqual((bundle / "second.dll").read_bytes(), b"second")
+            self.assertNotIn("MISSING", (root / "report.txt").read_text())
+
+    def test_missing_import_is_a_hard_failure_with_report(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle, sdk, system = (root / name for name in ["bundle", "sdk", "system"])
+            for folder in [bundle, sdk, system]:
+                folder.mkdir()
+            (bundle / "niconeon.exe").write_bytes(b"fixture")
+            with patch.object(collector.subprocess, "run", return_value=SimpleNamespace(
+                    stdout="  DLL Name: missing.dll\n")):
+                with self.assertRaisesRegex(RuntimeError, "missing.dll"):
+                    collector.collect(bundle, sdk, system, root / "report.txt", "objdump")
+            self.assertIn("MISSING", (root / "report.txt").read_text())
 
 
 @unittest.skipIf(os.name == "nt", "Bash/AppRun packaging layout is a Linux test")

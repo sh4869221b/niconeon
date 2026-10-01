@@ -2,6 +2,7 @@
 #include "danmaku/DanmakuRenderNodeItem.hpp"
 
 #include <QColor>
+#include <QDir>
 #include <QGuiApplication>
 #include <QImage>
 #include <QQmlComponent>
@@ -119,6 +120,16 @@ Item {
     width: 800
     height: 480
 
+    // Match Main.qml's ordinary background geometry before the custom render node.
+    // Qt 6.8's custom-node-only path can calculate clipping from an uninitialized
+    // cached native projection and leave the GL viewport at its initial 100x100.
+    // The pixel-count and translated-container assertions remain unchanged.
+    Rectangle {
+        anchors.fill: parent
+        color: "#33AA77"
+        z: -1
+    }
+
     DanmakuController {
         id: controller
         objectName: "controller"
@@ -169,8 +180,11 @@ Item {
 
     auto *controller = rootItem->findChild<DanmakuController *>(QStringLiteral("controller"));
     auto *container = rootItem->findChild<QQuickItem *>(QStringLiteral("container"));
+    auto *renderNode = rootItem->findChild<DanmakuRenderNodeItem *>();
     QVERIFY(controller);
     QVERIFY(container);
+    QVERIFY(renderNode);
+    QCOMPARE(renderNode->controller(), controller);
 
     controller->setViewportSize(container->width(), container->height());
     controller->setLaneMetrics(36, 6);
@@ -193,6 +207,7 @@ Item {
     const QColor background(QStringLiteral("#33AA77"));
 
     ForegroundBounds bounds;
+    QImage lastFrame;
     qreal detectedDevicePixelRatio = 1.0;
     for (int attempt = 0; attempt < 60; ++attempt) {
         QTest::qWait(25);
@@ -201,6 +216,7 @@ Item {
         if (frame.isNull()) {
             continue;
         }
+        lastFrame = frame;
 
         detectedDevicePixelRatio = std::max(frame.devicePixelRatio(), 1.0);
         const QRect deviceContainerRect = toDeviceRect(containerRect, detectedDevicePixelRatio);
@@ -210,6 +226,11 @@ Item {
         }
     }
 
+    if (bounds.pixelCount < kForegroundPixelMin && !lastFrame.isNull()) {
+        const auto path = QDir::current().absoluteFilePath(QStringLiteral("rendernode-alignment-failure.png"));
+        qWarning() << "alignment failure capture=" << path << "saved=" << lastFrame.save(path)
+                   << "foregroundPixels=" << bounds.pixelCount << "container=" << containerRect;
+    }
     QVERIFY2(bounds.pixelCount >= kForegroundPixelMin, "danmaku pixels were not rendered inside the viewport");
     const qreal minYInLogical = bounds.minY / detectedDevicePixelRatio;
     QVERIFY2(minYInLogical >= containerRect.top() + 6, "danmaku was rendered without item Y translation");

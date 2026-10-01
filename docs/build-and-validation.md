@@ -5,6 +5,7 @@
 - GCC 14+ or Clang 19+ with a C++23 standard library providing `std::expected`
 - CMake 3.25+, Ninja, pkgconf
 - Qt 6.8+: Core, Gui, OpenGL, Quick, Qml, QuickControls2, Network, Sql, Concurrent
+- Matching Qt GuiPrivate development headers for the QRhi render-target viewport query
 - Qt Test and QuickTest for the test suite
 - Qt QML imports: QtQuick Controls/Dialogs/Layouts, QtQml WorkerScript, QtCore, QtTest
 - QSQLITE driver and dynamically linked libmpv
@@ -16,7 +17,7 @@ CMake is the only build entry point. No generated RPC bridge or separate core ex
 ## Linux (Debian 13)
 
 ```sh
-sudo apt-get install g++ cmake ninja-build pkgconf qt6-base-dev qt6-declarative-dev \
+sudo apt-get install g++ cmake ninja-build pkgconf qt6-base-dev qt6-base-private-dev qt6-declarative-dev \
   libqt6sql6-sqlite libmpv-dev qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
   qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qml6-module-qtcore \
   qml6-module-qttest fonts-dejavu-core fonts-noto-cjk
@@ -134,3 +135,15 @@ The existing tag-release promotion workflow (`release.yml`) remains byte-identic
 That publication path has not been fully qualified for this migration. Actual release publication
 requires separate authorization and end-to-end release validation; successful PR packaging alone
 is not a release-promotion approval.
+
+## Limited Qt private-header dependency
+
+Only `niconeon_render` privately links `Qt6::GuiPrivate` to query
+`QSGRenderNode::renderTarget()->pixelSize()` through `<rhi/qrhi.h>`. The renderer uses the actual
+render-target pixel size and declares `ViewportState`; it does not infer this from the window size
+or add per-frame GL state queries. No new non-Qt runtime library is introduced.
+
+On Debian, install `qt6-base-private-dev` matching the exact installed Qt build. The UCRT64
+`mingw-w64-ucrt-x86_64-qt6-base` package already supplies the private headers and CMake config.
+These private interfaces are not guaranteed source/ABI-stable between Qt minor releases: rebuild
+against matching headers/runtime and rerun both strict OpenGL integration tests on every Qt upgrade.
