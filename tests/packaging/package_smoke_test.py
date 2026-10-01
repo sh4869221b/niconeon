@@ -23,6 +23,31 @@ class WindowsDependencyCollectorTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
+    def test_sqlite_selection_omits_unsupported_database_plugins(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory)
+            drivers = bundle / "sqldrivers"
+            drivers.mkdir()
+            (drivers / "QSQLite.DLL").write_bytes(b"sqlite")
+            for name in ["qsqlibase.dll", "qsqlmysql.dll", "qsqlpsql.dll", "qsqlodbc.dll"]:
+                (drivers / name).write_bytes(b"unsupported")
+            collector.retain_sqlite_driver(bundle)
+            self.assertEqual([file.name for file in drivers.iterdir()], ["QSQLite.DLL"])
+            self.assertEqual((drivers / "QSQLite.DLL").read_bytes(), b"sqlite")
+
+    def test_sqlite_selection_fails_before_removing_anything_if_required_driver_is_missing(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory)
+            drivers = bundle / "sqldrivers"
+            drivers.mkdir()
+            other = drivers / "qsqlmysql.dll"
+            other.write_bytes(b"unsupported")
+            with self.assertRaisesRegex(RuntimeError, "Required Qt SQLite driver"):
+                collector.retain_sqlite_driver(bundle)
+            self.assertTrue(other.exists())
+
     def test_recursive_sdk_imports_and_system_allowances(self):
         collector = self.collector()
         with tempfile.TemporaryDirectory() as directory:

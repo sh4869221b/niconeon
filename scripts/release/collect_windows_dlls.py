@@ -13,6 +13,18 @@ def dll_index(directory):
             if file.is_file() and file.suffix.casefold() == ".dll"}
 
 
+def retain_sqlite_driver(bundle):
+    """Keep only the application's supported SQL backend in an owned staging bundle."""
+    directory = bundle / "sqldrivers"
+    drivers = dll_index(directory) if directory.is_dir() else {}
+    if "qsqlite.dll" not in drivers:
+        raise RuntimeError("Required Qt SQLite driver is missing from the staging bundle")
+    for name, path in drivers.items():
+        if name != "qsqlite.dll":
+            print(f"Omitted unused SQL plugin: {path.name}")
+            path.unlink()
+
+
 def collect(bundle, sdk_bin, system_dir, report, objdump):
     roots = sorted(file for file in bundle.rglob("*")
                    if file.is_file() and file.suffix.casefold() in {".exe", ".dll"})
@@ -71,6 +83,10 @@ if __name__ == "__main__":
     parser.add_argument("--system-dir", required=True, type=Path)
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--objdump", default="objdump")
+    parser.add_argument("--sqlite-only", action="store_true",
+                        help="Keep only qsqlite in the staging bundle before checking imports")
     args = parser.parse_args()
+    if args.sqlite_only:
+        retain_sqlite_driver(args.bundle.resolve())
     collect(args.bundle.resolve(), args.sdk_bin.resolve(), args.system_dir.resolve(),
             args.report.resolve(), args.objdump)

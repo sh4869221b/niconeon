@@ -110,11 +110,13 @@ done
   --qmldir "${repo_root}/src/ui/qml" \
   "${staging}/${base}/niconeon.exe"
 
+# Only SQLite is supported. windeployqt may also copy optional SQL drivers whose
+# separate database-client runtimes are deliberately not part of this application.
 # Resolve PE imports directly: ldd can silently omit loader failures and is not
 # sufficient to qualify an SDK-path-independent Windows distribution.
 system_root="$(cygpath -u "${SYSTEMROOT:-${WINDIR:-C:\Windows}}")"
 python3 "${repo_root}/scripts/release/collect_windows_dlls.py" \
-  --bundle "${staging}/${base}" \
+  --bundle "${staging}/${base}" --sqlite-only \
   --sdk-bin /ucrt64/bin \
   --system-dir "${system_root}/System32" \
   --report "${out_dir}/${base}-dependency-report.txt"
