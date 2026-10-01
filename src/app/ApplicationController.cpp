@@ -215,7 +215,7 @@ void ApplicationController::togglePause() {
         m_player->togglePause();
 }
 void ApplicationController::seek(qint64 positionMs) {
-    if (!m_player)
+    if (!m_player || m_closing)
         return;
     m_seekTarget = std::clamp(positionMs, qint64(0), std::max(m_player->durationMs(), qint64(0)));
     m_waitingSeek = true;
@@ -486,6 +486,7 @@ void ApplicationController::shutdown() {
     if (m_closing)
         return;
     m_closing = true;
+    m_waitingSeek = false;
     m_seekTimer.stop();
     m_tickTimer.stop();
     m_renderTimer.stop();

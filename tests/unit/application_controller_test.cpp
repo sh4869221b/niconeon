@@ -67,6 +67,8 @@ class ControllerTest : public QObject {
         controller.seek(0);
         QVERIFY(timer->isActive());
         controller.shutdown();
+        controller.seek(0);
+        QVERIFY(!controller.seekPending());
         QVERIFY(!timer->isActive());
     }
 
