@@ -139,7 +139,7 @@ NICONEON_MPV_SCALE=bilinear ./build/debug/niconeon
 
 ## PR review round (2026-10-01)
 
-Four actionable review findings were reproduced and corrected after the initial green CI:
+Five actionable review findings were reproduced and corrected after the initial green CI:
 
 - **P2 — saturated profile updates:** the UI/settings changed while a full 32-command
   queue rejected the worker profile. A bounded latest-profile slot now survives saturation
@@ -160,6 +160,13 @@ Four actionable review findings were reproduced and corrected after the initial 
   request IDs, stale failures cannot clear a newer request, and one replaceable five-second
   timer reconciles to the actual media clock if position tolerance is never reached.
   Regression includes a real libmpv rejected seek with no media loaded.
+
+- **P2 — paused-seek batch clock mismatch:** manual playback showed a forward seek
+  while paused counted restored comments but left them offscreen until resume. The
+  worker reply can precede mpv's position notification; render preparation incorrectly
+  used the old player clock. It now uses the batch timestamp, matching the Rust/QML
+  baseline. A controller regression asserts a restored comment is inside the viewport
+  while the paused player still reports its old position.
 
 These changes do not alter default interpolation quality, add sanitizer suppressions,
 remove assertions, or grant CI write permissions. Final verification and current commit

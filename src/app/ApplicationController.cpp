@@ -10,7 +10,7 @@
 
 namespace niconeon {
 ApplicationController::ApplicationController(ServiceOptions options, QObject *parent)
-    : QObject(parent), m_service(std::move(options)), m_danmaku(this) {
+    : QObject(parent), m_service(std::move(options), this), m_danmaku(this) {
     QVector<double> values;
     const auto savedPresets =
         QJsonDocument::fromJson(m_settings.value("playback/ratePresetsJson", "[1.0,1.5,2.0]").toByteArray());
@@ -400,7 +400,10 @@ void ApplicationController::drainRenderBatch() {
                                        {"at_ms", comment.atMs},
                                        {"text", comment.text}});
     }
-    m_danmaku.appendComments(comments, m_player ? m_player->positionMs() : batch.positionMs);
+    // The worker batch is stamped with its own media position. During a seek
+    // it can arrive before mpv publishes the new clock; using the old player
+    // position would spawn every restored comment outside the viewport.
+    m_danmaku.appendComments(comments, batch.positionMs);
     if (batch.offset == batch.comments.size())
         m_renderQueue.dequeue();
 }

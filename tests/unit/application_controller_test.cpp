@@ -72,6 +72,36 @@ class ControllerTest : public QObject {
         QVERIFY(!timer->isActive());
     }
 
+    void pausedSeekBatchUsesItsOwnClockBeforePlayerCatchesUp() {
+        ServiceOptions options;
+        options.memoryStore = true;
+        ApplicationController controller(options);
+        MpvItem player;
+        controller.attachPlayer(&player);
+        controller.setCommentsVisible(true);
+        controller.danmaku()->setViewportSize(1280, 720);
+        controller.danmaku()->setPlaybackPaused(true);
+        auto *service = controller.findChild<CommentService *>();
+        QVERIFY(service);
+        QCOMPARE(player.positionMs(), 0);
+        PlaybackBatchResult batch;
+        batch.lastPositionMs = 15000;
+        batch.processedTicks = 1;
+        batch.emitComments = {
+            {QStringLiteral("restored"), 10000, QStringLiteral("u"), QStringLiteral("visible while paused")}};
+        emit service->commentsReady(batch);
+        QTRY_VERIFY(controller.danmaku()->renderSnapshot() &&
+                    !controller.danmaku()->renderSnapshot()->instances.isEmpty());
+        const auto snapshot = controller.danmaku()->renderSnapshot();
+        QCOMPARE(snapshot->instances.size(), 1);
+        const auto &item = snapshot->instances.first();
+        QVERIFY(item.x < 1280);
+        QVERIFY(item.x > 0);
+        QCOMPARE(player.positionMs(), 0);
+        QVERIFY(player.paused());
+        controller.shutdown();
+    }
+
     void settingsAndCommands() {
         ServiceOptions options;
         options.memoryStore = true;
