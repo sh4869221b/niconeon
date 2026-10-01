@@ -1,8 +1,10 @@
 #include "danmaku/DanmakuController.hpp"
 
+#include <QElapsedTimer>
 #include <QFont>
 #include <QGuiApplication>
 #include <QTest>
+#include <cmath>
 
 namespace {
 QVariantMap comment(int number, const QString &text = {}) {
@@ -29,7 +31,7 @@ class DanmakuRasterPipelineTest : public QObject {
         QVERIFY(accepted < input.size());
         QTest::qWait(150); // No render consumer: mailbox and completions fill.
         QVERIFY(controller.rasterMetrics().pending <= 128);
-        QVERIFY(controller.rasterMetrics().completed <= 16);
+        QVERIFY(controller.rasterMetrics().completed <= 32);
         QVERIFY(controller.rasterMetrics().completionBytes <= DanmakuTextSpriteCache::MaxSpriteBytes);
         QHash<DanmakuSpriteId, QImage> pixels;
         QElapsedTimer timer;
@@ -37,14 +39,15 @@ class DanmakuRasterPipelineTest : public QObject {
         while ((accepted != input.size() || controller.renderSnapshot()->instances.size() != input.size()) &&
                timer.elapsed() < 10000) {
             const auto uploads = controller.takePendingSpriteUploads();
-            QVERIFY(uploads.size() <= 8);
+            QVERIFY(uploads.size() <= 32);
             qint64 bytes = 0;
             for (const auto &upload : uploads) {
                 QVERIFY(!upload.image.isNull());
                 bytes += upload.image.sizeInBytes();
                 pixels.insert(upload.spriteId, upload.image);
             }
-            QVERIFY(bytes <= 512 * 1024 || (uploads.size() == 1 && bytes <= DanmakuTextSpriteCache::MaxSpriteBytes));
+            QVERIFY(bytes <= 2 * 1024 * 1024 ||
+                    (uploads.size() == 1 && bytes <= DanmakuTextSpriteCache::MaxSpriteBytes));
             accepted += controller.appendComments(input.mid(accepted), 0);
             QTest::qWait(10);
         }

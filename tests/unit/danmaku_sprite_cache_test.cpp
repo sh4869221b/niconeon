@@ -2,6 +2,7 @@
 #include "danmaku/DanmakuTextSpriteCache.hpp"
 
 #include "danmaku/DanmakuRenderStyle.hpp"
+#include <QElapsedTimer>
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QPainter>
@@ -229,6 +230,8 @@ class DanmakuSpriteCacheTest : public QObject {
             cache.ensureSprite(QString::number(i), 24, 1);
         QTRY_COMPARE(cache.metrics().completed, 3);
         QCOMPARE(cache.takeCompleted(2, 0).size(), 2);
+        QCOMPARE(cache.pendingRasterCountForTesting(), 1);
+        QVERIFY(cache.takeCompleted(2, 1, false).empty()); // nonempty mailbox has no oversize exception
         QCOMPARE(cache.pendingRasterCountForTesting(), 1);
         QCOMPARE(cache.takeCompleted(2, 1).size(), 1); // bounded single-image exception
         QCOMPARE(cache.pendingRasterCountForTesting(), 0);

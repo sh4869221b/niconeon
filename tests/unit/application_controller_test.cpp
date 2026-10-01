@@ -1,5 +1,6 @@
 #include "app/ApplicationController.hpp"
 #include "playback/MpvItem.hpp"
+#include <QElapsedTimer>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>

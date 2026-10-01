@@ -31,7 +31,7 @@ class DanmakuTextSpriteCache {
     struct Limits {
         int pendingRequests = 128;
         qint64 requestBytes = 4 * 1024 * 1024;
-        int completedSprites = 16;
+        int completedSprites = 32;
         qint64 completedBytes = 8 * 1024 * 1024;
     };
     struct Metrics {
@@ -72,7 +72,7 @@ class DanmakuTextSpriteCache {
     void cancelPending();
     void setFont(const QFont &font);
     EnsureResult ensureSprite(const QString &text, int fontPixelSize, qreal devicePixelRatio);
-    QVector<DanmakuSpriteUpload> takeCompleted(int maxSprites, qint64 maxBytes);
+    QVector<DanmakuSpriteUpload> takeCompleted(int maxSprites, qint64 maxBytes, bool allowOversize = true);
     Metrics metrics() const;
     void shutdown();
     bool isStopped() const;

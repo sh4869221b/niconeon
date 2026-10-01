@@ -17,10 +17,16 @@ composites already-rasterized images with QPainter; it does not shape/rasterize 
 |---|---|---|
 | GUI → raster, including in-flight and undrained completions | 128 current-generation unique requests and 4 MiB UTF-16 text | Return no admission; producer retries the unaccepted suffix |
 | CPU raster allocation | One image, at most 8 MiB | Invalid/oversize/failed raster produces a terminal failed completion and visible diagnostic, never an infinite retry |
-| Worker → GUI completion queue | 16 entries and 8 MiB images | Worker waits on its own condition variable, interruptible by generation/stop; one currently painted/held image is additional |
-| GUI → render upload mailbox | One batch: at most 8 sprites and 512 KiB target | Do not drain another completion batch until render consumes it; one image exceeding the target is admitted alone, hard maximum 8 MiB |
+| Worker → GUI completion queue | 32 entries and 8 MiB images | Worker waits on its own condition variable, interruptible by generation/stop; one currently painted/held image is additional |
+| GUI → render upload mailbox | One batch: at most 32 sprites and 2 MiB target | GUI callbacks commit at most 8 completions each, stopping at mailbox count/byte capacity; one image exceeding the target is admitted only to an empty mailbox, hard maximum 8 MiB |
 | Awaiting-comment activation | 256 comment records | Stop admission; duplicate text shares raster work but cannot grow this queue without limit |
 | Source batch retry | Existing two immutable, validated dataset-bounded batches; 64 conversion attempts/drain | Offset advances only by the returned accepted prefix; regular timeline ticks pause while the previous batch awaits admission |
+
+The per-callback GUI commit budget (8) is separate from the render mailbox capacity (32).
+Several short GUI callbacks may fill that one mailbox; a slower presentation clock must not
+artificially cap throughput at eight images per presented frame. The 2 MiB target limits
+burst size, while keeping backpressure at the mailbox rather than creating more mailboxes.
+This scheduling choice does not certify the whole-page atlas's high-density frame tails.
 
 No unbounded Qt queued raster invocations or per-completion signals are used. Worker results
 are polled by the existing frame timer, including during pause. Input text is limited to
@@ -28,7 +34,7 @@ are polled by the existing frame timer, including during pause. Input text is li
 1–256 px and finite DPR is 1–16. Byte arithmetic is checked before image allocation.
 
 The whole-page atlas upload mechanism remains unchanged: at most eight 2048×2048 RGBA pages
-(128 MiB) can be dirtied/uploaded in one render frame. The 512 KiB mailbox target describes
+(128 MiB) can be dirtied/uploaded in one render frame. The 2 MiB mailbox target describes
 sprite transfer, not actual GL page traffic. Partial-page uploads are #62, not claimed here.
 CPU images/ready-key metadata retained by the renderer/cache are **not** a new byte-budgeted
 LRU; that separate #64 work is still required. This patch bounds outstanding work, not every

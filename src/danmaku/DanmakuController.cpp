@@ -32,8 +32,9 @@ constexpr int kGlyphWarmupQueueMax = 2048;
 constexpr qreal kSpatialCellWidthPx = 192.0;
 constexpr qreal kDragPickSlopPx = 4.0;
 constexpr qint64 kWorkerElapsedCapMs = 200;
-constexpr int kSpriteRasterBudgetPerFrame = 8;
-constexpr qint64 kSpriteUploadBudgetBytesPerFrame = 512 * 1024;
+constexpr int kSpriteCompletionCommitPerDrain = 8;
+constexpr int kSpriteUploadMailboxCapacity = 32;
+constexpr qint64 kSpriteUploadBudgetBytesPerFrame = 2 * 1024 * 1024;
 constexpr const char *kGlyphWarmupSeed = "0123456789"
                                          "abcdefghijklmnopqrstuvwxyz"
                                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -226,6 +227,7 @@ void DanmakuController::setGlyphWarmupEnabled(bool enabled) {
 int DanmakuController::appendComments(const QVariantList &comments, qint64 playbackPositionMs, qreal sourceMotionTime) {
     if (m_rasterClosing)
         return 0;
+    drainRasterResults();
     int accepted = 0;
     for (const QVariant &entry : comments) {
         const QVariantMap map = entry.toMap();
@@ -1309,15 +1311,21 @@ void DanmakuController::clearGlyphWarmupText() {
 bool DanmakuController::drainRasterResults() {
     {
         QMutexLocker locker(&m_pendingSpriteUploadsMutex);
-        // A single mailbox batch, rather than a new batch per GUI timer tick:
-        // a paused/stalled render thread applies backpressure all the way to
-        // the bounded raster request queue and the source batch cursor.
-        if (!m_pendingSpriteUploads.isEmpty())
+        // Multiple short GUI drains may fill one bounded render mailbox.
+        // This preserves admission throughput when GUI and presentation clocks
+        // differ, without accumulating one unbounded batch per GUI callback.
+        qint64 currentBytes = 0;
+        for (const auto &upload : m_pendingSpriteUploads)
+            currentBytes += upload.image.sizeInBytes();
+        const int room = kSpriteUploadMailboxCapacity - static_cast<int>(m_pendingSpriteUploads.size());
+        if (room <= 0 || currentBytes >= kSpriteUploadBudgetBytesPerFrame)
             return false;
-        m_pendingSpriteUploads =
-            m_textSpriteCache.takeCompleted(kSpriteRasterBudgetPerFrame, kSpriteUploadBudgetBytesPerFrame);
-        if (m_pendingSpriteUploads.isEmpty())
+        auto ready = m_textSpriteCache.takeCompleted(std::min(room, kSpriteCompletionCommitPerDrain),
+                                                     kSpriteUploadBudgetBytesPerFrame - currentBytes,
+                                                     m_pendingSpriteUploads.empty());
+        if (ready.empty())
             return false;
+        m_pendingSpriteUploads.append(std::move(ready));
         qint64 bytes = 0;
         for (const auto &upload : m_pendingSpriteUploads)
             bytes += upload.image.sizeInBytes();

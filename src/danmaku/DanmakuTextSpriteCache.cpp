@@ -36,7 +36,7 @@ struct DanmakuTextSpriteCache::State {
     explicit State(Limits requested, BeforeRaster hook)
         : limits{std::clamp(requested.pendingRequests, 1, 128),
                  std::clamp<qint64>(requested.requestBytes, 2, 4 * 1024 * 1024),
-                 std::clamp(requested.completedSprites, 1, 16),
+                 std::clamp(requested.completedSprites, 1, 32),
                  std::clamp<qint64>(requested.completedBytes, 1, MaxSpriteBytes)},
           beforeRaster(std::move(hook)), worker([this] { run(); }) {}
 
@@ -205,14 +205,15 @@ DanmakuTextSpriteCache::EnsureResult DanmakuTextSpriteCache::ensureSprite(const 
     m_state->changed.notify_one();
     return {id, 0, true, false, false};
 }
-QVector<DanmakuSpriteUpload> DanmakuTextSpriteCache::takeCompleted(int maxSprites, qint64 maxBytes) {
+QVector<DanmakuSpriteUpload> DanmakuTextSpriteCache::takeCompleted(int maxSprites, qint64 maxBytes,
+                                                                   bool allowOversize) {
     QVector<DanmakuSpriteUpload> uploads;
     qint64 bytes = 0;
     std::lock_guard lock(m_state->mutex);
     while (!m_state->completions.empty() && uploads.size() < maxSprites) {
         const auto &front = m_state->completions.front();
         const qint64 nextBytes = front.upload.image.sizeInBytes();
-        if (maxBytes > 0 && !uploads.empty() && bytes + nextBytes > maxBytes)
+        if (maxBytes > 0 && (!uploads.empty() || !allowOversize) && bytes + nextBytes > maxBytes)
             break;
         auto completed = std::move(m_state->completions.front());
         m_state->completions.pop_front();
