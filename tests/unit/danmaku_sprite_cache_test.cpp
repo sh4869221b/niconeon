@@ -48,6 +48,12 @@ bool hasInk(const QImage &image) {
 class DanmakuSpriteCacheTest : public QObject {
     Q_OBJECT
   private slots:
+    void init() {
+        qputenv("NICONEON_RENDER_DIAGNOSTICS", "0");
+    }
+    void cleanup() {
+        qunsetenv("NICONEON_RENDER_DIAGNOSTICS");
+    }
     void atlasPackerDoesNotOverlap() {
         DanmakuAtlasPacker packer(QSize(256, 256));
         QVector<QRect> rects;
@@ -246,6 +252,39 @@ class DanmakuSpriteCacheTest : public QObject {
             QTRY_VERIFY(cache.isStopped());
             QCOMPARE(cache.metrics().pending, 0);
         }
+    }
+    void diagnosticTimestampsSeparateRasterFromGuiCommit() {
+        qputenv("NICONEON_RENDER_DIAGNOSTICS", "1");
+        DanmakuTextSpriteCache cache;
+        cache.ensureSprite("timed", 24, 1);
+        QTRY_COMPARE(cache.metrics().completed, 1);
+        const auto beforeCommit =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        const auto uncommitted = cache.lookupSprite("timed", 24, 1);
+        QVERIFY(!uncommitted.ready);
+        QCOMPARE(uncommitted.rasterCompletedAtNs, 0); // Worker state is not read by the GUI index.
+        QTest::qWait(25);
+        cache.takeCompleted(1, 0);
+        const auto ready = cache.lookupSprite("timed", 24, 1);
+        QVERIFY(ready.ready);
+        QVERIFY(ready.rasterCompletedAtNs > 0);
+        QVERIFY(ready.rasterCompletedAtNs <= beforeCommit);
+        QVERIFY(ready.guiReadyAtNs > beforeCommit);
+        cache.cancelPending();
+        const auto reused = cache.ensureSprite("timed", 24, 1);
+        QCOMPARE(reused.rasterCompletedAtNs, ready.rasterCompletedAtNs);
+        QCOMPARE(reused.guiReadyAtNs, ready.guiReadyAtNs);
+    }
+    void disabledDiagnosticsKeepZeroTimestamps() {
+        DanmakuTextSpriteCache cache;
+        cache.ensureSprite("untimed", 24, 1);
+        QTRY_COMPARE(cache.metrics().completed, 1);
+        cache.takeCompleted(1, 0);
+        const auto ready = cache.ensureSprite("untimed", 24, 1);
+        QVERIFY(ready.ready);
+        QCOMPARE(ready.rasterCompletedAtNs, 0);
+        QCOMPARE(ready.guiReadyAtNs, 0);
     }
 };
 QTEST_MAIN(DanmakuSpriteCacheTest)

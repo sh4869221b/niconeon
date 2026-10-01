@@ -2,16 +2,15 @@
 # One display, no concurrent compilation or benchmarks. A failed prerequisite
 # keeps its raw data and cannot turn into a successful performance claim.
 set -u -o pipefail
+unset NICONICO_COOKIE NICONEON_NICONICO_COOKIE
 root="$(pwd)"
 baseline="$root/../raster-baseline/build/evidence"
 candidate="$root/build/evidence"
 video="$root/evidence/motion_sm9.mp4"
+mode="${1:-all}"
 status=0
-for arm in baseline candidate; do
-  binary="$candidate/real_render_profile"
-  [[ "$arm" == baseline ]] && binary="$baseline/real_render_profile"
-  QT_QPA_PLATFORM=xcb timeout 90s "$binary" --sample-mode pixels --output "$root/evidence/pixel-$arm.json" > "$root/evidence/pixel-$arm.log" 2>&1 || status=1
-done
+[[ "$mode" == all || "$mode" == timing || "$mode" == quality ]] || exit 2
+if [[ "$mode" == timing || "$mode" == all ]]; then
 # Discovery pass only: two balanced AB/BA pairs, not a statistical acceptance claim.
 python3 tests/perf/run_real_render_comparison.py \
   --baseline "$baseline/real_render_profile" --candidate "$candidate/real_render_profile" \
@@ -43,5 +42,19 @@ SETTINGS
     NICONEON_SYNTHETIC_BASE_PER_SEC=400 NICONEON_SYNTHETIC_RAMP_PER_SEC=0 NICONEON_SYNTHETIC_MAX_PER_SEC=400 \
     timeout 70s "$binary" > "$run/run.log" 2>&1 || status=1
 done
-printf 'measurement_exit=%s\n' "$status" > "$root/evidence/measurement-status.txt"
+fi
+if [[ "$mode" == quality || "$mode" == all ]]; then
+# Keep failures from each independent correctness scenario in its own artifact.
+for dpr in 1 2; do
+  for suite in basic wide atlas-pressure active-capacity; do
+    run="$root/evidence/pixel-candidate-$suite-dpr$dpr"
+    QT_QPA_PLATFORM=xcb QT_SCALE_FACTOR="$dpr" timeout 150s "$candidate/real_render_profile" \
+      --sample-mode pixels --pixel-suite "$suite" --expected-dpr "$dpr" --output "$run.json" > "$run.log" 2>&1 || status=1
+  done
+done
+QT_QPA_PLATFORM=xcb QT_SCALE_FACTOR=1 timeout 90s "$baseline/real_render_profile" \
+  --sample-mode pixels --pixel-suite basic --expected-dpr 1 --output "$root/evidence/pixel-baseline.json" \
+  > "$root/evidence/pixel-baseline.log" 2>&1 || status=1
+fi
+printf 'measurement_exit=%s\n' "$status" > "$root/evidence/$mode-status.txt"
 exit "$status"

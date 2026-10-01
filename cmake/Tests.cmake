@@ -24,6 +24,7 @@ niconeon_test(danmaku_text_width_test tests/unit/danmaku_text_width_test.cpp nic
 niconeon_test(danmaku_ng_drop_test tests/unit/danmaku_ng_drop_test.cpp niconeon_render)
 niconeon_test(danmaku_sprite_cache_test tests/unit/danmaku_sprite_cache_test.cpp niconeon_render)
 niconeon_test(danmaku_raster_pipeline_test tests/unit/danmaku_raster_pipeline_test.cpp niconeon_render)
+niconeon_test(danmaku_atlas_repack_test tests/unit/danmaku_atlas_repack_test.cpp niconeon_render)
 niconeon_test(license_resource_test tests/unit/license_resource_test.cpp Qt6::Core)
 niconeon_license_resources(license_resource_test)
 

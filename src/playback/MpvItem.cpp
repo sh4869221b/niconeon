@@ -2,13 +2,16 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QMutexLocker>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
 #include <QQuickOpenGLUtils>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QThread>
 #include <QUrl>
 #include <algorithm>
+#include <chrono>
 #include <clocale>
 #include <cmath>
 extern "C" {
@@ -25,7 +28,33 @@ class MpvNotifier : public QObject {
     void renderReady();
     void renderFailed();
 };
+namespace {
+qint64 mpvTraceNowNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+} // namespace
 struct MpvState {
+    const bool tracing = qEnvironmentVariableIntValue("NICONEON_RENDER_DIAGNOSTICS") == 1;
+    QMutex traceMutex;
+    MpvDiagnostics diagnostics;
+    qsizetype samplesRead = 0;
+    MpvState() {
+        diagnostics.enabled = tracing;
+        if (tracing)
+            diagnostics.samples.reserve(MpvDiagnostics::Capacity);
+    }
+    void record(const char *operation, qint64 started) {
+        if (!tracing)
+            return;
+        const auto elapsed = mpvTraceNowNs() - started;
+        QMutexLocker locker(&traceMutex);
+        if (diagnostics.samples.size() < MpvDiagnostics::Capacity)
+            diagnostics.samples.push_back({started, elapsed, QByteArray(operation)});
+        else
+            ++diagnostics.overflow;
+    }
+
     mpv_handle *handle = nullptr;
     mpv_render_context *renderContext = nullptr; // exclusively render-thread owned
     std::shared_ptr<MpvNotifier> notifier;
@@ -89,7 +118,9 @@ class MpvRenderer : public QQuickFramebufferObject::Renderer {
         mpv_render_param parameters[] = {{MPV_RENDER_PARAM_OPENGL_FBO, &target},
                                          {MPV_RENDER_PARAM_FLIP_Y, &flip},
                                          {MPV_RENDER_PARAM_INVALID, nullptr}};
+        const auto renderStarted = m_state->tracing ? mpvTraceNowNs() : 0;
         mpv_render_context_render(m_state->renderContext, parameters);
+        m_state->record("render", renderStarted);
         // libmpv alters GL state; restore Qt Quick's expected baseline before comments/controls.
         QQuickOpenGLUtils::resetOpenGLState();
     }
@@ -157,6 +188,16 @@ MpvItem::~MpvItem() {
     if (m_state && m_state->notifier)
         disconnect(m_state->notifier.get(), nullptr, this, nullptr);
     m_mpv = nullptr;
+}
+MpvDiagnostics MpvItem::takeDiagnostics() {
+    QMutexLocker locker(&m_state->traceMutex);
+    MpvDiagnostics result;
+    result.enabled = m_state->tracing;
+    result.overflow = m_state->diagnostics.overflow;
+    result.samples.reserve(m_state->diagnostics.samples.size() - m_state->samplesRead);
+    while (m_state->samplesRead < m_state->diagnostics.samples.size())
+        result.samples.push_back(m_state->diagnostics.samples[m_state->samplesRead++]);
+    return result;
 }
 QQuickFramebufferObject::Renderer *MpvItem::createRenderer() const {
     return new MpvRenderer(m_state);
@@ -295,6 +336,14 @@ void MpvItem::pollProperties() {
         return;
     }
 
+    const auto pollStarted = m_state->tracing ? mpvTraceNowNs() : 0;
+    const auto pollGuard = qScopeGuard([&] { m_state->record("poll", pollStarted); });
+    const auto getProperty = [this](const char *name, mpv_format format, void *value) {
+        const auto started = m_state->tracing ? mpvTraceNowNs() : 0;
+        const auto result = mpv_get_property(m_mpv, name, format, value);
+        m_state->record(name, started);
+        return result;
+    };
     for (int count = 0; count < 128; ++count) {
         const auto *event = mpv_wait_event(m_mpv, 0);
         if (!event || event->event_id == MPV_EVENT_NONE)
@@ -313,7 +362,7 @@ void MpvItem::pollProperties() {
         }
     }
     double posSec = 0.0;
-    if (mpv_get_property(m_mpv, "time-pos", MPV_FORMAT_DOUBLE, &posSec) >= 0) {
+    if (getProperty("time-pos", MPV_FORMAT_DOUBLE, &posSec) >= 0) {
         const qint64 newPos = static_cast<qint64>(posSec * 1000.0);
         if (newPos != m_positionMs) {
             m_positionMs = newPos;
@@ -322,7 +371,7 @@ void MpvItem::pollProperties() {
     }
 
     double durSec = 0.0;
-    if (mpv_get_property(m_mpv, "duration", MPV_FORMAT_DOUBLE, &durSec) >= 0) {
+    if (getProperty("duration", MPV_FORMAT_DOUBLE, &durSec) >= 0) {
         const qint64 newDur = static_cast<qint64>(durSec * 1000.0);
         if (newDur != m_durationMs) {
             m_durationMs = newDur;
@@ -331,7 +380,7 @@ void MpvItem::pollProperties() {
     }
 
     int pauseFlag = 0;
-    if (mpv_get_property(m_mpv, "pause", MPV_FORMAT_FLAG, &pauseFlag) >= 0) {
+    if (getProperty("pause", MPV_FORMAT_FLAG, &pauseFlag) >= 0) {
         const bool paused = pauseFlag != 0;
         if (paused != m_paused) {
             m_paused = paused;
@@ -340,7 +389,7 @@ void MpvItem::pollProperties() {
     }
 
     double volumeValue = 0.0;
-    if (mpv_get_property(m_mpv, "volume", MPV_FORMAT_DOUBLE, &volumeValue) >= 0) {
+    if (getProperty("volume", MPV_FORMAT_DOUBLE, &volumeValue) >= 0) {
         if (!qFuzzyCompare(volumeValue + 1.0, m_volume + 1.0)) {
             m_volume = volumeValue;
             emit volumeChanged();
@@ -348,7 +397,7 @@ void MpvItem::pollProperties() {
     }
 
     double speedValue = 1.0;
-    if (mpv_get_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &speedValue) >= 0) {
+    if (getProperty("speed", MPV_FORMAT_DOUBLE, &speedValue) >= 0) {
         if (!qFuzzyCompare(speedValue + 1.0, m_speed + 1.0)) {
             m_speed = speedValue;
             emit speedChanged();
@@ -357,10 +406,10 @@ void MpvItem::pollProperties() {
 
     // UI 表示用途のため、無効な値を取得した場合は直前の値を保持する。
     double fpsValue = 0.0;
-    int fpsStatus = mpv_get_property(m_mpv, "estimated-vf-fps", MPV_FORMAT_DOUBLE, &fpsValue);
+    int fpsStatus = getProperty("estimated-vf-fps", MPV_FORMAT_DOUBLE, &fpsValue);
     if (fpsStatus < 0 || !std::isfinite(fpsValue) || fpsValue <= 0.0) {
         fpsValue = 0.0;
-        fpsStatus = mpv_get_property(m_mpv, "container-fps", MPV_FORMAT_DOUBLE, &fpsValue);
+        fpsStatus = getProperty("container-fps", MPV_FORMAT_DOUBLE, &fpsValue);
     }
     if (fpsStatus >= 0 && std::isfinite(fpsValue) && fpsValue > 0.0 &&
         !qFuzzyCompare(fpsValue + 1.0, m_videoFps + 1.0)) {

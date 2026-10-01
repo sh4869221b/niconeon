@@ -22,6 +22,7 @@ jobs:
       LP_NUM_THREADS: '2'
       CMAKE_BUILD_PARALLEL_LEVEL: '2'
       NICONEON_MPV_SCALE: default
+      LANG: C.UTF-8
     steps:
       - name: Install supported comparison toolchain
         run: |
@@ -58,10 +59,10 @@ jobs:
           git -C ../raster-baseline rev-parse HEAD > evidence/baseline-head.txt
           git -C ../raster-baseline diff > evidence/baseline-observer-applied.patch
           dpkg-query -W > evidence/packages.txt
-      - name: Isolated real-render profiling and pixel checks
+      - name: Isolated real-render timing and normal QoS
         id: measurement
         run: |
-          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x1024x24 -ac' bash tests/perf/ci_evidence.sh
+          dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1600x24 -ac' bash tests/perf/ci_evidence.sh timing
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -73,4 +74,18 @@ jobs:
             evidence/**/*.txt
             evidence/**/*.sha256
             evidence/**/*.patch
+          retention-days: 14
+      - name: Untimed text and atlas-pressure pixel checks
+        if: ${{ !cancelled() && steps.measurement.outcome != 'skipped' }}
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1600x24 -ac' bash tests/perf/ci_evidence.sh quality
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: raster-pixels-${{ github.event.pull_request.head.sha }}
+          path: |
+            evidence/pixel-*.json
+            evidence/pixel-*.log
+            evidence/pixel-*.png
+            evidence/quality-status.txt
           retention-days: 14

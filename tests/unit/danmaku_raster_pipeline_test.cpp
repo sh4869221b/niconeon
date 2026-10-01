@@ -20,6 +20,14 @@ class DanmakuRasterPipelineTest : public QObject {
     void initTestCase() {
         qputenv("NICONEON_DANMAKU_WORKER", "on");
     }
+    void init() {
+        qputenv("NICONEON_RENDER_DIAGNOSTICS", "0");
+        qputenv("NICONEON_DANMAKU_WORKER", "on");
+    }
+    void cleanup() {
+        qunsetenv("NICONEON_RENDER_DIAGNOSTICS");
+        qputenv("NICONEON_DANMAKU_WORKER", "on");
+    }
     void renderStallBackpressuresAndRetryLosesNoText() {
         DanmakuController controller;
         controller.setPlaybackPaused(true);
@@ -214,6 +222,190 @@ class DanmakuRasterPipelineTest : public QObject {
         controller.shutdownRaster();
         QCOMPARE(controller.appendComments({comment(2)}, 0), 0);
         QTRY_VERIFY(controller.rasterStopped());
+    }
+    void timingDiagnosticsAreDisabledByDefault() {
+        qunsetenv("NICONEON_RENDER_DIAGNOSTICS");
+        DanmakuController controller;
+        QCOMPARE(controller.appendComments({comment(1)}, 0), 1);
+        QTRY_COMPARE(controller.pendingCommentCountForTesting(), 0);
+        controller.shutdownRaster();
+        const auto batch = controller.takeCommentTimingDiagnostics();
+        QVERIFY(!batch.enabled);
+        QVERIFY(batch.records.isEmpty());
+        QVERIFY(batch.pending.isEmpty());
+        QCOMPARE(batch.recordedComments, 0);
+        QCOMPARE(batch.droppedComments, 0);
+    }
+    void timingSeparatesSourceLagFromSourceMotion() {
+        qputenv("NICONEON_RENDER_DIAGNOSTICS", "1");
+        DanmakuController controller;
+        controller.setViewportSize(0, 720);
+        QCOMPARE(controller.appendComments({comment(1, "x")}, 30000), 1);
+        QTRY_COMPARE(controller.pendingCommentCountForTesting(), 0);
+        auto batch = controller.takeCommentTimingDiagnostics();
+        QCOMPARE(batch.records.size(), 1);
+        const auto lagged = batch.records.first();
+        QCOMPARE(lagged.outcome, DanmakuCommentTimingOutcome::Expired);
+        QCOMPARE(lagged.expiryOrigin, DanmakuCommentExpiryOrigin::SourceLag);
+        QCOMPARE(lagged.sourceLagMs, 30000); // Raw lag, before the existing 15s compensation cap.
+        QCOMPARE(lagged.sourceMotionDelaySeconds, 0);
+        QVERIFY(lagged.initialX + lagged.widthEstimate < -20);
+        QVERIFY(lagged.admittedAtNs > 0);
+        QVERIFY(lagged.rasterCompletedAtNs > 0);
+        QVERIFY(lagged.guiReadyAtNs >= lagged.admittedAtNs);
+        QVERIFY(lagged.guiReadyAtNs >= lagged.rasterCompletedAtNs);
+        QVERIFY(lagged.resolvedAtNs >= lagged.guiReadyAtNs);
+
+        controller.setPlaybackRate(3);
+        controller.setPlaybackPaused(false);
+        QTRY_VERIFY(controller.motionTime() > 1.0);
+        controller.setPlaybackPaused(true);
+        const auto beforeAdmission = controller.motionTime();
+        QCOMPARE(controller.appendComments({comment(2, "x")}, 0, 0), 1);
+        batch = controller.takeCommentTimingDiagnostics();
+        QCOMPARE(batch.records.size(), 1);
+        const auto deferred = batch.records.first();
+        QCOMPARE(deferred.outcome, DanmakuCommentTimingOutcome::Expired);
+        QCOMPARE(deferred.expiryOrigin, DanmakuCommentExpiryOrigin::SourceMotion);
+        QCOMPARE(deferred.sourceLagMs, 0);
+        QCOMPARE(deferred.sourceMotionDelaySeconds, beforeAdmission);
+        QCOMPARE(deferred.rasterMotionDelaySeconds, 0);
+        QVERIFY(deferred.initialX + deferred.widthEstimate >= -20);
+        QVERIFY(deferred.admissionX + deferred.widthEstimate < -20);
+        // Warm shared sprites retain their true timestamps, even before admission.
+        QCOMPARE(deferred.rasterCompletedAtNs, lagged.rasterCompletedAtNs);
+        QCOMPARE(deferred.guiReadyAtNs, lagged.guiReadyAtNs);
+        QVERIFY(deferred.guiReadyAtNs < deferred.admittedAtNs);
+    }
+    void timingIdentifiesPostAdmissionWaitExpiry() {
+        qputenv("NICONEON_RENDER_DIAGNOSTICS", "1");
+        DanmakuController controller;
+        controller.setViewportSize(0, 720);
+        QVariantList input;
+        for (int i = 0; i < 64; ++i)
+            input.push_back(comment(i, QStringLiteral("x%1").arg(i)));
+        QCOMPARE(controller.appendComments(input, 0), input.size());
+        QTest::qWait(100);
+        QVERIFY(controller.pendingCommentCountForTesting() > 0); // Bounded upload mailbox is stalled.
+        controller.setPlaybackRate(3);
+        controller.setPlaybackPaused(false);
+        QTRY_VERIFY(controller.motionTime() > 1.0);
+        controller.setPlaybackPaused(true);
+        QElapsedTimer timer;
+        timer.start();
+        while (controller.pendingCommentCountForTesting() && timer.elapsed() < 5000) {
+            controller.takePendingSpriteUploads();
+            QTest::qWait(10);
+        }
+        QCOMPARE(controller.pendingCommentCountForTesting(), 0);
+        const auto batch = controller.takeCommentTimingDiagnostics();
+        QCOMPARE(batch.records.size(), input.size());
+        int expired = 0;
+        for (const auto &record : batch.records) {
+            QCOMPARE(record.sourceLagMs, 0);
+            QCOMPARE(record.sourceMotionDelaySeconds, 0);
+            if (record.outcome != DanmakuCommentTimingOutcome::Expired)
+                continue;
+            ++expired;
+            QCOMPARE(record.expiryOrigin, DanmakuCommentExpiryOrigin::RasterWait);
+            QVERIFY(record.admissionX + record.widthEstimate >= -20);
+            QVERIFY(record.resolvedX + record.widthEstimate < -20);
+            QVERIFY(record.rasterMotionDelaySeconds > 0);
+            QVERIFY(record.rasterCompletedAtNs > 0);
+            QVERIFY(record.guiReadyAtNs >= record.admittedAtNs);
+            QVERIFY(record.guiReadyAtNs >= record.rasterCompletedAtNs);
+            QVERIFY(record.resolvedAtNs >= record.guiReadyAtNs);
+        }
+        QVERIFY(expired > 0);
+        QCOMPARE(controller.expiredRasterComments(), expired);
+    }
+    void timingRetainsPendingShutdownAndOtherCancellations_data() {
+        QTest::addColumn<int>("reason");
+        QTest::newRow("shutdown") << static_cast<int>(DanmakuCommentCancellationReason::Shutdown);
+        QTest::newRow("seek") << static_cast<int>(DanmakuCommentCancellationReason::Seek);
+        QTest::newRow("session") << static_cast<int>(DanmakuCommentCancellationReason::Session);
+        QTest::newRow("ng") << static_cast<int>(DanmakuCommentCancellationReason::Ng);
+    }
+    void timingRetainsPendingShutdownAndOtherCancellations() {
+        QFETCH(int, reason);
+        qputenv("NICONEON_RENDER_DIAGNOSTICS", "1");
+        DanmakuController controller;
+        QCOMPARE(controller.appendComments({comment(1), comment(2), comment(3)}, 0), 3);
+        const auto pending = controller.takeCommentTimingDiagnostics();
+        QCOMPARE(pending.pending.size(), 3);
+        QVERIFY(pending.records.isEmpty());
+        QCOMPARE(pending.recordedComments, 0);
+        const auto coalesced = controller.rasterMetrics().coalesced;
+        QCOMPARE(controller.takeCommentTimingDiagnostics().pending.size(), 3);
+        QCOMPARE(controller.rasterMetrics().coalesced, coalesced);
+        for (const auto &record : pending.pending) {
+            QCOMPARE(record.outcome, DanmakuCommentTimingOutcome::Pending);
+            QVERIFY(record.admittedAtNs > 0);
+            QCOMPARE(record.resolvedAtNs, 0);
+        }
+        const auto cancellation = static_cast<DanmakuCommentCancellationReason>(reason);
+        switch (cancellation) {
+        case DanmakuCommentCancellationReason::Shutdown:
+            controller.shutdownRaster();
+            break;
+        case DanmakuCommentCancellationReason::Seek:
+            controller.resetForSeek();
+            break;
+        case DanmakuCommentCancellationReason::Session:
+            controller.resetGlyphSession();
+            break;
+        case DanmakuCommentCancellationReason::Ng:
+            controller.applyNgUserFade("user");
+            break;
+        case DanmakuCommentCancellationReason::None:
+            QFAIL("Unexpected cancellation reason");
+        }
+        const auto terminal = controller.takeCommentTimingDiagnostics();
+        QCOMPARE(terminal.records.size(), 3);
+        QCOMPARE(terminal.recordedComments, 3);
+        QVERIFY(terminal.pending.isEmpty());
+        for (const auto &record : terminal.records) {
+            QCOMPARE(record.outcome, DanmakuCommentTimingOutcome::Cancelled);
+            QCOMPARE(record.cancellationReason, cancellation);
+            QVERIFY(record.resolvedAtNs >= record.admittedAtNs);
+        }
+        QVERIFY(controller.takeCommentTimingDiagnostics().records.isEmpty());
+    }
+    void timingLifetimeCapSurvivesDrainsAndSeeks() {
+        qputenv("NICONEON_RENDER_DIAGNOSTICS", "1");
+        qputenv("NICONEON_DANMAKU_WORKER", "off");
+        DanmakuController controller;
+        QCOMPARE(controller.appendComments({comment(1, "x")}, 0), 1);
+        QTRY_COMPARE(controller.pendingCommentCountForTesting(), 0);
+        quint64 totalRecorded = controller.takeCommentTimingDiagnostics().records.size();
+        QVariantList input;
+        for (int i = 0; i < 256; ++i)
+            input.push_back(comment(i, "x"));
+        quint64 totalAccepted = 1;
+        for (int i = 0; i < DanmakuCommentTimingBatch::CommentCapacity / input.size() + 1; ++i) {
+            controller.resetForSeek();
+            totalAccepted += controller.appendComments(input, 0);
+            if (i % 8 == 0)
+                totalRecorded += controller.takeCommentTimingDiagnostics().records.size();
+        }
+        const auto batch = controller.takeCommentTimingDiagnostics();
+        totalRecorded += batch.records.size();
+        QCOMPARE(totalRecorded, DanmakuCommentTimingBatch::CommentCapacity);
+        QCOMPARE(batch.recordedComments, totalRecorded);
+        QCOMPARE(batch.droppedComments, totalAccepted - totalRecorded);
+        QVERIFY(batch.droppedComments > 0);
+        QVERIFY(batch.pending.isEmpty());
+    }
+    void timingIncludesImmediateRasterFailure() {
+        qputenv("NICONEON_RENDER_DIAGNOSTICS", "1");
+        DanmakuController controller;
+        QCOMPARE(controller.appendComments({comment(1, QString(16385, 'x'))}, 0), 1);
+        const auto batch = controller.takeCommentTimingDiagnostics();
+        QCOMPARE(batch.records.size(), 1);
+        QCOMPARE(batch.records.first().outcome, DanmakuCommentTimingOutcome::Failed);
+        QCOMPARE(batch.records.first().spriteId, 0);
+        QCOMPARE(batch.records.first().rasterCompletedAtNs, 0);
+        QCOMPARE(batch.records.first().guiReadyAtNs, 0);
     }
 };
 QTEST_MAIN(DanmakuRasterPipelineTest)

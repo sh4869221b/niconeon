@@ -527,12 +527,6 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         QSet<DanmakuSpriteId> residents;
     };
 
-    struct PackCandidate {
-        DanmakuSpriteId spriteId = 0;
-        QSize size;
-        quint64 lastUsedFrame = 0;
-    };
-
     bool ensureAtlasGlResources() {
         auto *ctx = QOpenGLContext::currentContext();
         if (!ctx) {
@@ -586,7 +580,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                     uniform sampler2D u_texture;
                     void main() {
                         vec4 tex = texture2D(u_texture, v_uv);
-                        gl_FragColor = vec4(v_color.rgb * tex.a, tex.a * v_color.a);
+                        // Preserve intrinsic color unless the NG SourceIn tint is active.
+                        // RGB and alpha must both receive opacity for premultiplied blending.
+                        vec3 rgb = all(equal(v_color.rgb, vec3(1.0))) ? tex.rgb : v_color.rgb * tex.a;
+                        gl_FragColor = vec4(rgb * v_color.a, tex.a * v_color.a);
                     }
                 )"
                                                 : R"(
@@ -597,7 +594,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                     out vec4 fragColor;
                     void main() {
                         vec4 tex = texture(u_texture, v_uv);
-                        fragColor = vec4(v_color.rgb * tex.a, tex.a * v_color.a);
+                        // Preserve intrinsic color unless the NG SourceIn tint is active.
+                        // RGB and alpha must both receive opacity for premultiplied blending.
+                        vec3 rgb = all(equal(v_color.rgb, vec3(1.0))) ? tex.rgb : v_color.rgb * tex.a;
+                        fragColor = vec4(rgb * v_color.a, tex.a * v_color.a);
                     }
                 )";
 
@@ -710,7 +710,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                     uniform sampler2D u_texture;
                     void main() {
                         vec4 tex = texture2D(u_texture, v_uv);
-                        gl_FragColor = vec4(v_color.rgb * tex.a, tex.a * v_color.a);
+                        // Preserve intrinsic color unless the NG SourceIn tint is active.
+                        // RGB and alpha must both receive opacity for premultiplied blending.
+                        vec3 rgb = all(equal(v_color.rgb, vec3(1.0))) ? tex.rgb : v_color.rgb * tex.a;
+                        gl_FragColor = vec4(rgb * v_color.a, tex.a * v_color.a);
                     }
                 )"
                                                 : R"(
@@ -721,7 +724,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                     out vec4 fragColor;
                     void main() {
                         vec4 tex = texture(u_texture, v_uv);
-                        fragColor = vec4(v_color.rgb * tex.a, tex.a * v_color.a);
+                        // Preserve intrinsic color unless the NG SourceIn tint is active.
+                        // RGB and alpha must both receive opacity for premultiplied blending.
+                        vec3 rgb = all(equal(v_color.rgb, vec3(1.0))) ? tex.rgb : v_color.rgb * tex.a;
+                        fragColor = vec4(rgb * v_color.a, tex.a * v_color.a);
                     }
                 )";
 
@@ -845,51 +851,78 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
     }
 
     void ensureActiveSpritesResident(const QSet<DanmakuSpriteId> &activeSpriteIds) {
-        for (const DanmakuRenderInstance &instance : currentInstances()) {
-            ensureSpriteResident(instance.spriteId, activeSpriteIds);
-        }
-    }
-
-    bool ensureSpriteResident(DanmakuSpriteId spriteId, const QSet<DanmakuSpriteId> &activeSpriteIds) {
-        auto spriteIt = m_sprites.find(spriteId);
-        if (spriteIt == m_sprites.end()) {
-            return false;
-        }
-        SpriteRecord &record = spriteIt.value();
-        if (record.pageIndex >= 0) {
-            return true;
-        }
-        if (record.image.isNull()) {
-            return false;
-        }
-
-        const QSize spriteSize = record.image.size();
-        for (int pageIndex = 0; pageIndex < m_atlasPages.size(); ++pageIndex) {
-            AtlasPage &page = m_atlasPages[pageIndex];
-            const QRect rect = page.packer.insert(spriteSize);
-            if (!rect.isValid()) {
+        QVector<DanmakuAtlasRepackCandidate> pending;
+        QSet<DanmakuSpriteId> visited;
+        visited.reserve(activeSpriteIds.size());
+        for (const auto &instance : currentInstances()) {
+            if (visited.contains(instance.spriteId))
                 continue;
+            visited.insert(instance.spriteId);
+            const auto sprite = m_sprites.constFind(instance.spriteId);
+            if (sprite == m_sprites.constEnd() || sprite->pageIndex >= 0 || sprite->image.isNull())
+                continue;
+            const QSize size = sprite->image.size();
+            // An oversize sprite remains explicitly unresident. Do not create
+            // empty pages or repeatedly attempt repacks that cannot admit it.
+            if (size.width() > kAtlasPagePixelSize || size.height() > kAtlasPagePixelSize)
+                continue;
+            bool placed = false;
+            for (int pageIndex = 0; pageIndex < m_atlasPages.size(); ++pageIndex) {
+                const QRect rect = m_atlasPages[pageIndex].packer.insert(size);
+                if (!rect.isValid())
+                    continue;
+                placeSpriteOnPage(pageIndex, instance.spriteId, rect);
+                placed = true;
+                break;
             }
-            placeSpriteOnPage(pageIndex, spriteId, rect);
-            return true;
+            if (!placed && m_atlasPages.size() < kMaxAtlasPages) {
+                createAtlasPage();
+                const QRect rect = m_atlasPages.last().packer.insert(size);
+                if (rect.isValid()) {
+                    placeSpriteOnPage(m_atlasPages.size() - 1, instance.spriteId, rect);
+                    placed = true;
+                }
+            }
+            if (!placed)
+                pending.push_back({instance.spriteId, size});
         }
+        if (pending.isEmpty())
+            return;
 
-        if (m_atlasPages.size() < kMaxAtlasPages) {
-            createAtlasPage();
-            AtlasPage &page = m_atlasPages.last();
-            const QRect rect = page.packer.insert(spriteSize);
-            if (rect.isValid()) {
-                placeSpriteOnPage(m_atlasPages.size() - 1, spriteId, rect);
-                return true;
+        struct ReclaimablePage {
+            int index = 0;
+            quint64 bytes = 0;
+        };
+        QVector<ReclaimablePage> reclaimable;
+        for (int index = 0; index < m_atlasPages.size(); ++index) {
+            quint64 bytes = 0;
+            for (const auto id : m_atlasPages[index].residents) {
+                const auto sprite = m_sprites.constFind(id);
+                if (!activeSpriteIds.contains(id) && sprite != m_sprites.constEnd())
+                    bytes += sprite->image.sizeInBytes();
             }
+            if (bytes)
+                reclaimable.push_back({index, bytes});
         }
-
-        for (int pageIndex = 0; pageIndex < m_atlasPages.size(); ++pageIndex) {
-            if (repackPageForSprite(pageIndex, spriteId, activeSpriteIds)) {
-                return true;
+        // Reclaim the largest inactive area first rather than repeatedly
+        // rebuilding a page to evict one expired sprite. Only successfully
+        // rebuilt pages lose inactive residency; CPU images stay reusable.
+        // Each of the at most eight pages is planned/rebuilt once per sync.
+        // No increasing-eviction-count search or per-pending-sprite rebuild
+        // remains. Pending/active list scans still scale with snapshot size.
+        std::sort(reclaimable.begin(), reclaimable.end(), [](const auto &lhs, const auto &rhs) {
+            return lhs.bytes != rhs.bytes ? lhs.bytes > rhs.bytes : lhs.index < rhs.index;
+        });
+        for (const auto &page : std::as_const(reclaimable)) {
+            if (repackPageForSprites(page.index, pending, activeSpriteIds)) {
+                pending.removeIf([this](const auto &candidate) {
+                    const auto sprite = m_sprites.constFind(candidate.spriteId);
+                    return sprite != m_sprites.constEnd() && sprite->pageIndex >= 0;
+                });
             }
+            if (pending.isEmpty())
+                break;
         }
-        return false;
     }
 
     void placeSpriteOnPage(int pageIndex, DanmakuSpriteId spriteId, const QRect &rect) {
@@ -932,111 +965,88 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         page.textureDirty = true;
     }
 
-    bool repackPageForSprite(int pageIndex, DanmakuSpriteId requestedSpriteId,
-                             const QSet<DanmakuSpriteId> &activeSpriteIds) {
+    bool repackPageForSprites(int pageIndex, const QVector<DanmakuAtlasRepackCandidate> &pending,
+                              const QSet<DanmakuSpriteId> &activeSpriteIds) {
         const auto repackStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
         const auto repackGuard = qScopeGuard([&] {
             if (m_diagnostics)
                 m_frameDiagnostics.repackNs += diagnosticElapsedNs(repackStarted);
         });
-        if (m_diagnostics)
+        if (m_diagnostics) {
             ++m_frameDiagnostics.repackPageAttempts;
-        if (pageIndex < 0 || pageIndex >= m_atlasPages.size()) {
-            return false;
+            ++m_frameDiagnostics.repackAttempts;
         }
-
         AtlasPage &page = m_atlasPages[pageIndex];
-        QVector<DanmakuSpriteId> residents = page.residents.values();
-        QVector<DanmakuSpriteId> evictable;
-        evictable.reserve(residents.size());
-        for (const DanmakuSpriteId spriteId : residents) {
-            if (!activeSpriteIds.contains(spriteId)) {
-                evictable.push_back(spriteId);
-            }
+        QVector<DanmakuAtlasRepackCandidate> protectedSprites;
+        protectedSprites.reserve(page.residents.size());
+        for (const auto id : page.residents) {
+            if (!activeSpriteIds.contains(id))
+                continue;
+            const auto sprite = m_sprites.constFind(id);
+            if (sprite == m_sprites.constEnd() || sprite->image.isNull())
+                return false;
+            protectedSprites.push_back({id, sprite->image.size()});
         }
-        std::sort(evictable.begin(), evictable.end(), [this](DanmakuSpriteId lhs, DanmakuSpriteId rhs) {
-            return m_sprites.value(lhs).lastUsedFrame < m_sprites.value(rhs).lastUsedFrame;
-        });
-        if (evictable.isEmpty()) {
+        auto plan = planDanmakuAtlasRepack(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize), std::move(protectedSprites),
+                                           pending);
+        if (!plan.canCommit)
             return false;
+
+        // Build a complete replacement privately. Allocation/planning failure
+        // cannot invalidate active UVs or mutate the old page. At most one
+        // extra 16 MiB CPU page exists at a time, with no extra GL texture.
+        QImage rebuilt(page.image.size(), QImage::Format_RGBA8888_Premultiplied);
+        if (rebuilt.isNull())
+            return false;
+        const auto clearStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
+        rebuilt.fill(Qt::transparent);
+        if (m_diagnostics) {
+            m_frameDiagnostics.pageClearNs += diagnosticElapsedNs(clearStarted);
+            m_frameDiagnostics.pageClearBytes += rebuilt.sizeInBytes();
+        }
+        quint64 copiedBytes = 0;
+        const auto copyStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
+        {
+            QPainter painter(&rebuilt);
+            if (!painter.isActive())
+                return false;
+            for (const auto &placement : std::as_const(plan.placements)) {
+                const auto sprite = m_sprites.constFind(placement.spriteId);
+                if (sprite == m_sprites.constEnd() || sprite->image.isNull())
+                    return false;
+                painter.drawImage(placement.rect, sprite->image);
+                copiedBytes += quint64(placement.rect.width()) * placement.rect.height() * 4;
+            }
+        }
+        if (m_diagnostics) {
+            m_frameDiagnostics.spriteCopyNs += diagnosticElapsedNs(copyStarted);
+            m_frameDiagnostics.spriteCopyBytes += copiedBytes;
         }
 
-        for (int evictCount = 1; evictCount <= evictable.size(); ++evictCount) {
-            if (m_diagnostics)
-                ++m_frameDiagnostics.repackAttempts;
-            QSet<DanmakuSpriteId> survivors = page.residents;
-            for (int i = 0; i < evictCount; ++i) {
-                survivors.remove(evictable[i]);
+        // Commit the image, packing state, and every affected UV in one render
+        // sync. All current-frame active residents are present in the plan.
+        for (const auto id : page.residents) {
+            auto sprite = m_sprites.find(id);
+            if (sprite != m_sprites.end()) {
+                sprite->pageIndex = -1;
+                sprite->pixelRect = {};
             }
-            survivors.insert(requestedSpriteId);
-
-            QVector<PackCandidate> candidates;
-            candidates.reserve(survivors.size());
-            for (const DanmakuSpriteId spriteId : std::as_const(survivors)) {
-                const auto spriteIt = m_sprites.constFind(spriteId);
-                if (spriteIt == m_sprites.constEnd() || spriteIt.value().image.isNull()) {
-                    candidates.clear();
-                    break;
-                }
-                candidates.push_back(PackCandidate{
-                    spriteId,
-                    spriteIt.value().image.size(),
-                    spriteIt.value().lastUsedFrame,
-                });
-            }
-            if (candidates.isEmpty()) {
-                continue;
-            }
-
-            std::sort(candidates.begin(), candidates.end(), [](const PackCandidate &lhs, const PackCandidate &rhs) {
-                if (lhs.size.height() != rhs.size.height()) {
-                    return lhs.size.height() > rhs.size.height();
-                }
-                if (lhs.size.width() != rhs.size.width()) {
-                    return lhs.size.width() > rhs.size.width();
-                }
-                return lhs.spriteId < rhs.spriteId;
-            });
-
-            DanmakuAtlasPacker packer(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize));
-            QHash<DanmakuSpriteId, QRect> rects;
-            bool packed = true;
-            for (const PackCandidate &candidate : std::as_const(candidates)) {
-                const QRect rect = packer.insert(candidate.size);
-                if (!rect.isValid()) {
-                    packed = false;
-                    break;
-                }
-                rects.insert(candidate.spriteId, rect);
-            }
-            if (!packed) {
-                continue;
-            }
-
-            page.packer = packer;
-            const auto clearStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
-            page.image.fill(Qt::transparent);
-            if (m_diagnostics) {
-                m_frameDiagnostics.pageClearNs += diagnosticElapsedNs(clearStarted);
-                m_frameDiagnostics.pageClearBytes += page.image.sizeInBytes();
-                ++m_frameDiagnostics.repackSuccesses;
-                m_frameDiagnostics.repackedSprites += candidates.size();
-            }
-            for (const DanmakuSpriteId spriteId : std::as_const(residents)) {
-                SpriteRecord &record = m_sprites[spriteId];
-                record.pageIndex = -1;
-                record.pixelRect = {};
-            }
-            page.residents.clear();
-
-            for (const PackCandidate &candidate : std::as_const(candidates)) {
-                const QRect rect = rects.value(candidate.spriteId);
-                placeSpriteOnPage(pageIndex, candidate.spriteId, rect);
-            }
-            return true;
         }
-
-        return false;
+        page.packer = std::move(plan.packer);
+        page.image = std::move(rebuilt);
+        page.residents.clear();
+        for (const auto &placement : std::as_const(plan.placements)) {
+            auto &sprite = m_sprites[placement.spriteId];
+            sprite.pageIndex = pageIndex;
+            sprite.pixelRect = placement.rect;
+            page.residents.insert(placement.spriteId);
+        }
+        page.textureDirty = true;
+        if (m_diagnostics) {
+            ++m_frameDiagnostics.repackSuccesses;
+            m_frameDiagnostics.repackedSprites += plan.placements.size();
+        }
+        return true;
     }
 
     void createAtlasPage() {

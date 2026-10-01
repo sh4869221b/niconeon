@@ -2,7 +2,9 @@
 // Explicit opt-in observer for normal application/QoS trials. No timings or I/O
 // are collected without NICONEON_APP_PROFILE_OUTPUT. All JSON/I/O is after exit.
 #include "app/ApplicationController.hpp"
+#include "comment_timing_json.hpp"
 #include "danmaku/DanmakuRenderNodeItem.hpp"
+#include "frame_phases.hpp"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -29,6 +31,7 @@ class AppProfile final {
         for (auto *root : roots) {
             if (auto *window = qobject_cast<QQuickWindow *>(root)) {
                 m_window = window;
+                m_phases = std::make_unique<FramePhases>(window);
                 m_overlay = window->findChild<DanmakuRenderNodeItem *>();
                 m_player = window->findChild<MpvItem *>();
                 m_connection = QObject::connect(
@@ -59,7 +62,7 @@ class AppProfile final {
     ~AppProfile() {
         QObject::disconnect(m_connection);
     }
-    bool finish(const ApplicationController &controller) {
+    bool finish(ApplicationController &controller) {
         if (m_output.isEmpty())
             return true;
         m_timer.stop();
@@ -150,6 +153,21 @@ class AppProfile final {
         if (totals.rasterCountersAvailable && (totals.rasterFailed || totals.rasterExpired ||
                                                totals.pendingCommentsAtShutdown || totals.pendingRasterAtShutdown))
             errors.append(QStringLiteral("Raster failure, expiry, or unfinished work at shutdown"));
+        const auto commentTimings = commentTimingJson(*controller.danmaku(), m_state->epoch);
+        if (commentTimings["available"].toBool() &&
+            (!commentTimings["enabled"].toBool() || commentTimings["overflow"].toInteger()))
+            errors.append(QStringLiteral("Comment timing observer disabled or overflowed"));
+        const auto mpvTrace = m_player ? m_player->takeDiagnostics() : MpvDiagnostics{};
+        QJsonArray mpvSamples;
+        for (const auto &sample : mpvTrace.samples)
+            mpvSamples.append(QJsonObject{{"elapsed_ns", sample.startedAtNs - m_state->epoch},
+                                          {"duration_ns", sample.elapsedNs},
+                                          {"operation", QString::fromLatin1(sample.operation)}});
+        if (!mpvTrace.enabled || mpvTrace.overflow)
+            errors.append(QStringLiteral("mpv observer missing or overflowed"));
+        const auto phases = m_phases ? m_phases->finish(m_state->epoch) : QJsonObject{};
+        if (!phases.value("enabled").toBool() || phases.value("overflow").toInteger())
+            errors.append(QStringLiteral("Frame phase observer missing or overflowed"));
         QSaveFile file(m_output);
         const QJsonDocument document(
             QJsonObject{{"schema_version", 1},
@@ -161,6 +179,10 @@ class AppProfile final {
                         {"frame_samples", frames},
                         {"heartbeat_samples", heartbeat},
                         {"render_samples", renders},
+                        {"window_phases", phases},
+                        {"mpv_samples", mpvSamples},
+                        {"comment_timings", commentTimings},
+                        {"mpv_overflow", qint64(mpvTrace.overflow)},
                         {"submission_samples", submissions}});
         const bool written = file.open(QIODevice::WriteOnly) && file.write(document.toJson()) >= 0 && file.commit();
         return written && errors.isEmpty();
@@ -174,6 +196,7 @@ class AppProfile final {
     QPointer<MpvItem> m_player;
     QMetaObject::Connection m_connection;
     QTimer m_timer;
+    std::unique_ptr<FramePhases> m_phases;
     struct SharedSamples {
         std::mutex mutex;
         qint64 epoch = 0;

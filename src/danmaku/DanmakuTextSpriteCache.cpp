@@ -32,6 +32,7 @@ struct DanmakuTextSpriteCache::State {
     struct Completion {
         Request request;
         DanmakuSpriteUpload upload;
+        qint64 rasterCompletedAtNs = 0;
     };
     explicit State(Limits requested, BeforeRaster hook)
         : limits{std::clamp(requested.pendingRequests, 1, 128),
@@ -84,6 +85,10 @@ struct DanmakuTextSpriteCache::State {
                 upload.image = {};
             }
             const qint64 duration = elapsedNs(started);
+            const qint64 completedAtNs =
+                diagnosticsEnabled
+                    ? std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count()
+                    : 0;
             const qint64 bytes = upload.image.sizeInBytes();
             {
                 std::unique_lock lock(mutex);
@@ -104,7 +109,7 @@ struct DanmakuTextSpriteCache::State {
                 if (upload.image.isNull())
                     ++stats.failed;
                 stats.completionBytes += bytes;
-                completions.push_back({std::move(request), std::move(upload)});
+                completions.push_back({std::move(request), std::move(upload), completedAtNs});
                 stats.completed = static_cast<int>(completions.size());
                 stats.completionHighWater = std::max(stats.completionHighWater, stats.completed);
                 stats.completionBytesHighWater = std::max(stats.completionBytesHighWater, stats.completionBytes);
@@ -126,6 +131,7 @@ struct DanmakuTextSpriteCache::State {
     bool closing = false;
     bool stopped = false;
     Clock::time_point shutdownStarted;
+    const bool diagnosticsEnabled = qEnvironmentVariableIntValue("NICONEON_RENDER_DIAGNOSTICS") == 1;
     // Last member: all state is initialized before the worker may read it.
     std::thread worker;
 };
@@ -179,7 +185,7 @@ DanmakuTextSpriteCache::EnsureResult DanmakuTextSpriteCache::ensureSprite(const 
             std::lock_guard lock(m_state->mutex);
             ++m_state->stats.coalesced;
         }
-        return {it->spriteId, it->width, false, it->ready, it->failed};
+        return {it->spriteId, it->width, false, it->ready, it->failed, it->rasterCompletedAtNs, it->guiReadyAtNs};
     }
     const qint64 bytes = text.size() * sizeof(QChar);
     std::lock_guard lock(m_state->mutex);
@@ -205,6 +211,17 @@ DanmakuTextSpriteCache::EnsureResult DanmakuTextSpriteCache::ensureSprite(const 
     m_state->changed.notify_one();
     return {id, 0, true, false, false};
 }
+DanmakuTextSpriteCache::EnsureResult DanmakuTextSpriteCache::lookupSprite(const QString &text, int fontPixelSize,
+                                                                          qreal devicePixelRatio) const {
+    if (!std::isfinite(devicePixelRatio) || devicePixelRatio > 16)
+        return {};
+    const SpriteKey key{text, fontPixelSize,
+                        static_cast<int>(std::lround(std::max<qreal>(1, devicePixelRatio) * 1000))};
+    const auto it = m_records.constFind(key);
+    if (it == m_records.cend())
+        return {};
+    return {it->spriteId, it->width, false, it->ready, it->failed, it->rasterCompletedAtNs, it->guiReadyAtNs};
+}
 QVector<DanmakuSpriteUpload> DanmakuTextSpriteCache::takeCompleted(int maxSprites, qint64 maxBytes,
                                                                    bool allowOversize) {
     QVector<DanmakuSpriteUpload> uploads;
@@ -229,6 +246,12 @@ QVector<DanmakuSpriteUpload> DanmakuTextSpriteCache::takeCompleted(int maxSprite
             it->width = completed.upload.logicalSize.width();
             it->failed = completed.upload.image.isNull();
             it->ready = !it->failed;
+            if (m_state->diagnosticsEnabled) {
+                it->rasterCompletedAtNs = completed.rasterCompletedAtNs;
+                if (it->ready)
+                    it->guiReadyAtNs =
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
+            }
             bytes += nextBytes;
             uploads.push_back(std::move(completed.upload));
         }

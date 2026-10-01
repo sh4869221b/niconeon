@@ -10,7 +10,7 @@ git -C "$root" worktree add --detach "$1" "$base"
 target="$(cd "$1" && pwd)"
 git -C "$target" apply "$root/tests/perf/baseline-observer.patch"
 mkdir -p "$target/tests/perf"
-cp "$root/tests/perf/real_render_profile.cpp" "$root/tests/perf/app_profile.hpp" "$target/tests/perf/"
+cp "$root/tests/perf/real_render_profile.cpp" "$root/tests/perf/app_profile.hpp" "$root/tests/perf/frame_phases.hpp" "$root/tests/perf/comment_timing_json.hpp" "$target/tests/perf/"
 cat >> "$target/CMakeLists.txt" <<'CMAKE'
 
 # Observer-only test overlay, copied identically from the comparison candidate.

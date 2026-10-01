@@ -1,6 +1,8 @@
 #include "danmaku/DanmakuAtlasPacker.hpp"
 
+#include <QSet>
 #include <algorithm>
+#include <utility>
 
 DanmakuAtlasPacker::DanmakuAtlasPacker(const QSize &pageSize) {
     reset(pageSize);
@@ -51,4 +53,46 @@ QRect DanmakuAtlasPacker::insert(const QSize &size) {
 
 QSize DanmakuAtlasPacker::pageSize() const {
     return m_pageSize;
+}
+
+DanmakuAtlasRepackPlan planDanmakuAtlasRepack(const QSize &pageSize,
+                                              QVector<DanmakuAtlasRepackCandidate> protectedSprites,
+                                              QVector<DanmakuAtlasRepackCandidate> pendingSprites) {
+    if (pageSize.isEmpty())
+        return {};
+    const auto sizeOrder = [](const auto &lhs, const auto &rhs) {
+        if (lhs.size.height() != rhs.size.height())
+            return lhs.size.height() > rhs.size.height();
+        if (lhs.size.width() != rhs.size.width())
+            return lhs.size.width() > rhs.size.width();
+        return lhs.spriteId < rhs.spriteId;
+    };
+    std::sort(protectedSprites.begin(), protectedSprites.end(), sizeOrder);
+    std::sort(pendingSprites.begin(), pendingSprites.end(), sizeOrder);
+    DanmakuAtlasRepackPlan plan;
+    plan.packer.reset(pageSize);
+    plan.placements.reserve(protectedSprites.size() + pendingSprites.size());
+    QSet<quint32> seen;
+    seen.reserve(protectedSprites.size() + pendingSprites.size());
+    for (const auto &candidate : std::as_const(protectedSprites)) {
+        if (!candidate.spriteId || seen.contains(candidate.spriteId))
+            return {};
+        const QRect rect = plan.packer.insert(candidate.size);
+        if (!rect.isValid())
+            return {};
+        seen.insert(candidate.spriteId);
+        plan.placements.push_back({candidate.spriteId, rect});
+    }
+    for (const auto &candidate : std::as_const(pendingSprites)) {
+        if (!candidate.spriteId || seen.contains(candidate.spriteId))
+            continue;
+        seen.insert(candidate.spriteId);
+        const QRect rect = plan.packer.insert(candidate.size);
+        if (!rect.isValid())
+            continue;
+        plan.placements.push_back({candidate.spriteId, rect});
+        ++plan.admittedSprites;
+    }
+    plan.canCommit = plan.admittedSprites > 0;
+    return plan;
 }

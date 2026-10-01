@@ -79,6 +79,9 @@ class DanmakuController : public QObject {
     qreal motionTime() const {
         return m_motionTime;
     }
+    // Enable before construction with NICONEON_RENDER_DIAGNOSTICS=1. Draining
+    // terminal records does not reset the lifetime cap or overflow count.
+    DanmakuCommentTimingBatch takeCommentTimingDiagnostics();
     void shutdownRaster();
     bool rasterStopped() const;
 
@@ -132,6 +135,9 @@ class DanmakuController : public QObject {
     struct PendingComment {
         Item item;
         qreal queuedMotionTime = 0;
+        qreal admissionMotionTime = 0;
+        qint64 admittedAtNs = 0;
+        qint64 sourceLagMs = 0;
     };
     static constexpr int kPendingCommentCapacity = 256;
     QQueue<PendingComment> m_pendingComments;
@@ -142,6 +148,13 @@ class DanmakuController : public QObject {
     quint64 m_rasterExpired = 0;
     int m_uploadHighWater = 0;
     qint64 m_uploadBytesHighWater = 0;
+    DanmakuCommentTimingBatch m_commentTimingDiagnostics;
+    DanmakuCommentTimingRecord commentTiming(const PendingComment &pending,
+                                             const DanmakuTextSpriteCache::EnsureResult &sprite) const;
+    void recordCommentTiming(const PendingComment &pending, const DanmakuTextSpriteCache::EnsureResult &sprite,
+                             DanmakuCommentTimingOutcome outcome,
+                             DanmakuCommentCancellationReason reason = DanmakuCommentCancellationReason::None);
+    void cancelPendingComments(DanmakuCommentCancellationReason reason);
     void activateReadyComments();
     void invalidateRaster(bool refreshActive);
     void onFrame();

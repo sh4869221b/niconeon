@@ -27,6 +27,8 @@ class DanmakuTextSpriteCache {
         bool queuedRaster = false;
         bool ready = false;
         bool failed = false;
+        qint64 rasterCompletedAtNs = 0;
+        qint64 guiReadyAtNs = 0;
     };
     struct Limits {
         int pendingRequests = 128;
@@ -72,6 +74,8 @@ class DanmakuTextSpriteCache {
     void cancelPending();
     void setFont(const QFont &font);
     EnsureResult ensureSprite(const QString &text, int fontPixelSize, qreal devicePixelRatio);
+    // Read-only GUI index lookup; never submits work or changes queue metrics.
+    EnsureResult lookupSprite(const QString &text, int fontPixelSize, qreal devicePixelRatio) const;
     QVector<DanmakuSpriteUpload> takeCompleted(int maxSprites, qint64 maxBytes, bool allowOversize = true);
     Metrics metrics() const;
     void shutdown();
@@ -86,6 +90,8 @@ class DanmakuTextSpriteCache {
         int width = 0;
         bool ready = false;
         bool failed = false;
+        qint64 rasterCompletedAtNs = 0;
+        qint64 guiReadyAtNs = 0;
     };
     std::unique_ptr<State> m_state;
     QHash<SpriteKey, Record> m_records;

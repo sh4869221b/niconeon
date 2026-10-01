@@ -40,6 +40,16 @@ CPU images/ready-key metadata retained by the renderer/cache are **not** a new b
 LRU; that separate #64 work is still required. This patch bounds outstanding work, not every
 long-lived renderer allocation or the existing simulation worker's command queues (#78).
 
+Atlas pressure now plans/rebuilds each reclaimable page at most once per sync, batching pending
+sprites instead of repeatedly trying increasing inactive-eviction counts for each sprite.
+The eight 2048×2048 GPU textures/pages are unchanged. A transactional rebuild temporarily owns
+at most one additional 16 MiB CPU page; failure preserves the original image, packing and active
+UVs. A successful rebuild drops all inactive residency on that page, retaining the CPU sprite
+images for re-residency after a seek. Consequently `repack_attempts` now counts page-planning
+attempts, unlike the previous eviction-count search attempts; comparisons must disclose this
+semantic change. Whole-page GL uploads remain unchanged. This bounded planning change does not
+establish partial-upload speedups or accepted-comment visibility/performance qualification.
+
 ## Time, ordering and interaction
 
 New comments remain outside render snapshots and hit testing until their complete sprite
@@ -79,6 +89,45 @@ a hard-real-time deadline or a claim that every inherited renderer destructor is
 
 ## Tests and measurement
 
+### Opt-in per-comment activation trace
+
+`NICONEON_RENDER_DIAGNOSTICS=1`, set before controller/cache construction, enables
+`DanmakuController::takeCommentTimingDiagnostics()` on the GUI thread. It drains terminal
+`records` and returns a separate non-consuming `pending` snapshot (at most 256 records).
+Only 65,536 terminal records can be retained over one controller lifetime, including across
+drains, seeks and session resets. `recordedComments` and `droppedComments` are cumulative;
+overflow invalidates complete-work accounting and must be reported. Disabled mode allocates
+no trace vector and takes no extra diagnostic clock samples. There is no per-comment I/O,
+queued signal, cross-thread comment map or changes to admission/queue/motion policies.
+
+Each terminal record identifies the comment/sprite and an `Activated`, `Expired`, `Failed`
+or `Cancelled` outcome. `admittedAtNs`, `rasterCompletedAtNs`, `guiReadyAtNs` and `resolvedAtNs`
+use the same `std::chrono::steady_clock` epoch as render diagnostics. `resolvedAtNs` is the
+activation/expiry/failure/cancellation observation, not first draw. Worker completion is sampled
+after painting and before waiting for completion-queue space; GUI readiness is sampled when
+the complete image enters the GUI index/upload transfer. Shared/warm sprite timestamps may
+precede a particular comment's admission and must not be clamped to it. Even a fresh worker
+request can finish before the GUI samples its successful admission return. Zero means unavailable
+or not yet observed: a pending/cancelled sprite can have completed on the worker without its
+timestamps having reached the GUI index. Pending snapshots have no resolution timestamp.
+
+`sourceLagMs` retains the uncapped nonnegative media-position lag; `initialX` reflects the
+existing 15-second lag-compensation cap. `sourceMotionDelaySeconds` measures accumulated
+simulation motion from the source-batch stamp to actual admission, and `rasterMotionDelaySeconds`
+measures admission to resolution/snapshot. These already include playback-rate/pause behavior
+and are not wall-clock durations. Exact measured width classifies pre-activation expiry:
+
+- `SourceLag`: `initialX + widthEstimate` was already before the cull threshold
+- `SourceMotion`: only the source-batch-to-admission movement put the comment past that threshold
+- `RasterWait`: it was unexpired at admission, but expired during post-admission pending time
+
+The last category includes completion/upload backpressure, ordered activation and any pending
+NG hold, not just CPU text painting. Queue-stage timestamps permit those delays to be separated.
+Seeks, session resets, NG removal and shutdown retain cancellation records before clearing
+pending comments; a final drain after shutdown includes them. Pending snapshots must not be
+added to terminal totals. Join `Activated` records with renderer first-submission events by
+comment ID; activation, rasterized counts and draw submission do not prove visible pixels.
+
 `danmaku_sprite_cache_test`: duplicate pending keys, bounded request/completion queues, stalled
 consumer, cancellation during paint, font generation, failure injection, oversize input, stop,
 repeated start/cancel/stop, cached seek reuse and pixel-for-pixel reference comparison for Japanese,
@@ -87,7 +136,9 @@ combining marks, Arabic and emoji/ZWJ at DPR 1/1.5/2.
 `danmaku_raster_pipeline_test`: 350 unique comments through stalled render pressure with accepted
 prefix retries, count/byte limits, every sprite delivered once and every comment represented,
 bounded duplicate records, stale seek cancellation, repeated seek reuse, pending-upload DPR swap,
-NG persistence success/failure, pause/rate delay and a >200 ms GUI stall.
+NG persistence success/failure, pause/rate delay and a >200 ms GUI stall. Timing tests separately
+cover source lag, pre-admission source motion and post-admission expiry, cached timestamps,
+pending/terminal cancellation, lifetime trace bounds across drains, failures and disabled mode.
 
 The opt-in `NICONEON_BUILD_PERF_TOOLS=ON` builds `raster_profile`. It exercises the real controller
 with a deterministic Japanese/mixed unique or 32-string warm workload, a 16 ms GUI heartbeat,

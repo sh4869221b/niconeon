@@ -141,13 +141,68 @@ must accompany the result.
 This untimed mode creates a deterministic gray Y4M video, proves video pixels are
 present and uncorrupted, pauses playback, and compares separately rendered
 Japanese/combining/Arabic/emoji/Latin samples with synchronous reference sprites
-composited over the captured video background. It requires nonempty reference
-ink and no channel error above 8 over the inspected image. Captures and failed
-reference images are saved beside JSON. DPI 1/1.5/2 and atlas/frame_image should be
-run separately with unchanged font packages. The default mode does not prove
-every high-density comment's pixels independently; exact submission accounting,
-existing raster pixel-equality tests, and pressure/interaction tests cover
-additional, explicitly distinct claims.
+composited over the captured video background. Channel tolerance stays 8, and
+every visible instance must contain at least 120 reference ink pixels. Exact
+expected IDs and unchanged positions/widths are checked before and after capture;
+nonoverlapping probe rectangles prevent one text from hiding another's omission.
+A render callback after the expected state change and actual draw submissions
+must be observed. Captures and failed reference images are saved beside JSON.
+
+Full-string QTextLayout shaping inspects all fallback QGlyphRun objects. Empty
+glyph output, invalid fallback fonts, and glyph index 0 fail independently of
+pixel equality, so a shared missing-glyph result cannot pass merely because both
+paths draw the same tofu. Fallback family names are recorded. This check does not
+independently certify typography, Arabic shaping, emoji ZWJ ligatures or color;
+no glyph-count/codepoint-count equality is assumed. A color-emoji discrepancy
+between the CPU reference and actual renderer remains a failure.
+
+Additional suites are deliberately separate from the default `basic` suite:
+
+```sh
+# Known wide-sprite limit: logical width exceeds 2048. No cropping/downscaling
+# of the source sprite is permitted to make it fit the atlas.
+./build/release/real_render_profile --sample-mode pixels --pixel-suite wide \
+  --renderer atlas --expected-dpr 1 --output /tmp/wide-atlas.json
+
+# Keep the same node/atlas alive while filling pages and evicting old residents.
+./build/release/real_render_profile --sample-mode pixels --pixel-suite atlas-pressure \
+  --renderer atlas --expected-dpr 1 --output /tmp/pressure-atlas.json
+
+# A separate process must establish actual DPR2, not only a controller setting.
+QT_SCALE_FACTOR=2 ./build/release/real_render_profile --sample-mode pixels \
+  --pixel-suite atlas-pressure --renderer atlas --expected-dpr 2 \
+  --output /tmp/pressure-dpr2.json
+
+# Distinct overload diagnostic: do all valid admitted IDs reach a draw call?
+./build/release/real_render_profile --sample-mode pixels --pixel-suite active-capacity \
+  --renderer atlas --expected-dpr 1 --output /tmp/active-capacity.json
+```
+
+`wide` inspects both ends of a >2048-logical-pixel sprite, positioning it through
+the controller's normal drag API. `atlas-pressure` uses measured physical widths
+>1024 and <=2048, so only one sprite fits each 42*DPR-high shelf. Eight 2048-square
+pages hold at most 384 such sprites at DPR1 or 192 at DPR2. Small batches preserve
+an active first-loaded sentinel while prior sprites become inactive. Every batch
+gets a strict pixel comparison. The suite exceeds that capacity, requires real
+page allocation/repacking evidence, and replays the original first-page cohort
+with fresh comment IDs, requiring additional repacking and pixel equality.
+A single arbitrary old probe would not establish that evicted content was tested.
+
+`active-capacity` keeps capacity+1 distinct sprites active simultaneously. It
+reports actual draw-ID completeness and remaining missing/unresident sprites;
+overlapping pixels are saved for diagnosis but cannot qualify individual
+readability. This overload result is separate from the normal bounded-active
+pressure/pixel suite. `all` runs every suite, including this overload diagnostic,
+and can therefore expose several independent failures in one JSON file.
+
+For DPR2, provide a sufficiently large real/Xvfb display (for example 2560x1600)
+and use `--expected-dpr 2`; capture dimensions are checked against the actual
+window DPR. The same suite can be run at DPR1.5. Run basic/wide on `frame_image`
+separately; atlas-pressure and active-capacity require the atlas backend.
+An unsupported oversized sprite, missing glyph, observed corruption, or unmet
+coverage prerequisite remains failed evidence. Never weaken the pixel oracle or
+silently skip such a case. These tests do not prove every high-density workload's
+pixels independently; selected suite, DPR, fonts and backend bound each claim.
 
 The dedicated harness never establishes normal-QoS behavior, real hardware-GPU
 performance, Windows/Wayland/HDR correctness, 60fps qualification or long-duration
