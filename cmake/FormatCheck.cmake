@@ -1,0 +1,5 @@
+file(GLOB_RECURSE sources "${SOURCE_DIR}/src/*.cpp" "${SOURCE_DIR}/src/*.hpp" "${SOURCE_DIR}/tests/*.cpp" "${SOURCE_DIR}/tests/*.hpp")
+execute_process(COMMAND "${CLANG_FORMAT}" --dry-run --Werror ${sources} RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "clang-format check failed")
+endif()

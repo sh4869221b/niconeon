@@ -1,93 +1,43 @@
-# Test Plan (MVP)
+# Migration regression and qualification plan
 
-## Core Unit Tests
+CTest is the test entry point. Current build recipes and sanitizer constraints are in
+[build-and-validation.md](build-and-validation.md).
 
-- video id extraction: valid / invalid filename.
-- regex validation: valid and invalid patterns.
-- filter order: NG user first, then regex.
-- undo last NG: only the latest token is restorable.
-- `playback_tick_batch`: normal progression, seek reset, seek resume for in-flight comments, and paused tick.
+## Automated migration coverage
 
-## Core Integration Tests
+- Domain: filename IDs, Unicode/limits, profile defaults/overrides, bounded synthetic fixtures
+- SQLite: split DB roundtrip, legacy cache migration, raw-row preservation, migration failure rollback, platform paths, corrupt data and restart
+- Filters: NG-first ordering, regex validation, persistence-before-memory, duplicate/new/latest/single-use Undo, DB failure, empty values and limits
+- Timeline: zero/exact time, normal/pause/backward/seek15s window, per-tick cap before coalesce, stable ordering, transactional bounds
+- Fetcher: two-stage local mock HTTP, request DTO/headers, response validation, anonymous user, redirects/trust boundary, timeout/cancel/replacement
+- Service: network/cache/none, corrupt cache isolation, queue saturation, latest pending open, stale generation/revision, queued shutdown, repeated start/stop
+- Controller: file URLs, speed presets/settings, visibility, runtime profile and shutdown
+- Qt Quick Test: complete Main.qml import/load, Settings/About/Filter open/close, native C++ types and license resources
+- Preserved renderer tests: spatial grid, text width/seek lag, NG rollback, sprite cache
+- Packaging: single application executable, required licenses, AppRun local paths and Unicode/spaced arguments
 
-- cache read/write roundtrip.
-- open_video returns `network` when fetched, `cache` on fallback, `none` on no data.
+## Actual OpenGL gate (never infer from headless tests)
 
-## UI Unit Tests (Automated)
+Build with `NICONEON_BUILD_UI_E2E=ON`, use a working desktop or Xvfb OpenGL display,
+and run the `opengl` CTest label. CI explicitly requires OpenGL and no longer silently
+skips solely because `GITHUB_ACTIONS` exists. A skipped unsupported backend is not a pass.
 
-- `spatial_grid_incremental_test`: `DanmakuSpatialGrid` の `upsert/remove` 差分更新が `rebuild` と同等の検索結果になることを検証する。
-- `core_client_test`: fake core を使い、`stderr` が crash 扱いされないこと、generation 切替後の stale `playback_tick_batch` が破棄されること、JSON-RPC `error.message` が文字列として届くことを検証する。
-- `danmaku_text_width_test`: 全角文字/日本語文字列を含むコメントで `widthEstimate` が `QFontMetrics` 実測幅 + 左右余白以上になること、およびシーク復帰時の長めの lag compensation でシーク前から流れていたコメントが途中位置に再配置されることを検証する。
-- `danmaku_ng_drop_test`: NG ドロップ失敗時に pending fade が rollback され、ドラッグ起点コメントが同一レーン優先で復帰することを検証する。
-- `danmaku_sprite_cache_test`: atlas packer の矩形が重ならないこと、同一 text の width 計測が再利用されること、DPR 差分で別 sprite が生成されること、pending raster queue が budget どおり分割消化されることを検証する。
-- `license_resource_test`: About ダイアログ用のライセンス resource に `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES.txt` が含まれることを検証する。
-- 実行コマンド例:
-  - `just ui-test`
-  - `bazelisk test //app-ui:ui_unit_tests`
-  - 個別実行: `bazelisk test //app-ui:license_resource_test //app-ui:spatial_grid_incremental_test //app-ui:core_client_test //app-ui:danmaku_text_width_test //app-ui:danmaku_ng_drop_test //app-ui:danmaku_sprite_cache_test`
-  - GUI を使う unit test は Bazel test 側で `QT_QPA_PLATFORM=offscreen` を固定する。
+G1 manual steps on a formally built `niconeon` and final AppImage/Windows artifact:
 
-## UI E2E Tests (Automated)
+1. Initial auto-load of a deterministic local fixture without reopen; confirm media time advances
+2. Read actual synthetic comment text on screen (not just active count/FPS)
+3. Pause/resume, seek forward/back/zero/same timestamp, hide/show; check text/position/sync
+4. Switch file/session while fetching/preparing; reject old work
+5. Resize/DPR, Settings/About and picker cancellation, NG drag/outside drop/Undo
+6. Close/restart, preserve settings/profile, no orphan subprocess
+7. Record artifact hash, OS, Qt/mpv, renderer, GPU/driver and exact passed/unverified scope
 
-- `rendernode_alignment_e2e`: `DanmakuRenderNodeItem` をオフセット付きコンテナに配置して描画し、弾幕ピクセルがコンテナ内に出ることを検証する（座標変換漏れ回帰の検知）。
-- 実行コマンド: `just ui-e2e`
-- `just ui-e2e` は OpenGL scenegraph backend を使えるセッションで実行し、ヘッドレス環境では `xvfb-run` を利用する。`DISPLAY` / `WAYLAND_DISPLAY` が無く、`xvfb-run` も無い場合は、実描画検証ができないため非ゼロ終了する。
-- Bazel の `//app-ui:rendernode_alignment_e2e` は個別 E2E target として定義し、`DISPLAY` / `WAYLAND_DISPLAY` が無い環境では wrapper が明示メッセージを出して deterministic skip（exit 0）する。`bazelisk test //...` の安定性を保つための skip であり、実描画検証は必要な環境変数を Bazel に転送する `just ui-e2e` で行う。
-- CI job 名は `ui-e2e-linux-best-effort` とし、GitHub Actions 上では best-effort 実行に留める。
-- 画面修正（`app-ui/qml` や `app-ui/src/danmaku`）を含む変更では、CI結果に関わらずローカルで `just ui-e2e` を実行して結果を確認する。
-- GitHub Actions の runner では OpenGL scenegraph backend を安定確保できないため、このテストは `SKIP` になりうる。回帰判定はローカル実行を正とする。
+## Separate qualification
 
-## UI Manual Tests
+The migration does not certify all #78 runtime contracts: GUI sprite raster and inherited
+renderer caches/queues remain explicit #65/#78 work. 60fps is a target, not inferred from
+CTest. Real Windows GPUs, native Wayland (not XWayland), high-refresh/HDR, 8h/24h soak,
+10k random seeks and clean end-user distribution licensing belong to #81–#85/#75.
 
-- playback controls update position and volume.
-- drag freezes only grabbed comment.
-- NG drop zone appears only while dragging.
-- コメントは背景・枠なしの文字のみで描画され、NG ドロップ hover 中は枠ではなく文字色変化で状態が分かる。
-- dropping in zone registers NG and fades matching comments in ~300ms.
-- dropping outside zone returns comment using same-lane-first behavior.
-- undo restores last NG user.
-- removing an NG user from filter dialog updates list and future filtering.
-- regex invalid input shows error and is not registered.
-- コメント非表示時は弾幕描画が停止し、再度表示に戻すと現在再生位置から再同期する。
-- シーク直後に、シーク位置より前に投稿されたコメントのうち本来まだ流れている途中のものが、右端から再出現せず途中位置で再表示される。
-- 計測ログ有効化時に、2秒ごとに `[perf-ui]` が標準出力へ出力され、`tick_sent`/`tick_result`/`tick_backlog` を含む。
-- 計測ログ有効化時に、`[perf-ui]` が `dropped_comments` / `coalesced_comments` / `emit_over_budget` を含む。
-- 計測ログ有効化時に、2秒ごとに `[perf-danmaku]` が標準出力へ出力され、`avg_ms`/`p50_ms`/`p95_ms`/`p99_ms`/`max_ms` を含む。
-- 画面外に出た弾幕（左外/縦外/フェード完了）は次フレームで表示から外れ、更新対象に残らない。
-- 1件ドラッグ中でも、他弾幕は通常どおり移動し、画面外弾幕は継続して除去される。
-- `[perf-danmaku]` に `rows_total`/`rows_active`/`rows_free`/`compacted` が出力される。
-- `[perf-danmaku]` に `lane_pick_count`/`lane_ready_count`/`lane_forced_count`/`lane_wait_ms_avg`/`lane_wait_ms_max` が出力される。
-- `[perf-danmaku]` に `spatial_full_rebuilds`/`spatial_row_updates`/`snapshot_full_rebuilds`/`snapshot_row_updates` が出力される。
-- 高密度再生で `rows_free` が増えたあと、条件を満たすと `compacted=1` が出力される。
-- 高密度再生で `lane_forced_count` が増えても、シーク後の再同期とドロップ復帰（同一レーン優先）が壊れない。
-- `QSG_RENDERER_DEBUG=render` および `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` のプロファイルでログ取得できる。
-- #7 回帰確認として、同一動画・同一区間で `fps` / `p95_ms` / `p99_ms` が悪化しない（目安: 5%以内）ことを確認する。
-- #7 回帰確認として、Qt Creator QML Profiler で弾幕オーバーレイの per-frame hot path（Binding/JS）が増加していないことを確認する。
-- Glyph warmup は常時ONで動作し、設定UIなしでも再起動後に有効であることを確認する。
-- `Glyph warmup ON` 時に `[perf-glyph]` ログが2秒ごとに出力され、`warmup_sent_cp` / `warmup_batches` / `warmup_pending_cp` を含むことを確認する。
-- `QT_LOGGING_RULES=\"qt.scenegraph.time.glyph=true\"` と併用時に、`[perf-glyph]` のスパイク窓と glyph ログを突合できることを確認する。
-- Glyph warmup 常時ON時に `p95_ms` / `p99_ms` の著しい悪化がないこと、かつ文字化け・欠落がないことを確認する。
-- About ダイアログで `LICENSE` / `COPYING` / `THIRD_PARTY_NOTICES` を閲覧できる。
-- Windows で OS が `Dark` のとき、About の本文（`TextArea`）/タブ/入力欄が可読であることを確認する。
-- Windows で OS が `Light` のときも同様に可読であることを確認する。
-- Windows で起動中に OS の Light/Dark を切り替えても、About/Filter/Speed 設定の文字色・背景色が追従してコントラストを維持することを確認する。
-- 既定の `QSGRenderNode` atlas backend で、コメント表示・ドラッグ・NGドロップ・Undo が機能する。
-- `NICONEON_DANMAKU_RENDERER=frame_image` へ切替後も同等機能が成立し、比較用 fallback として起動できる。
-- 高密度区間でドラッグ開始時のヒットテストが安定し、意図しないコメント選択が増えない。
-- `NICONEON_DANMAKU_WORKER=on`（既定）で再生・シーク・ドラッグ・NG の回帰がない。
-- `NICONEON_DANMAKU_WORKER=off` へ切替後も同等機能が成立し、クラッシュしない。
-- `NICONEON_SIMD_MODE=auto/scalar/avx2` で起動し、`[danmaku-simd]` ログが期待モードを示す。
-- `NICONEON_SIMD_MODE=avx2` と `scalar` で表示破綻（位置飛び/消去漏れ）がない。
-- `NICONEON_DANMAKU_RENDERER=atlas|frame_image` で起動し、`[perf-render]` が `instances` / `sprite_upload_count` / `sprite_upload_bytes` / `atlas_pages` / `draw_calls` を出力する。
-- `just perf-dummy` で #21 前後を比較し、通常再生中は `spatial_full_rebuilds=0` / `snapshot_full_rebuilds=0`（シーク/compactionを除く）を満たす。
-- `just perf-dummy` で #21 前後を比較し、通常再生中の `spatial_row_updates` が大きく減り、drag/seek 以外で spatial rebuild が増えすぎないことを確認する。
-- `just perf-dummy` で #24 前後を比較し、`updates` 同等条件で `avg_ms` または `p95_ms` が悪化していない。
-- `just perf-dummy` で初見テキストが多い区間の `sprite_upload_bytes` スパイクと `p99_ms` を比較し、budgeted raster queue 導入前より平準化していることを確認する。
-- 連続シーク（10回以上）+ 連続ドラッグ（10回以上）を行っても、worker有効時にクラッシュしない。
-- Runtime profile を `high` / `balanced` / `low_spec` に切り替えて、`set_runtime_profile` 応答と挙動（emit cap/coalesce）が一致する。
-- 動画再生中に `Video FPS` が 0 以外で更新される。
-- コメント流量がある区間で `Comment FPS` が更新され、更新ループ回数ではなく提示済みコメントフレームに追従する。
-- 高密度区間で overload が続く場合、QoS が `emit cap` の低下、`coalesce` 有効化、`target fps` 低下の順に段階降下し、軽負荷復帰後に過剰に低い設定が残らないことを確認する。
-- シーク・一時停止・コメント非表示切替時に FPS/統計値が破綻しない。
-- `Comments active/total` が `open_video` 直後と再生中で整合する。
-- ドラッグ/NGドロップ中も stats パネル表示が操作を妨げない。
+Sanitizer results must say whether address/undefined/thread/leak checks actually ran.
+Uninstrumented Qt/system-library reports need diagnosis; do not blanket-suppress application races.

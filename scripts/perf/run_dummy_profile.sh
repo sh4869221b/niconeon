@@ -10,30 +10,11 @@ if ! [[ "$DURATION_SEC" =~ ^[0-9]+$ ]] || [ "$DURATION_SEC" -le 0 ]; then
   exit 1
 fi
 
-bazel_output() {
-  local target="$1"
-  local output
-  output="$(cd "$ROOT_DIR" && bazelisk cquery --output=files "$target" 2>/dev/null | tail -n1)"
-  if [ -z "$output" ]; then
-    echo "Bazel output discovery failed for $target" >&2
-    exit 1
-  fi
-  case "$output" in
-    /*) printf '%s\n' "$output" ;;
-    *) printf '%s/%s\n' "$ROOT_DIR" "$output" ;;
-  esac
-}
-
-CORE_BIN="${NICONEON_CORE_BIN:-$(bazel_output //core:niconeon-core)}"
-UI_BIN="${NICONEON_UI_BIN:-$(bazel_output //app-ui:niconeon-ui)}"
+APP_BIN="${NICONEON_BIN:-$ROOT_DIR/build/release/niconeon}"
 VIDEO_PATH="${NICONEON_DUMMY_VIDEO_PATH:-/tmp/niconeon-sm9-dummy.mp4}"
 
-if [ ! -x "$CORE_BIN" ]; then
-  echo "core binary not found: $CORE_BIN; run just build or set NICONEON_CORE_BIN" >&2
-  exit 1
-fi
-if [ ! -x "$UI_BIN" ]; then
-  echo "ui binary not found: $UI_BIN; run just build or set NICONEON_UI_BIN" >&2
+if [ ! -x "$APP_BIN" ]; then
+  echo "application not found: $APP_BIN; configure/build the release preset or set NICONEON_BIN" >&2
   exit 1
 fi
 if ! [[ "$(basename "$VIDEO_PATH")" =~ (sm|nm|so)[0-9]+ ]]; then
@@ -67,7 +48,6 @@ run_profile() {
   LIBGL_ALWAYS_SOFTWARE="${NICONEON_LIBGL_ALWAYS_SOFTWARE:-0}" \
   MESA_LOADER_DRIVER_OVERRIDE="${NICONEON_MESA_DRIVER_OVERRIDE:-llvmpipe}" \
   NICONEON_MPV_AO="${NICONEON_MPV_AO:-}" \
-  NICONEON_CORE_BIN="$CORE_BIN" \
   NICONEON_AUTO_VIDEO_PATH="$VIDEO_PATH" \
   NICONEON_AUTO_PERF_LOG=1 \
   NICONEON_AUTO_EXIT_MS="$AUTO_EXIT_MS" \
@@ -77,7 +57,7 @@ run_profile() {
   NICONEON_SYNTHETIC_RAMP_PER_SEC="${NICONEON_SYNTHETIC_RAMP_PER_SEC:-1}" \
   NICONEON_SYNTHETIC_MAX_PER_SEC="${NICONEON_SYNTHETIC_MAX_PER_SEC:-160}" \
   NICONEON_SYNTHETIC_USER_SPAN="${NICONEON_SYNTHETIC_USER_SPAN:-200}" \
-  "$UI_BIN" 2>&1 | tee "$OUT_LOG"
+  "$APP_BIN" 2>&1 | tee "$OUT_LOG"
 }
 
 has_perf_markers() {

@@ -22,8 +22,11 @@ scripts/release/generate_third_party_notices.sh
 
 Prerequisites:
 
-- `cargo-license` installed (`cargo install --locked cargo-license`)
 - `python3` (with standard-library `tomllib`, Python 3.11+)
+
+The generator reads only the native runtime component manifest. It does not fetch dependencies or
+require a language package manager. The notices are a direct-runtime summary; each release must
+also retain the copyright/license metadata of the actual bundled native packages.
 
 ## Distribution Policy
 
@@ -34,4 +37,4 @@ Prerequisites:
   - `THIRD_PARTY_NOTICES.txt`
 - The UI provides an About dialog that surfaces the same information.
 - UI resources use `QT_RESOURCE_ALIAS` for these files so CMake resource registration remains valid
-  even when the source paths are outside `app-ui/`.
+  even when the source paths are outside `src/ui/`.
