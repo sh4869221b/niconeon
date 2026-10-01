@@ -15,6 +15,11 @@ class ServiceTest : public QObject {
         return options;
     }
   private slots:
+    void initTestCase() {
+        qunsetenv("NICONEON_SYNTHETIC_COMMENTS");
+        qunsetenv("NICONEON_AUTO_VIDEO_PATH");
+        qunsetenv("NICONEON_AUTO_PERF_LOG");
+    }
     void networkSessionAndStaleResult() {
         MockHttpServer server;
         QVERIFY(server.start());

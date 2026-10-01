@@ -25,11 +25,16 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<DanmakuRenderNodeItem>("Niconeon", 1, 0, "DanmakuRenderNodeItem");
     qmlRegisterType<LicenseProvider>("Niconeon", 1, 0, "LicenseProvider");
     niconeon::ServiceOptions options;
-    options.fetch.cookie = qgetenv("NICONEON_NICONICO_COOKIE");
+    options.fetch.cookie = qgetenv("NICONICO_COOKIE");
+    if (options.fetch.cookie.isEmpty())
+        options.fetch.cookie = qgetenv("NICONEON_NICONICO_COOKIE");
     niconeon::ApplicationController controller(options);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("application"), &controller);
-    QObject::connect(&controller, &niconeon::ApplicationController::readyToQuit, &app, &QCoreApplication::quit);
+    // Main.qml vetoes the initial close while the worker drains. quit() would
+    // send another close request, which that handler vetoes again.
+    QObject::connect(&controller, &niconeon::ApplicationController::readyToQuit, &app,
+                     [] { QCoreApplication::exit(0); });
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app, [&controller] { controller.shutdown(); },
         Qt::QueuedConnection);

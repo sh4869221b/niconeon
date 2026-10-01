@@ -123,3 +123,14 @@ is the next step for conclusive investigation.
 The command executor also runs under tracing, so LeakSanitizer terminates with its documented
 `ptrace` limitation there. AddressSanitizer and UBSan checks can run with local `detect_leaks=0`;
 the checked-in preset keeps leak detection enabled for normal desktop/CI processes.
+
+## Release-publication boundary
+
+This migration validates build, test and distribution packaging through read-only repository
+permissions and workflow artifact uploads. The manual `Release Rebuild` workflow now stops at
+those artifacts; it does not create or update a GitHub Release.
+
+The existing tag-release promotion workflow (`release.yml`) remains byte-identical to the baseline.
+That publication path has not been fully qualified for this migration. Actual release publication
+requires separate authorization and end-to-end release validation; successful PR packaging alone
+is not a release-promotion approval.

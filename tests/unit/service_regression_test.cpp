@@ -42,6 +42,11 @@ bool corruptCache(const QString &path) {
 class ServiceRegressionTest : public QObject {
     Q_OBJECT
   private slots:
+    void initTestCase() {
+        qunsetenv("NICONEON_SYNTHETIC_COMMENTS");
+        qunsetenv("NICONEON_AUTO_VIDEO_PATH");
+        qunsetenv("NICONEON_AUTO_PERF_LOG");
+    }
     void latestOpenSurvivesFullIngressQueue() {
         MockHttpServer server;
         QVERIFY(server.start());

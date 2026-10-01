@@ -3,6 +3,7 @@
 #include "ui/LicenseProvider.hpp"
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtQuickTest/quicktest.h>
 class ViewSetup : public QObject {
@@ -27,7 +28,12 @@ class ViewSetup : public QObject {
         engine->rootContext()->setContextProperty("application", controller.get());
     }
     void cleanupTestCase() {
+        QSignalSpy stopped(controller.get(), &niconeon::ApplicationController::readyToQuit);
         controller->shutdown();
+        if (stopped.isEmpty())
+            QVERIFY2(stopped.wait(5000), "The comment worker must finish while QCoreApplication is alive");
+        controller.reset();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 
   private:

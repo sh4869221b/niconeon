@@ -68,7 +68,7 @@ jobs:
           scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-linux-x86_64-binaries.zip
           scripts/release/package_linux_appimage.sh ci
           scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-linux-x86_64.AppImage
-          xvfb-run -a -s '-screen 0 1280x1024x24 -ac' env \
+          timeout 30s xvfb-run -a -s '-screen 0 1280x1024x24 -ac' env \
             APPIMAGE_EXTRACT_AND_RUN=1 NICONEON_AUTO_EXIT_MS=1500 LIBGL_ALWAYS_SOFTWARE=1 \
             dist/niconeon-linux-x86_64.AppImage
       - uses: actions/upload-artifact@v4
@@ -149,6 +149,9 @@ jobs:
           scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-windows-x86_64-binaries.zip
           unzip -Z1 dist/niconeon-windows-x86_64-binaries.zip | grep -E '/qt\.conf$'
           unzip -Z1 dist/niconeon-windows-x86_64-binaries.zip | grep -E '/sqldrivers/qsqlite\.dll$'
+          unzip -q dist/niconeon-windows-x86_64-binaries.zip -d dist/windows-runtime-smoke
+          timeout 30s env PATH=/usr/bin:/bin NICONEON_AUTO_EXIT_MS=1500 \
+            "${PWD}/dist/windows-runtime-smoke/niconeon-windows-x86_64/niconeon.exe"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -62,6 +62,8 @@ class MpvRenderer : public QQuickFramebufferObject::Renderer {
     void render() override {
         if (!m_state || !m_state->handle)
             return;
+        // Both context creation and rendering expect a baseline GL state.
+        QQuickOpenGLUtils::resetOpenGLState();
         if (!m_state->renderContext) {
             mpv_opengl_init_params init{getProcAddress, nullptr};
             mpv_render_param parameters[] = {
@@ -125,6 +127,7 @@ MpvItem::MpvItem(QQuickItem *parent) : QQuickFramebufferObject(parent), m_state(
     mpv_set_option_string(m_mpv, "vo", "libmpv");
     mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
     mpv_set_option_string(m_mpv, "terminal", "no");
+    mpv_set_option_string(m_mpv, "keep-open", "yes");
     const auto audioOutput = qgetenv("NICONEON_MPV_AO").trimmed();
     if (!audioOutput.isEmpty())
         mpv_set_option_string(m_mpv, "ao", audioOutput.constData());

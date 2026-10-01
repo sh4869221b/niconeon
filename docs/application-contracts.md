@@ -30,7 +30,7 @@ Invalid regex is checked before database write. Qt uses PCRE2 semantics and Unic
 
 Production watch/comment hosts are HTTPS `nicovideo.jp` or its subdomains, with no URL
 userinfo/fragments. Redirects and TLS errors are not silently accepted. Cookie use retains
-the explicit `NICONEON_NICONICO_COOKIE` input and sends it only to a validated HTTPS comment
+the existing `NICONICO_COOKIE` input (`NICONEON_NICONICO_COOKIE` is an optional fallback alias) and sends it only to a validated HTTPS comment
 endpoint; logs never include cookies, thread keys, response bodies or account URLs.
 Tests inject HTTP loopback endpoints explicitly and do not send cookie fixtures over HTTP.
 No account credentials or live authenticated NicoNico calls are needed by tests.

@@ -1,8 +1,17 @@
+set(niconeon_test_environment
+  "NICONEON_SYNTHETIC_COMMENTS=unset:"
+  "NICONEON_AUTO_VIDEO_PATH=unset:"
+  "NICONEON_AUTO_PERF_LOG=unset:"
+  "NICONEON_AUTO_EXIT_MS=unset:"
+  "NICONEON_NICONICO_COOKIE=unset:"
+  "NICONICO_COOKIE=unset:")
+
 function(niconeon_test name source)
   qt_add_executable(${name} ${source})
   target_link_libraries(${name} PRIVATE ${ARGN} Qt6::Test niconeon_options)
   add_test(NAME ${name} COMMAND ${name})
   set_tests_properties(${name} PROPERTIES TIMEOUT 60 LABELS unit
+    ENVIRONMENT_MODIFICATION "${niconeon_test_environment}"
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
   get_target_property(qt_qml_type Qt6::Qml TYPE)
   if(qt_qml_type STREQUAL "SHARED_LIBRARY")
@@ -38,6 +47,7 @@ if(NICONEON_BUILD_APP)
   niconeon_license_resources(qml_views_test)
   add_test(NAME qml_views_test COMMAND qml_views_test -input "${PROJECT_SOURCE_DIR}/tests/qml")
   set_tests_properties(qml_views_test PROPERTIES TIMEOUT 60 LABELS qml
+    ENVIRONMENT_MODIFICATION "${niconeon_test_environment}"
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
 endif()
@@ -51,6 +61,7 @@ if(NICONEON_BUILD_UI_E2E)
   endif()
   add_test(NAME rendernode_alignment_e2e COMMAND rendernode_alignment_e2e)
   set_tests_properties(rendernode_alignment_e2e PROPERTIES TIMEOUT 60 LABELS "e2e;opengl"
+    ENVIRONMENT_MODIFICATION "${niconeon_test_environment}"
     ENVIRONMENT "QSG_RHI_BACKEND=opengl;LIBGL_ALWAYS_SOFTWARE=1;NICONEON_REQUIRE_OPENGL=1")
 endif()
 
@@ -58,4 +69,9 @@ if(UNIX AND NOT APPLE)
   find_package(Python3 3.11 COMPONENTS Interpreter REQUIRED)
   add_test(NAME packaging_smoke_test COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/packaging/package_smoke_test.py")
   set_tests_properties(packaging_smoke_test PROPERTIES TIMEOUT 30 LABELS packaging)
+  if(NICONEON_BUILD_APP)
+    add_test(NAME application_exit_test COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/packaging/application_exit_test.py" "$<TARGET_FILE:niconeon>")
+    set_tests_properties(application_exit_test PROPERTIES TIMEOUT 20 LABELS "qml;integration")
+  endif()
 endif()
