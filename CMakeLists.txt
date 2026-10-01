@@ -143,3 +143,10 @@ if(CLANG_FORMAT_EXECUTABLE)
   add_custom_target(format-check COMMAND "${CMAKE_COMMAND}" -DCLANG_FORMAT=${CLANG_FORMAT_EXECUTABLE}
     -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -P ${PROJECT_SOURCE_DIR}/cmake/FormatCheck.cmake VERBATIM)
 endif()
+
+option(NICONEON_BUILD_PERF_TOOLS "Build deterministic GUI raster scheduling profiler" OFF)
+if(NICONEON_BUILD_PERF_TOOLS)
+  qt_add_executable(raster_profile tests/perf/raster_profile.cpp)
+  target_link_libraries(raster_profile PRIVATE niconeon_render)
+  set_target_properties(raster_profile PROPERTIES QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+endif()

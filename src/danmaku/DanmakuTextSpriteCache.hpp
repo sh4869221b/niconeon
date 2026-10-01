@@ -2,64 +2,96 @@
 
 #include "danmaku/DanmakuRenderFrame.hpp"
 
+#include <QFont>
 #include <QHash>
-#include <QQueue>
+#include <QSet>
 #include <QString>
 
+#include <functional>
+#include <memory>
+
+// GUI-owned index with a single, privately owned CPU raster worker. Only
+// takeCompleted() publishes a result into the GUI index; the worker never
+// touches that index, QObjects, or graphics resources.
 class DanmakuTextSpriteCache {
   public:
-    struct WidthKey {
-        QString text;
-        int fontPixelSize = 0;
-
-        friend bool operator==(const WidthKey &lhs, const WidthKey &rhs) {
-            return lhs.fontPixelSize == rhs.fontPixelSize && lhs.text == rhs.text;
-        }
-    };
-
     struct SpriteKey {
         QString text;
         int fontPixelSize = 0;
         int devicePixelRatioMilli = 1000;
-
-        friend bool operator==(const SpriteKey &lhs, const SpriteKey &rhs) {
-            return lhs.fontPixelSize == rhs.fontPixelSize && lhs.devicePixelRatioMilli == rhs.devicePixelRatioMilli &&
-                   lhs.text == rhs.text;
-        }
+        friend bool operator==(const SpriteKey &, const SpriteKey &) = default;
     };
-
     struct EnsureResult {
         DanmakuSpriteId spriteId = 0;
         int widthEstimate = 0;
         bool queuedRaster = false;
+        bool ready = false;
+        bool failed = false;
     };
+    struct Limits {
+        int pendingRequests = 128;
+        qint64 requestBytes = 4 * 1024 * 1024;
+        int completedSprites = 16;
+        qint64 completedBytes = 8 * 1024 * 1024;
+    };
+    struct Metrics {
+        int pending = 0;
+        int queued = 0;
+        int completed = 0;
+        int highWater = 0;
+        int completionHighWater = 0;
+        qint64 requestBytes = 0;
+        qint64 completionBytes = 0;
+        qint64 completionBytesHighWater = 0;
+        quint64 coalesced = 0;
+        quint64 backpressured = 0;
+        quint64 cancelled = 0;
+        quint64 stale = 0;
+        quint64 failed = 0;
+        quint64 rasterized = 0;
+        qint64 rasterNs = 0;
+        qint64 maxRasterNs = 0;
+        qint64 completionLatencyNs = 0;
+        qint64 maxCompletionLatencyNs = 0;
+        qint64 shutdownNs = 0;
+    };
+    // The image allocation is independently bounded, including the one image
+    // currently being painted. Oversize/invalid input is an explicit failure,
+    // never a permanently pending queue entry.
+    static constexpr qint64 MaxSpriteBytes = 8 * 1024 * 1024;
+    static constexpr int MaxTextCodeUnits = 16384;
+    using BeforeRaster = std::function<void()>; // deterministic cancellation/failure tests
 
-    DanmakuTextSpriteCache() = default;
+    DanmakuTextSpriteCache();
+    explicit DanmakuTextSpriteCache(Limits limits, BeforeRaster beforeRaster = {});
+    ~DanmakuTextSpriteCache();
+    DanmakuTextSpriteCache(const DanmakuTextSpriteCache &) = delete;
+    DanmakuTextSpriteCache &operator=(const DanmakuTextSpriteCache &) = delete;
 
     void clear();
+    void cancelPending();
+    void setFont(const QFont &font);
     EnsureResult ensureSprite(const QString &text, int fontPixelSize, qreal devicePixelRatio);
-    DanmakuSpriteUpload takePendingUpload(const QString &text, int fontPixelSize, qreal devicePixelRatio);
-    QVector<DanmakuSpriteUpload> rasterizePendingSprites(int maxSprites, qint64 maxUploadBytes);
+    QVector<DanmakuSpriteUpload> takeCompleted(int maxSprites, qint64 maxBytes);
+    Metrics metrics() const;
+    void shutdown();
+    bool isStopped() const;
     int widthMeasurementCountForTesting() const;
     int pendingRasterCountForTesting() const;
 
   private:
-    struct PendingRaster {
-        SpriteKey key;
+    struct State;
+    struct Record {
         DanmakuSpriteId spriteId = 0;
-        int widthEstimate = 0;
+        int width = 0;
+        bool ready = false;
+        bool failed = false;
     };
-
-    int ensureWidthEstimate(const QString &text, int fontPixelSize);
-    QImage rasterizeSprite(const QString &text, int fontPixelSize, int widthEstimate, qreal devicePixelRatio) const;
-
-    QHash<WidthKey, int> m_widthCache;
-    QHash<SpriteKey, DanmakuSpriteId> m_spriteIds;
-    QHash<SpriteKey, PendingRaster> m_pendingRasters;
-    QQueue<PendingRaster> m_pendingRasterQueue;
+    std::unique_ptr<State> m_state;
+    QHash<SpriteKey, Record> m_records;
+    QSet<SpriteKey> m_pendingKeys;
+    QFont m_font;
     quint32 m_nextSpriteId = 1;
-    int m_widthMeasurementCount = 0;
 };
 
-size_t qHash(const DanmakuTextSpriteCache::WidthKey &key, size_t seed = 0) noexcept;
 size_t qHash(const DanmakuTextSpriteCache::SpriteKey &key, size_t seed = 0) noexcept;

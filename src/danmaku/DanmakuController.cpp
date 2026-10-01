@@ -5,6 +5,8 @@
 #include "danmaku/DanmakuUpdateWorker.hpp"
 
 #include <QDateTime>
+#include <QEvent>
+#include <QGuiApplication>
 #include <QMetaType>
 #include <QMutexLocker>
 #include <QPointF>
@@ -94,6 +96,7 @@ DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
         m_updateThread.start();
     }
 
+    qGuiApp->installEventFilter(this);
     ensureLaneStateSize();
     resetLaneStates();
     resetGlyphSession();
@@ -110,6 +113,14 @@ DanmakuController::~DanmakuController() {
         m_updateThread.quit();
         m_updateThread.wait();
     }
+}
+
+bool DanmakuController::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == qGuiApp && event->type() == QEvent::ApplicationFontChange && !m_rasterClosing) {
+        m_textSpriteCache.setFont(QGuiApplication::font());
+        invalidateRaster(true);
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 void DanmakuController::setViewportSize(qreal width, qreal height) {
@@ -212,13 +223,10 @@ void DanmakuController::setGlyphWarmupEnabled(bool enabled) {
     }
 }
 
-void DanmakuController::appendComments(const QVariantList &comments, qint64 playbackPositionMs) {
-    ensureLaneStateSize();
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    QVector<int> appendedRows;
-    appendedRows.reserve(comments.size());
-    bool appendedAny = false;
-    bool queuedSpriteRaster = false;
+int DanmakuController::appendComments(const QVariantList &comments, qint64 playbackPositionMs, qreal sourceMotionTime) {
+    if (m_rasterClosing)
+        return 0;
+    int accepted = 0;
     for (const QVariant &entry : comments) {
         const QVariantMap map = entry.toMap();
         Item item;
@@ -226,50 +234,76 @@ void DanmakuController::appendComments(const QVariantList &comments, qint64 play
         item.userId = map.value("user_id").toString();
         item.text = map.value("text").toString();
         if (item.commentId.isEmpty()) {
+            ++accepted;
             continue;
         }
-        observeGlyphText(item.text);
-
-        const qint64 atMs = map.value("at_ms").toLongLong();
-        const DanmakuTextSpriteCache::EnsureResult spriteResult =
+        if (m_pendingComments.size() >= kPendingCommentCapacity)
+            break;
+        const auto sprite =
             m_textSpriteCache.ensureSprite(item.text, DanmakuRenderStyle::kTextPixelSize, m_renderDevicePixelRatio);
-        item.spriteId = spriteResult.spriteId;
-        item.widthEstimate = spriteResult.widthEstimate;
-        if (spriteResult.queuedRaster) {
-            queuedSpriteRaster = true;
+        if (sprite.failed) {
+            emit rasterFailed(
+                QStringLiteral("コメント画像を生成できません（文字数・画像サイズの上限または描画エラー）"));
+            ++accepted;
+            continue;
         }
+        if (sprite.spriteId == 0)
+            break; // Producer retains the unaccepted suffix and retries.
+        observeGlyphText(item.text);
+        item.spriteId = sprite.spriteId;
         item.speedPxPerSec = 120 + (qHash(item.commentId) % 70);
         item.active = true;
-
-        item.lane = pickLane(nowMs);
-        item.originalLane = item.lane;
-        item.x = m_viewportWidth + kSpawnOffset;
-        item.y = item.lane * (m_fontPx + m_laneGap) + kLaneTopMargin;
-
+        const qint64 atMs = map.value("at_ms").toLongLong();
         const qint64 lagMs = std::clamp(playbackPositionMs - atMs, qint64(0), kMaxLagCompensationMs);
-        const qreal lagSec = lagMs / 1000.0;
-        item.x -= (item.speedPxPerSec * m_playbackRate) * lagSec;
-        if (item.x + item.widthEstimate < kItemCullThreshold) {
+        item.x = m_viewportWidth + kSpawnOffset - item.speedPxPerSec * m_playbackRate * (lagMs / 1000.0);
+        m_pendingComments.enqueue({std::move(item), sourceMotionTime >= 0 ? sourceMotionTime : m_motionTime});
+        ++accepted;
+    }
+    activateReadyComments();
+    return accepted;
+}
+
+void DanmakuController::activateReadyComments() {
+    QVector<int> appendedRows;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    ensureLaneStateSize();
+    while (!m_pendingComments.isEmpty()) {
+        auto &pending = m_pendingComments.head();
+        const auto sprite = m_textSpriteCache.ensureSprite(pending.item.text, DanmakuRenderStyle::kTextPixelSize,
+                                                           m_renderDevicePixelRatio);
+        if (sprite.failed) {
+            m_pendingComments.dequeue();
+            emit rasterFailed(QStringLiteral("コメント画像の描画に失敗しました"));
             continue;
         }
-
+        if (!sprite.ready)
+            break;
+        if (m_pendingNgUsers.contains(pending.item.userId))
+            break; // Preserve it until persistent NG succeeds or is rolled back.
+        Item item = std::move(pending.item);
+        item.spriteId = sprite.spriteId;
+        item.widthEstimate = sprite.widthEstimate;
+        // Use the same accumulated playback motion as visible comments. Queue
+        // latency must not freeze a comment at an obsolete spawn position.
+        item.x -= item.speedPxPerSec * (m_motionTime - pending.queuedMotionTime);
+        m_pendingComments.dequeue();
+        if (item.x + item.widthEstimate < kItemCullThreshold) {
+            ++m_rasterExpired;
+            continue;
+        }
+        item.lane = pickLane(now);
+        item.originalLane = item.lane;
+        item.y = item.lane * (m_fontPx + m_laneGap) + kLaneTopMargin;
         const int row = acquireRow();
-        m_items[row] = item;
+        m_items[row] = std::move(item);
         appendedRows.push_back(row);
-        LaneState &laneState = m_laneStates[item.lane];
-        laneState.nextAvailableAtMs = std::max(laneState.nextAvailableAtMs, nowMs) + estimateLaneCooldownMs(item);
-        laneState.lastAssignedRow = row;
-
-        if (m_perfLogEnabled) {
+        auto &lane = m_laneStates[m_items[row].lane];
+        lane.nextAvailableAtMs = std::max(lane.nextAvailableAtMs, now) + estimateLaneCooldownMs(m_items[row]);
+        lane.lastAssignedRow = row;
+        if (m_perfLogEnabled)
             ++m_perfLogAppendCount;
-        }
-        appendedAny = true;
     }
-
-    if (appendedAny) {
-        if (queuedSpriteRaster) {
-            rasterizePendingSpritesWithinBudget();
-        }
+    if (!appendedRows.isEmpty()) {
         queueSpatialUpsertRows(appendedRows);
         queueSnapshotUpsertRows(appendedRows);
         flushPendingDiffs(true);
@@ -413,6 +447,7 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
     QVector<int> workerRows;
     if (resolvedInNgZone) {
         const QString userId = item.userId;
+        m_pendingNgUsers.insert(userId);
         item.dragging = false;
         item.frozen = true;
         item.ngDropHovered = false;
@@ -451,6 +486,8 @@ void DanmakuController::dropDragInternal(int index, bool inNgZone) {
 }
 
 void DanmakuController::applyNgUserFade(const QString &userId) {
+    m_pendingNgUsers.remove(userId);
+    m_pendingComments.removeIf([&](const PendingComment &pending) { return pending.item.userId == userId; });
     bool changed = false;
     QVector<int> changedRows;
     for (int row = 0; row < m_items.size(); ++row) {
@@ -475,6 +512,7 @@ void DanmakuController::applyNgUserFade(const QString &userId) {
 }
 
 void DanmakuController::rollbackPendingNgUserFade(const QString &userId) {
+    m_pendingNgUsers.remove(userId);
     QVector<int> snapshotRows;
     QVector<int> spatialRows;
     for (int row = 0; row < m_items.size(); ++row) {
@@ -511,6 +549,7 @@ void DanmakuController::rollbackPendingNgUserFade(const QString &userId) {
 }
 
 void DanmakuController::resetForSeek() {
+    invalidateRaster(false);
     invalidateWorkerGeneration();
     QVector<int> activeRows;
     activeRows.reserve(m_items.size());
@@ -538,11 +577,8 @@ void DanmakuController::resetGlyphSession() {
     m_queuedGlyphCodepoints.clear();
     m_glyphWarmupQueue.clear();
     m_lastGlyphWarmupDispatchMs = 0;
-    m_textSpriteCache.clear();
-    {
-        QMutexLocker locker(&m_pendingSpriteUploadsMutex);
-        m_pendingSpriteUploads.clear();
-    }
+    m_pendingComments.clear();
+    invalidateRaster(true);
     clearGlyphWarmupText();
     if (m_glyphWarmupEnabled) {
         queueGlyphSeedCharacters();
@@ -550,19 +586,13 @@ void DanmakuController::resetGlyphSession() {
 }
 
 void DanmakuController::setRenderDevicePixelRatio(qreal devicePixelRatio) {
-    const qreal normalized = std::max<qreal>(1.0, devicePixelRatio);
+    const qreal normalized = std::isfinite(devicePixelRatio) ? std::clamp<qreal>(devicePixelRatio, 1.0, 16.0) : 1.0;
     if (qFuzzyCompare(m_renderDevicePixelRatio, normalized)) {
         return;
     }
 
     m_renderDevicePixelRatio = normalized;
-    m_textSpriteCache.clear();
-    {
-        QMutexLocker locker(&m_pendingSpriteUploadsMutex);
-        m_pendingSpriteUploads.clear();
-    }
-    refreshActiveSpriteIds();
-    syncWorkerFullState();
+    invalidateRaster(true);
 }
 
 bool DanmakuController::ngDropZoneVisible() const {
@@ -645,12 +675,9 @@ void DanmakuController::onFrame() {
     }
     updateOverlayMetrics(now);
     dispatchGlyphWarmupIfDue(now);
-    rasterizePendingSpritesWithinBudget();
-
-    if (activeItemCount() == 0) {
-        maybeWritePerfLog(now);
-        return;
-    }
+    drainRasterResults();
+    activateReadyComments();
+    refreshActiveSpriteIds();
 
     if (m_workerEnabled && m_updateWorker) {
         m_workerAccumulatedElapsedMs += elapsedMs;
@@ -658,10 +685,17 @@ void DanmakuController::onFrame() {
             maybeWritePerfLog(now);
             return;
         }
-
         const int workerElapsedMs = std::clamp(m_workerAccumulatedElapsedMs, 1, static_cast<int>(kWorkerElapsedCapMs));
         m_workerAccumulatedElapsedMs = 0;
+        if (!m_playbackPaused)
+            m_motionTime += (workerElapsedMs / 1000.0) * m_playbackRate;
         scheduleWorkerFrame(workerElapsedMs, now);
+        maybeWritePerfLog(now);
+        return;
+    }
+    if (!m_playbackPaused)
+        m_motionTime += (elapsedMs / 1000.0) * m_playbackRate;
+    if (activeItemCount() == 0) {
         maybeWritePerfLog(now);
         return;
     }
@@ -985,39 +1019,76 @@ void DanmakuController::releaseRow(int row) {
 }
 
 void DanmakuController::refreshActiveSpriteIds() {
+    if (!m_haveSpriteReplacements)
+        return;
+    m_haveSpriteReplacements = false;
     QVector<int> changedRows;
-    changedRows.reserve(activeItemCount());
-    bool queuedSpriteRaster = false;
     for (int row = 0; row < m_items.size(); ++row) {
         Item &item = m_items[row];
-        if (!item.active) {
+        if (!item.active || !item.replaceSprite)
             continue;
-        }
-        const DanmakuTextSpriteCache::EnsureResult spriteResult =
+        const auto sprite =
             m_textSpriteCache.ensureSprite(item.text, DanmakuRenderStyle::kTextPixelSize, m_renderDevicePixelRatio);
-        item.spriteId = spriteResult.spriteId;
-        item.widthEstimate = spriteResult.widthEstimate;
-        if (spriteResult.queuedRaster) {
-            queuedSpriteRaster = true;
+        if (sprite.failed) {
+            item.replaceSprite = false; // Preserve the last readable sprite.
+            emit rasterFailed(QStringLiteral("コメント画像の更新に失敗しました"));
+        } else if (sprite.ready) {
+            item.spriteId = sprite.spriteId;
+            item.widthEstimate = sprite.widthEstimate;
+            item.replaceSprite = false;
+            changedRows.push_back(row);
+        } else {
+            m_haveSpriteReplacements = true;
+            if (sprite.spriteId == 0)
+                break;
         }
-        changedRows.push_back(row);
     }
     if (!changedRows.isEmpty()) {
-        if (queuedSpriteRaster) {
-            rasterizePendingSpritesWithinBudget();
-        }
         queueSpatialUpsertRows(changedRows);
         queueSnapshotUpsertRows(changedRows);
         flushPendingDiffs(true);
+        syncWorkerRows(changedRows);
     }
 }
 
-void DanmakuController::enqueueSpriteUpload(const DanmakuSpriteUpload &upload) {
-    if (upload.spriteId == 0 || upload.image.isNull()) {
-        return;
+void DanmakuController::invalidateRaster(bool refreshActive) {
+    if (refreshActive)
+        m_textSpriteCache.clear();
+    else
+        m_textSpriteCache.cancelPending();
+    // A published immutable sprite remains reusable across media seeks. Keep
+    // its bounded upload mailbox too: readiness must never outlive its pixels.
+    m_haveSpriteReplacements = refreshActive;
+    if (refreshActive) {
+        for (auto &item : m_items)
+            item.replaceSprite = item.active;
+        // Pending comments remain bounded and are resubmitted with the new
+        // font/DPR. Their old IDs cannot become visible.
+        refreshActiveSpriteIds();
+    } else {
+        m_pendingComments.clear();
     }
-    QMutexLocker locker(&m_pendingSpriteUploadsMutex);
-    m_pendingSpriteUploads.push_back(upload);
+}
+
+void DanmakuController::shutdownRaster() {
+    if (m_rasterClosing)
+        return;
+    m_rasterClosing = true;
+    m_frameTimer.stop();
+    m_pendingComments.clear();
+    m_textSpriteCache.shutdown();
+}
+
+bool DanmakuController::rasterStopped() const {
+    return m_textSpriteCache.isStopped();
+}
+
+DanmakuTextSpriteCache::Metrics DanmakuController::rasterMetrics() const {
+    return m_textSpriteCache.metrics();
+}
+
+int DanmakuController::pendingCommentCountForTesting() const {
+    return m_pendingComments.size();
 }
 
 void DanmakuController::releaseRowsDescending(const QVector<int> &rowsDescending) {
@@ -1235,15 +1306,23 @@ void DanmakuController::clearGlyphWarmupText() {
     emit glyphWarmupTextChanged();
 }
 
-bool DanmakuController::rasterizePendingSpritesWithinBudget() {
-    const QVector<DanmakuSpriteUpload> uploads =
-        m_textSpriteCache.rasterizePendingSprites(kSpriteRasterBudgetPerFrame, kSpriteUploadBudgetBytesPerFrame);
-    if (uploads.isEmpty()) {
-        return false;
-    }
-
-    for (const DanmakuSpriteUpload &upload : uploads) {
-        enqueueSpriteUpload(upload);
+bool DanmakuController::drainRasterResults() {
+    {
+        QMutexLocker locker(&m_pendingSpriteUploadsMutex);
+        // A single mailbox batch, rather than a new batch per GUI timer tick:
+        // a paused/stalled render thread applies backpressure all the way to
+        // the bounded raster request queue and the source batch cursor.
+        if (!m_pendingSpriteUploads.isEmpty())
+            return false;
+        m_pendingSpriteUploads =
+            m_textSpriteCache.takeCompleted(kSpriteRasterBudgetPerFrame, kSpriteUploadBudgetBytesPerFrame);
+        if (m_pendingSpriteUploads.isEmpty())
+            return false;
+        qint64 bytes = 0;
+        for (const auto &upload : m_pendingSpriteUploads)
+            bytes += upload.image.sizeInBytes();
+        m_uploadHighWater = std::max(m_uploadHighWater, static_cast<int>(m_pendingSpriteUploads.size()));
+        m_uploadBytesHighWater = std::max(m_uploadBytesHighWater, bytes);
     }
     emit renderSnapshotChanged();
     return true;
@@ -1941,6 +2020,46 @@ void DanmakuController::maybeWritePerfLog(qint64 nowMs) {
                .arg(p99Ms, 0, 'f', 2);
 
     m_perfLogWindowStartMs = nowMs;
+    const auto raster = m_textSpriteCache.metrics();
+    int uploadDepth = 0;
+    qint64 uploadBytes = 0;
+    {
+        QMutexLocker locker(&m_pendingSpriteUploadsMutex);
+        uploadDepth = m_pendingSpriteUploads.size();
+        for (const auto &upload : m_pendingSpriteUploads)
+            uploadBytes += upload.image.sizeInBytes();
+    }
+    qInfo().noquote() << QString("[perf-raster-upload] pending=%1 bytes=%2 high_water=%3 bytes_high_water=%4")
+                             .arg(uploadDepth)
+                             .arg(uploadBytes)
+                             .arg(m_uploadHighWater)
+                             .arg(m_uploadBytesHighWater);
+    qInfo().noquote()
+        << QString("[perf-raster] pending=%1 queued=%2 completed=%3 request_bytes=%4 completion_bytes=%5 "
+                   "high_water=%6 completion_high_water=%7 completion_bytes_high_water=%8 "
+                   "coalesced=%9 backpressured=%10 cancelled=%11 stale=%12 failed=%13 rasterized=%14 "
+                   "raster_ns=%15 raster_max_ns=%16 latency_ns=%17 latency_max_ns=%18 pending_comments=%19 expired=%20")
+               .arg(raster.pending)
+               .arg(raster.queued)
+               .arg(raster.completed)
+               .arg(raster.requestBytes)
+               .arg(raster.completionBytes)
+               .arg(raster.highWater)
+               .arg(raster.completionHighWater)
+               .arg(raster.completionBytesHighWater)
+               .arg(raster.coalesced)
+               .arg(raster.backpressured)
+               .arg(raster.cancelled)
+               .arg(raster.stale)
+               .arg(raster.failed)
+               .arg(raster.rasterized)
+               .arg(raster.rasterNs)
+               .arg(raster.maxRasterNs)
+               .arg(raster.completionLatencyNs)
+               .arg(raster.maxCompletionLatencyNs)
+               .arg(m_pendingComments.size())
+               .arg(m_rasterExpired);
+
     m_perfLogFrameCount = 0;
     m_perfFrameSamplesMs.clear();
     m_perfLogAppendCount = 0;

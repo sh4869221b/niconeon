@@ -23,6 +23,7 @@ niconeon_test(spatial_grid_incremental_test tests/unit/spatial_grid_incremental_
 niconeon_test(danmaku_text_width_test tests/unit/danmaku_text_width_test.cpp niconeon_render)
 niconeon_test(danmaku_ng_drop_test tests/unit/danmaku_ng_drop_test.cpp niconeon_render)
 niconeon_test(danmaku_sprite_cache_test tests/unit/danmaku_sprite_cache_test.cpp niconeon_render)
+niconeon_test(danmaku_raster_pipeline_test tests/unit/danmaku_raster_pipeline_test.cpp niconeon_render)
 niconeon_test(license_resource_test tests/unit/license_resource_test.cpp Qt6::Core)
 niconeon_license_resources(license_resource_test)
 

@@ -26,7 +26,7 @@ The retained renderer takes a QVariant view adapter constructed in bounded GUI c
 | Comment worker QThread | QNetworkAccessManager/replies/deadline, JSON decode, one timeline, FilterManager, two SQLite connections | Commands and typed result signals; all SQL created, used and destroyed here |
 | Retained danmaku update worker | SoA simulation state | Existing row-diff/frame contracts; further global bounding remains #78 |
 | Qt Quick render thread | libmpv render context, FBO, textures/buffers, rendernode draw | No network/DB/JSON. mpv GL state reset before Quick composition |
-| Future raster workers | Whole-comment raster / shaping | #65 blocking follow-up; existing GUI raster is explicitly not qualified |
+| Raster worker (one `std::thread`) | Immutable font snapshots, QFontMetrics, QImage allocation and QPainter text | Count/byte-bounded request and completion queues; GUI commits results, render owns texture uploads |
 
 Network and parsing/storage share one non-GUI worker in this migration. HTTP is asynchronous;
 JSON and SQLite can delay other worker commands, but never synchronously execute on GUI/render.
@@ -65,8 +65,11 @@ cursor unchanged and discard partial output. NG-user filtering still short-circu
 - Failed mpv seeks are correlated by request ID; stale failures cannot cancel a newer seek.
   One replaceable 5-second timer reconciles comments to the observed media clock if
   a demuxer never lands within the position tolerance; file changes and shutdown cancel it.
-- Existing renderer DPR/font/resource invalidation remains part of #65/#78 qualification;
-  this document does not claim those old queues are fully bounded or async-raster compliant
+- Raster session/DPR/application-font changes advance the raster generation; seeks cancel unpublished
+  work while preserving reusable ready sprites and their upload mailbox. In-flight obsolete images
+  are discarded before publication. DPR/font swaps retain readable old sprites until replacements
+  and measured hit-test widths are committed together
+- Renderer resource recovery and the retained CPU cache/LRU remain #64/#78/#74 qualification
 
 ## Shutdown
 
@@ -86,12 +89,14 @@ First file loads are held until a render-ready notification and submitted asynch
 
 `[perf-ui]` exposes admitted queue depth/high-water, stale results, coalesced ticks,
 render backlog, emit drops/coalesces/over-budget and target profile. Existing renderer
-frame-time/upload metrics are retained. Full per-queue byte/high-water/latency and shutdown
-qualification across retained renderer paths remains #78.
+frame-time/upload metrics are retained. `[perf-raster]` and `[perf-raster-upload]` expose raster queue counts/bytes/high-water,
+coalescing, backpressure, cancellation/stale/failure, total/max execution and completion latency,
+retained-comment count and pre-activation expiry. Full qualification across the other retained
+renderer paths remains #78.
 
 ## Explicit follow-ups / non-claims
 
-- #65: move retained GUI text raster to bounded workers; no GUI/render worker waits
+- #65 worker scheduling and its bounds are described in [raster-worker.md](raster-worker.md); full runtime qualification remains separate
 - #78: all retained raster/update/upload/cache queues, cancellation and shutdown qualification
 - #68/#73: high precision media clock and cursor scheduling optimization; a C++ 50ms polling timer remains for compatibility, with no IPC batch transport
 - #74: compare production video integration options; current QQuickFramebufferObject remains baseline

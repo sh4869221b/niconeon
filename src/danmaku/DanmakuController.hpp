@@ -42,7 +42,8 @@ class DanmakuController : public QObject {
     Q_INVOKABLE void setTargetFps(int fps);
     Q_INVOKABLE void setPerfLogEnabled(bool enabled);
     Q_INVOKABLE void setGlyphWarmupEnabled(bool enabled);
-    Q_INVOKABLE void appendComments(const QVariantList &comments, qint64 playbackPositionMs);
+    Q_INVOKABLE int appendComments(const QVariantList &comments, qint64 playbackPositionMs,
+                                   qreal sourceMotionTime = -1);
     Q_INVOKABLE void resetForSeek();
     Q_INVOKABLE void resetGlyphSession();
     Q_INVOKABLE void setRenderDevicePixelRatio(qreal devicePixelRatio);
@@ -70,6 +71,16 @@ class DanmakuController : public QObject {
     qint64 overlayMetricsUpdatedAtMs() const;
     void recordPresentedCommentFrame(qint64 presentedAtMs = 0);
     int widthMeasurementCountForTesting() const;
+    DanmakuTextSpriteCache::Metrics rasterMetrics() const;
+    int pendingCommentCountForTesting() const;
+    quint64 expiredRasterComments() const {
+        return m_rasterExpired;
+    }
+    qreal motionTime() const {
+        return m_motionTime;
+    }
+    void shutdownRaster();
+    bool rasterStopped() const;
 
   signals:
     void ngDropZoneVisibleChanged();
@@ -84,6 +95,10 @@ class DanmakuController : public QObject {
     void overlayMetricsUpdatedAtMsChanged();
     void ngDropRequested(const QString &userId);
     void renderSnapshotChanged();
+    void rasterFailed(const QString &message);
+
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
   private:
     struct LaneState {
@@ -96,6 +111,7 @@ class DanmakuController : public QObject {
         QString userId;
         QString text;
         DanmakuSpriteId spriteId = 0;
+        bool replaceSprite = false;
         qreal x = 0;
         qreal y = 0;
         qreal speedPxPerSec = 120;
@@ -113,6 +129,21 @@ class DanmakuController : public QObject {
         bool pendingNgDraggedOrigin = false;
     };
 
+    struct PendingComment {
+        Item item;
+        qreal queuedMotionTime = 0;
+    };
+    static constexpr int kPendingCommentCapacity = 256;
+    QQueue<PendingComment> m_pendingComments;
+    qreal m_motionTime = 0;
+    bool m_rasterClosing = false;
+    bool m_haveSpriteReplacements = false;
+    QSet<QString> m_pendingNgUsers;
+    quint64 m_rasterExpired = 0;
+    int m_uploadHighWater = 0;
+    qint64 m_uploadBytesHighWater = 0;
+    void activateReadyComments();
+    void invalidateRaster(bool refreshActive);
     void onFrame();
     int laneCount() const;
     int pickLane(qint64 nowMs);
@@ -174,8 +205,7 @@ class DanmakuController : public QObject {
     void moveDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void dropDragInternal(int index, bool inNgZone);
     void refreshActiveSpriteIds();
-    void enqueueSpriteUpload(const DanmakuSpriteUpload &upload);
-    bool rasterizePendingSpritesWithinBudget();
+    bool drainRasterResults();
 
     QVector<Item> m_items;
     QVector<LaneState> m_laneStates;

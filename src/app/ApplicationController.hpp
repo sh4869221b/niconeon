@@ -102,6 +102,8 @@ class ApplicationController : public QObject {
         CommentList comments;
         qsizetype offset = 0;
         qint64 positionMs = 0;
+        qreal motionTime = 0;
+        QSet<QString> excludedUsers;
     };
     void toast(const QString &text, const QString &action = {});
     void applyProfile(RuntimeProfileConfig profile, bool persist);
@@ -109,6 +111,7 @@ class ApplicationController : public QObject {
     void reconcileSeek();
     void playbackTick();
     void drainRenderBatch();
+    void maybeFinishShutdown();
     void performanceWindow();
     bool degradeQos();
     bool recoverQos();
@@ -134,6 +137,7 @@ class ApplicationController : public QObject {
     bool m_commentsVisible = true;
     bool m_perfLog = false;
     bool m_closing = false;
+    bool m_readyToQuitEmitted = false;
     bool m_waitingSeek = false;
     quint64 m_seekRequest = 0;
     qint64 m_seekTarget = 0;

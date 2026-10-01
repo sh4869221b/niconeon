@@ -75,6 +75,7 @@ void DanmakuTextWidthTest::repeatedTextUsesWidthCache() {
     second.insert(QStringLiteral("comment_id"), QStringLiteral("cache-2"));
 
     controller.appendComments(QVariantList{first}, 0);
+    QTRY_COMPARE(controller.widthMeasurementCountForTesting(), 1);
     const int afterFirst = controller.widthMeasurementCountForTesting();
     controller.appendComments(QVariantList{second}, 0);
     const int afterSecond = controller.widthMeasurementCountForTesting();
@@ -156,8 +157,10 @@ DanmakuRenderFrameConstPtr DanmakuTextWidthTest::appendSingleComment(const QStri
     comments.push_back(comment);
     controller.appendComments(comments, playbackPositionMs);
 
-    QCoreApplication::processEvents();
-
+    QElapsedTimer timer;
+    timer.start();
+    while (controller.renderSnapshot()->instances.isEmpty() && timer.elapsed() < 2000)
+        QTest::qWait(10);
     return controller.renderSnapshot();
 }
 
