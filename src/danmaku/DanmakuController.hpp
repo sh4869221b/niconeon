@@ -218,7 +218,9 @@ class DanmakuController : public QObject {
     void moveDragInternal(int index, qreal pointerX, qreal pointerY, bool hasPointerPosition);
     void dropDragInternal(int index, bool inNgZone);
     void refreshActiveSpriteIds();
-    bool drainRasterResults();
+    int drainRasterResults();
+    void handleRasterCompletionWake();
+    void requestRasterWakeIfRoom();
 
     QVector<Item> m_items;
     QVector<LaneState> m_laneStates;

@@ -3,6 +3,7 @@
 
 #include "danmaku/DanmakuRenderStyle.hpp"
 #include <QElapsedTimer>
+#include <QEvent>
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QPainter>
@@ -42,6 +43,19 @@ bool hasInk(const QImage &image) {
             if (image.pixelColor(x, y).alpha() > 0)
                 return true;
     return false;
+}
+bool waitForCompletionsWithoutEvents(DanmakuTextSpriteCache &cache, int count, quint64 expectedWakeChecks = 0) {
+    if (!expectedWakeChecks)
+        expectedWakeChecks = count;
+    const auto published = [&] {
+        const auto stats = cache.metrics();
+        return stats.completed >= count && stats.wakeNotifications + stats.wakeCoalesced >= expectedWakeChecks;
+    };
+    QElapsedTimer timer;
+    timer.start();
+    while (!published() && timer.elapsed() < 3000)
+        QTest::qSleep(1);
+    return published();
 }
 } // namespace
 
@@ -285,6 +299,155 @@ class DanmakuSpriteCacheTest : public QObject {
         QVERIFY(ready.ready);
         QCOMPARE(ready.rasterCompletedAtNs, 0);
         QCOMPARE(ready.guiReadyAtNs, 0);
+    }
+    void pollingAndGenerationChangesDoNotAcknowledgeQueuedWake() {
+        DanmakuTextSpriteCache cache;
+        QObject receiver;
+        int callbacks = 0;
+        QVector<DanmakuSpriteUpload> committed;
+        connect(
+            cache.notifier(), &DanmakuRasterNotifier::completionReady, &receiver,
+            [&] {
+                ++callbacks;
+                if (!cache.beginCompletionWake())
+                    return;
+                committed = cache.takeCompleted(8, 0);
+                cache.finishCompletionWake(committed.size());
+            },
+            Qt::QueuedConnection);
+        for (int i = 0; i < 16; ++i)
+            cache.ensureSprite(QStringLiteral("old %1").arg(i), 24, 1);
+        QVERIFY(waitForCompletionsWithoutEvents(cache, 16));
+        QCOMPARE(cache.metrics().wakePending, 1);
+        QCOMPARE(cache.metrics().wakeNotifications, 1);
+        QCOMPARE(cache.takeCompleted(16, 0).size(), 16); // Timer/append-like drain.
+        QCOMPARE(cache.metrics().wakePending, 1);
+        cache.cancelPending();
+        cache.clear();
+        QFont font = QGuiApplication::font();
+        font.setBold(true);
+        cache.setFont(font);
+        for (int i = 0; i < 8; ++i)
+            cache.ensureSprite(QStringLiteral("new %1").arg(i), 24, 2);
+        QVERIFY(waitForCompletionsWithoutEvents(cache, 8, 24));
+        QCOMPARE(cache.metrics().wakeNotifications, 1);
+        QCOMPARE(cache.metrics().wakePending, 1);
+        QCoreApplication::sendPostedEvents(&receiver, QEvent::MetaCall);
+        QTRY_COMPARE(callbacks, 1);
+        QCOMPARE(committed.size(), 8);
+        for (const auto &upload : committed) {
+            QVERIFY(upload.spriteId > 16);
+            QCOMPARE(upload.image.devicePixelRatio(), 2);
+        }
+        QCOMPARE(cache.metrics().wakePending, 0);
+        QCOMPARE(cache.metrics().wakeActive, 0);
+        QCOMPARE(cache.metrics().wakePendingHighWater, 1);
+    }
+    void activeWakeAllowsOnlyOneQueuedSuccessor() {
+        DanmakuTextSpriteCache cache;
+        QObject receiver;
+        int callbacks = 0;
+        int totalCommitted = 0;
+        connect(
+            cache.notifier(), &DanmakuRasterNotifier::completionReady, &receiver,
+            [&] {
+                ++callbacks;
+                QVERIFY(cache.beginCompletionWake());
+                const int committed = cache.takeCompleted(8, 0).size();
+                totalCommitted += committed;
+                for (int i = 0; i < 50; ++i)
+                    cache.requestCompletionWake();
+                QVERIFY(cache.metrics().wakePending <= 1);
+                QCOMPARE(cache.metrics().wakeActive, 1);
+                cache.finishCompletionWake(committed);
+            },
+            Qt::QueuedConnection);
+        for (int i = 0; i < 17; ++i)
+            cache.ensureSprite(QString::number(i), 24, 1);
+        QVERIFY(waitForCompletionsWithoutEvents(cache, 17));
+        for (int i = 0; i < 3; ++i)
+            QCoreApplication::sendPostedEvents(&receiver, QEvent::MetaCall);
+        QTRY_COMPARE(callbacks, 3);
+        QCOMPARE(totalCommitted, 17);
+        const auto stats = cache.metrics();
+        QCOMPARE(stats.wakeNotifications, 3);
+        QCOMPARE(stats.wakeStarted, 3);
+        QCOMPARE(stats.wakePendingHighWater, 1);
+        QCOMPARE(stats.wakeOutstandingHighWater, 2);
+        QCOMPARE(stats.wakeMaxCommittedSprites, 8);
+        QCOMPARE(stats.wakePending, 0);
+        QCOMPARE(stats.wakeActive, 0);
+    }
+    void wakeBudgetRejectsUnfittableFrontWithoutSpinning() {
+        DanmakuTextSpriteCache cache;
+        QObject receiver;
+        int callbacks = 0;
+        connect(
+            cache.notifier(), &DanmakuRasterNotifier::completionReady, &receiver,
+            [&] {
+                ++callbacks;
+                QVERIFY(cache.beginCompletionWake());
+                cache.requestCompletionWake(1, false); // A nonempty mailbox has only one byte left.
+                cache.finishCompletionWake(0);
+            },
+            Qt::QueuedConnection);
+        cache.ensureSprite("cannot fit", 24, 1);
+        QVERIFY(waitForCompletionsWithoutEvents(cache, 1));
+        for (int i = 0; i < 20; ++i)
+            QCoreApplication::sendPostedEvents(&receiver, QEvent::MetaCall);
+        QTRY_COMPARE(callbacks, 1);
+        QCOMPARE(cache.metrics().wakeNotifications, 1);
+        QCOMPARE(cache.metrics().completed, 1);
+        QCOMPARE(cache.metrics().wakePending, 0);
+        // The render consumer restores an empty mailbox. No new raster data is needed.
+        std::thread render([&] { cache.requestCompletionWake(); });
+        render.join();
+        QCOMPARE(cache.metrics().wakePending, 1);
+        QCoreApplication::sendPostedEvents(&receiver, QEvent::MetaCall);
+        QTRY_COMPARE(callbacks, 2);
+        QCOMPARE(cache.takeCompleted(1, 1, true).size(), 1);
+    }
+    void shutdownInvalidatesQueuedWakeAndReceiverDestructionDisconnects() {
+        DanmakuTextSpriteCache cache;
+        QObject receiver;
+        int callbacks = 0;
+        bool accepted = true;
+        connect(
+            cache.notifier(), &DanmakuRasterNotifier::completionReady, &receiver,
+            [&] {
+                ++callbacks;
+                accepted = cache.beginCompletionWake();
+                if (accepted)
+                    cache.finishCompletionWake(0);
+            },
+            Qt::QueuedConnection);
+        cache.ensureSprite("shutdown", 24, 1);
+        QVERIFY(waitForCompletionsWithoutEvents(cache, 1));
+        cache.shutdown();
+        const auto notifications = cache.metrics().wakeNotifications;
+        cache.requestCompletionWake();
+        QCoreApplication::sendPostedEvents(&receiver, QEvent::MetaCall);
+        QTRY_COMPARE(callbacks, 1);
+        QVERIFY(!accepted);
+        QCOMPARE(cache.metrics().wakePending, 0);
+        QCOMPARE(cache.metrics().wakeActive, 0);
+        QCOMPARE(cache.metrics().wakeNotifications, notifications);
+
+        DanmakuTextSpriteCache orphan;
+        auto context = std::make_unique<QObject>();
+        int orphanCallbacks = 0;
+        connect(
+            orphan.notifier(), &DanmakuRasterNotifier::completionReady, context.get(), [&] { ++orphanCallbacks; },
+            Qt::QueuedConnection);
+        orphan.ensureSprite("orphan", 24, 1);
+        QVERIFY(waitForCompletionsWithoutEvents(orphan, 1));
+        context.reset();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCOMPARE(orphanCallbacks, 0);
+        orphan.shutdown();
+        QTRY_VERIFY(orphan.isStopped());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCOMPARE(orphanCallbacks, 0);
     }
 };
 QTEST_MAIN(DanmakuSpriteCacheTest)

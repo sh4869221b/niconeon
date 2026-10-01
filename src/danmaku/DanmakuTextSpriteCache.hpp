@@ -4,15 +4,24 @@
 
 #include <QFont>
 #include <QHash>
+#include <QObject>
 #include <QSet>
 #include <QString>
 
 #include <functional>
 #include <memory>
 
+// GUI-affine, payload-free notifier. The cache state retains it until the raster
+// worker has stopped; receivers use a queued connection with a QObject context.
+class DanmakuRasterNotifier final : public QObject {
+    Q_OBJECT
+  signals:
+    void completionReady();
+};
+
 // GUI-owned index with a single, privately owned CPU raster worker. Only
 // takeCompleted() publishes a result into the GUI index; the worker never
-// touches that index, QObjects, or graphics resources.
+// touches that index or graphics resources. It may emit the coalesced notifier.
 class DanmakuTextSpriteCache {
   public:
     struct SpriteKey {
@@ -56,6 +65,15 @@ class DanmakuTextSpriteCache {
         qint64 completionLatencyNs = 0;
         qint64 maxCompletionLatencyNs = 0;
         qint64 shutdownNs = 0;
+        int wakePending = 0;
+        int wakeActive = 0;
+        int wakePendingHighWater = 0;
+        int wakeOutstandingHighWater = 0;
+        int wakeMaxCommittedSprites = 0;
+        quint64 wakeNotifications = 0;
+        quint64 wakeCoalesced = 0;
+        quint64 wakeStarted = 0;
+        quint64 wakeNoProgress = 0;
     };
     // The image allocation is independently bounded, including the one image
     // currently being painted. Oversize/invalid input is an explicit failure,
@@ -78,6 +96,14 @@ class DanmakuTextSpriteCache {
     EnsureResult lookupSprite(const QString &text, int fontPixelSize, qreal devicePixelRatio) const;
     QVector<DanmakuSpriteUpload> takeCompleted(int maxSprites, qint64 maxBytes, bool allowOversize = true);
     Metrics metrics() const;
+    DanmakuRasterNotifier *notifier() const;
+    // Thread-safe, nonblocking request. maxBytes/allowOversize optionally avoid
+    // scheduling when the first completion cannot fit the remaining mailbox.
+    void requestCompletionWake(qint64 maxBytes = 0, bool allowOversize = true);
+    // GUI-only: acknowledge only at the actual queued callback's entry, never
+    // from takeCompleted(), timer/append drains, or generation cancellation.
+    bool beginCompletionWake();
+    void finishCompletionWake(int committedSprites);
     void shutdown();
     bool isStopped() const;
     int widthMeasurementCountForTesting() const;

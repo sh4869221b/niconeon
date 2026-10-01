@@ -41,6 +41,28 @@ struct DanmakuTextSpriteCache::State {
                  std::clamp<qint64>(requested.completedBytes, 1, MaxSpriteBytes)},
           beforeRaster(std::move(hook)), worker([this] { run(); }) {}
 
+    void requestWake(qint64 maxBytes = 0, bool allowOversize = true) {
+        {
+            std::lock_guard lock(mutex);
+            if (closing || completions.empty())
+                return;
+            if (maxBytes > 0 && !allowOversize && completions.front().upload.image.sizeInBytes() > maxBytes)
+                return;
+            if (stats.wakePending) {
+                ++stats.wakeCoalesced;
+                return;
+            }
+            stats.wakePending = 1;
+            ++stats.wakeNotifications;
+            stats.wakePendingHighWater = 1;
+            stats.wakeOutstandingHighWater =
+                std::max(stats.wakeOutstandingHighWater, stats.wakePending + stats.wakeActive);
+        }
+        // Qt queues only this payload-free wake. The reserved flag remains set
+        // until the receiver starts, including across unrelated GUI drains.
+        emit notifier.completionReady();
+    }
+
     void run() {
         for (;;) {
             Request request;
@@ -114,6 +136,7 @@ struct DanmakuTextSpriteCache::State {
                 stats.completionHighWater = std::max(stats.completionHighWater, stats.completed);
                 stats.completionBytesHighWater = std::max(stats.completionBytesHighWater, stats.completionBytes);
             }
+            requestWake();
         }
         std::lock_guard lock(mutex);
         stopped = true;
@@ -132,6 +155,7 @@ struct DanmakuTextSpriteCache::State {
     bool stopped = false;
     Clock::time_point shutdownStarted;
     const bool diagnosticsEnabled = qEnvironmentVariableIntValue("NICONEON_RENDER_DIAGNOSTICS") == 1;
+    DanmakuRasterNotifier notifier;
     // Last member: all state is initialized before the worker may read it.
     std::thread worker;
 };
@@ -263,6 +287,31 @@ QVector<DanmakuSpriteUpload> DanmakuTextSpriteCache::takeCompleted(int maxSprite
 DanmakuTextSpriteCache::Metrics DanmakuTextSpriteCache::metrics() const {
     std::lock_guard lock(m_state->mutex);
     return m_state->stats;
+}
+DanmakuRasterNotifier *DanmakuTextSpriteCache::notifier() const {
+    return &m_state->notifier;
+}
+void DanmakuTextSpriteCache::requestCompletionWake(qint64 maxBytes, bool allowOversize) {
+    m_state->requestWake(maxBytes, allowOversize);
+}
+bool DanmakuTextSpriteCache::beginCompletionWake() {
+    std::lock_guard lock(m_state->mutex);
+    Q_ASSERT(m_state->stats.wakePending == 1);
+    Q_ASSERT(m_state->stats.wakeActive == 0);
+    m_state->stats.wakePending = 0;
+    ++m_state->stats.wakeStarted;
+    if (m_state->closing)
+        return false;
+    m_state->stats.wakeActive = 1;
+    return true;
+}
+void DanmakuTextSpriteCache::finishCompletionWake(int committedSprites) {
+    std::lock_guard lock(m_state->mutex);
+    Q_ASSERT(m_state->stats.wakeActive == 1);
+    m_state->stats.wakeActive = 0;
+    m_state->stats.wakeMaxCommittedSprites = std::max(m_state->stats.wakeMaxCommittedSprites, committedSprites);
+    if (!committedSprites)
+        ++m_state->stats.wakeNoProgress;
 }
 void DanmakuTextSpriteCache::shutdown() {
     {

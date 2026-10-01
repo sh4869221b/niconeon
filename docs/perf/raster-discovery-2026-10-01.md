@@ -73,3 +73,54 @@ for this exact head passed all five jobs, including Debug/Release/ASan+UBSan+Lea
 strict default/bilinear OpenGL tests and Windows packaging/startup. Those existing
 tests did not cover these new performance/pixel failures. No suppression, relaxed
 pixel tolerance, reduced offered rate, or omitted failed run is used as acceptance.
+
+## Second discovery head: `7acdc00`
+
+[Regular CI](https://github.com/sh4869221b/niconeon/actions/runs/36935958567)
+passed all five jobs. [Performance/pixel CI](https://github.com/sh4869221b/niconeon/actions/runs/36935958576)
+**failed**, with the same 400 cps/30s + 15s drain protocol and two BA/AB pairs.
+Raw [timing](https://github.com/sh4869221b/niconeon/actions/runs/36935958576/artifacts/11198333567)
+and [pixel](https://github.com/sh4869221b/niconeon/actions/runs/36935958576/artifacts/11197908367)
+artifacts have 14-day retention. Selected raw frame intervals, terminal summaries,
+pixel outcomes and raw-file SHA-256 identifiers are retained in
+[`evidence-7acdc00/results.json`](evidence-7acdc00/results.json); phase/latency
+summaries are retained in [`phase-summary.txt`](evidence-7acdc00/phase-summary.txt).
+Those selected records are not a replacement for all raw event traces or PNGs.
+
+- Batch repacking reduced candidate `setFrame` p99 to 2.455 / 2.367 ms versus
+  baseline 20.927 / 18.692 ms; total candidate repack CPU time was about 0.01s
+  versus baseline 1.129 / 1.080s. This is a measured stage improvement only.
+- Whole-frame feed p99 remained 156.737 / 157.252 ms candidate versus
+  157.150 / 156.367 ms baseline. Candidate accepted only 11,216 / 11,280 of
+  12,000 offered, expired 7,781 / 7,890, and submitted 3,280 / 3,214 IDs.
+  Baseline submitted 2,725 / 2,743 IDs. Equal-work prerequisites still fail.
+- Candidate text painting totalled about 2.9s, but admission-to-GUI-ready p99
+  was about 1.23s, with the 128-request / 32-completion queues full. Frame-only
+  drains imposed a scheduling limit; the next candidate adds coalesced,
+  capacity-sensitive queued notifications without increasing any payload bound.
+- Candidate expiry origins were source-motion 6,859 / 7,511, source-lag
+  575 / 35, and raster-wait 347 / 344. These are simulation-lifetime outcomes,
+  not interchangeable with raster failure or actual missing pixels.
+- Qt Quick render phase median was about 46.7ms and swap-phase p99 about 105ms.
+  mpv render CPU p99 was about 31ms. Candidate property polling p99 was about
+  3ms, not the principal observed tail. No mpv behavior change is justified by
+  these data. Phase/GL-call CPU durations do not measure GPU elapsed time.
+- Normal adaptive-QoS candidate runs intentionally dropped 7,895 / 7,971 source
+  comments; all 4,105 / 4,029 admitted IDs reached a draw. Baseline intentionally
+  dropped 580 / 611 but only 2,255 / 2,262 IDs reached a draw. These are unequal
+  workloads and do not establish a performance gain or complete visible pixels.
+- Candidate basic glyph/color probes passed with exact pixels at DPR1 and DPR2,
+  including emoji. Wide text (2,357 / 4,714 physical pixels) and finite active
+  pressure (385 / 193 comments) failed residency. The next candidate crops only
+  invisible margins and tiles wide sprites, retaining full logical geometry and
+  the same eight atlas pages, with new seam/fractional/tint/fade probes.
+- Atlas-pressure captures had zero wrong pixels, but the old sentinel-page
+  assumption failed the intended eviction/replay coverage. The fixture now
+  discovers actual page membership, protects an anchor per page and verifies
+  an additional replay repack. Pixel tolerances and offered active counts remain
+  unchanged; this fixture correction is not recorded as a previous pass.
+
+The next candidate remains unqualified until real GL correctness and whole-frame
+comparisons finish. No active sprite is allowed to count as first-drawn with only
+some tiles resident. Actual hardware, Wayland/HDR and long-duration qualification
+remain outside this software-Mesa CI evidence.

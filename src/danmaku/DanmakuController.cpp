@@ -11,6 +11,7 @@
 #include <QMutexLocker>
 #include <QPointF>
 #include <QRectF>
+#include <QScopeGuard>
 #include <QVariantMap>
 #include <algorithm>
 #include <chrono>
@@ -73,6 +74,8 @@ bool isTrackableGlyphCodepoint(char32_t codepoint) {
 
 DanmakuController::DanmakuController(QObject *parent) : QObject(parent) {
     m_commentTimingDiagnostics.enabled = qEnvironmentVariableIntValue("NICONEON_RENDER_DIAGNOSTICS") == 1;
+    connect(m_textSpriteCache.notifier(), &DanmakuRasterNotifier::completionReady, this,
+            &DanmakuController::handleRasterCompletionWake, Qt::QueuedConnection);
     qRegisterMetaType<DanmakuWorkerFramePtr>("DanmakuWorkerFramePtr");
     qRegisterMetaType<DanmakuWorkerSyncBatchPtr>("DanmakuWorkerSyncBatchPtr");
 
@@ -688,9 +691,15 @@ DanmakuRenderFrameConstPtr DanmakuController::renderSnapshot() const {
 }
 
 QVector<DanmakuSpriteUpload> DanmakuController::takePendingSpriteUploads() {
-    QMutexLocker locker(&m_pendingSpriteUploadsMutex);
-    QVector<DanmakuSpriteUpload> uploads = m_pendingSpriteUploads;
-    m_pendingSpriteUploads.clear();
+    QVector<DanmakuSpriteUpload> uploads;
+    {
+        QMutexLocker locker(&m_pendingSpriteUploadsMutex);
+        uploads.swap(m_pendingSpriteUploads);
+    }
+    // This entry may run on the render thread. Do not touch GUI state here;
+    // restoring mailbox room must wake the GUI even if no new paint finishes.
+    if (!uploads.empty())
+        m_textSpriteCache.requestCompletionWake();
     return uploads;
 }
 
@@ -1415,7 +1424,8 @@ void DanmakuController::clearGlyphWarmupText() {
     emit glyphWarmupTextChanged();
 }
 
-bool DanmakuController::drainRasterResults() {
+int DanmakuController::drainRasterResults() {
+    int committed = 0;
     {
         QMutexLocker locker(&m_pendingSpriteUploadsMutex);
         // Multiple short GUI drains may fill one bounded render mailbox.
@@ -1426,12 +1436,13 @@ bool DanmakuController::drainRasterResults() {
             currentBytes += upload.image.sizeInBytes();
         const int room = kSpriteUploadMailboxCapacity - static_cast<int>(m_pendingSpriteUploads.size());
         if (room <= 0 || currentBytes >= kSpriteUploadBudgetBytesPerFrame)
-            return false;
+            return 0;
         auto ready = m_textSpriteCache.takeCompleted(std::min(room, kSpriteCompletionCommitPerDrain),
                                                      kSpriteUploadBudgetBytesPerFrame - currentBytes,
                                                      m_pendingSpriteUploads.empty());
         if (ready.empty())
-            return false;
+            return 0;
+        committed = ready.size();
         m_pendingSpriteUploads.append(std::move(ready));
         qint64 bytes = 0;
         for (const auto &upload : m_pendingSpriteUploads)
@@ -1440,7 +1451,30 @@ bool DanmakuController::drainRasterResults() {
         m_uploadBytesHighWater = std::max(m_uploadBytesHighWater, bytes);
     }
     emit renderSnapshotChanged();
-    return true;
+    return committed;
+}
+
+void DanmakuController::requestRasterWakeIfRoom() {
+    QMutexLocker locker(&m_pendingSpriteUploadsMutex);
+    qint64 bytes = 0;
+    for (const auto &upload : m_pendingSpriteUploads)
+        bytes += upload.image.sizeInBytes();
+    if (m_pendingSpriteUploads.size() < kSpriteUploadMailboxCapacity && bytes < kSpriteUploadBudgetBytesPerFrame)
+        m_textSpriteCache.requestCompletionWake(kSpriteUploadBudgetBytesPerFrame - bytes,
+                                                m_pendingSpriteUploads.empty());
+}
+
+void DanmakuController::handleRasterCompletionWake() {
+    if (!m_textSpriteCache.beginCompletionWake())
+        return;
+    int committed = 0;
+    const auto finish = qScopeGuard([&] { m_textSpriteCache.finishCompletionWake(committed); });
+    if (m_rasterClosing)
+        return;
+    committed = drainRasterResults();
+    activateReadyComments();
+    refreshActiveSpriteIds();
+    requestRasterWakeIfRoom();
 }
 
 DanmakuWorkerRowState DanmakuController::buildWorkerRowState(int row) const {

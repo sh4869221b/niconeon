@@ -1,10 +1,14 @@
 #include "danmaku/DanmakuController.hpp"
+#include "danmaku/DanmakuRenderStyle.hpp"
 
 #include <QElapsedTimer>
+#include <QEvent>
 #include <QFont>
+#include <QFontMetrics>
 #include <QGuiApplication>
 #include <QTest>
 #include <cmath>
+#include <thread>
 
 namespace {
 QVariantMap comment(int number, const QString &text = {}) {
@@ -12,6 +16,28 @@ QVariantMap comment(int number, const QString &text = {}) {
             {"user_id", "user"},
             {"at_ms", 0},
             {"text", text.isEmpty() ? QStringLiteral("コメント%1 日本語 e\u0301").arg(number) : text}};
+}
+bool pumpOnlyQueuedCallbacks(DanmakuController &controller, int expectedActive) {
+    QElapsedTimer timer;
+    timer.start();
+    while (controller.renderSnapshot()->instances.size() != expectedActive && timer.elapsed() < 3000) {
+        // Deliberately never deliver the controller's frame timer or a render
+        // presentation event. Only payload-free completion wakes make progress.
+        QCoreApplication::sendPostedEvents(&controller, QEvent::MetaCall);
+        QTest::qSleep(1);
+    }
+    return controller.renderSnapshot()->instances.size() == expectedActive;
+}
+bool waitForPublishedCompletions(DanmakuController &controller, int count, quint64 expectedWakeChecks) {
+    const auto published = [&] {
+        const auto stats = controller.rasterMetrics();
+        return stats.completed >= count && stats.wakeNotifications + stats.wakeCoalesced >= expectedWakeChecks;
+    };
+    QElapsedTimer timer;
+    timer.start();
+    while (!published() && timer.elapsed() < 3000)
+        QTest::qSleep(1);
+    return published();
 }
 } // namespace
 class DanmakuRasterPipelineTest : public QObject {
@@ -406,6 +432,109 @@ class DanmakuRasterPipelineTest : public QObject {
         QCOMPARE(batch.records.first().spriteId, 0);
         QCOMPARE(batch.records.first().rasterCompletedAtNs, 0);
         QCOMPARE(batch.records.first().guiReadyAtNs, 0);
+    }
+    void completionWakesFillMailboxWithoutFrameOrPresentationTicks() {
+        DanmakuController controller;
+        QVariantList input;
+        for (int i = 0; i < 96; ++i)
+            input.push_back(comment(i, QStringLiteral("small %1").arg(i)));
+        QCOMPARE(controller.appendComments(input, 0), input.size());
+        QVERIFY(pumpOnlyQueuedCallbacks(controller, 32));
+        QElapsedTimer timer;
+        timer.start();
+        while (controller.rasterMetrics().rasterized < 65 && timer.elapsed() < 3000)
+            QTest::qSleep(1);
+        QVERIFY(controller.rasterMetrics().rasterized >= 65); // 32 mailbox + 32 completions + one held.
+        for (int i = 0; i < 10; ++i)
+            QCoreApplication::sendPostedEvents(&controller, QEvent::MetaCall);
+        const auto stalled = controller.rasterMetrics();
+        QCOMPARE(stalled.wakePending, 0);
+        QCOMPARE(stalled.completed, 32);
+        QCOMPARE(controller.renderSnapshot()->instances.size(), 32);
+        for (int i = 0; i < 20; ++i)
+            QCoreApplication::sendPostedEvents(&controller, QEvent::MetaCall);
+        QCOMPARE(controller.rasterMetrics().wakeNotifications, stalled.wakeNotifications);
+
+        QSet<DanmakuSpriteId> delivered;
+        for (int batch = 0; batch < 3; ++batch) {
+            QVector<DanmakuSpriteUpload> uploads;
+            // The real render consumer calls this entry on the render thread.
+            std::thread render([&] { uploads = controller.takePendingSpriteUploads(); });
+            render.join();
+            QCOMPARE(uploads.size(), 32);
+            for (const auto &upload : uploads) {
+                QVERIFY(!delivered.contains(upload.spriteId));
+                delivered.insert(upload.spriteId);
+            }
+            if (batch < 2)
+                QVERIFY(pumpOnlyQueuedCallbacks(controller, (batch + 2) * 32));
+        }
+        QCOMPARE(delivered.size(), 96);
+        QCOMPARE(controller.pendingCommentCountForTesting(), 0);
+        const auto stats = controller.rasterMetrics();
+        QVERIFY(stats.wakeStarted >= 12);
+        QCOMPARE(stats.wakePendingHighWater, 1);
+        QVERIFY(stats.wakeOutstandingHighWater <= 2);
+        QVERIFY(stats.wakeMaxCommittedSprites <= 8);
+        QVERIFY(stats.highWater <= 128);
+        QVERIFY(stats.completionHighWater <= 32);
+    }
+    void byteBlockedMailboxSleepsUntilRenderConsumption_data() {
+        QTest::addColumn<int>("spriteKiB");
+        QTest::newRow("partial-byte-budget") << 1280;
+        QTest::newRow("oversize-empty-only") << 3072;
+    }
+    void byteBlockedMailboxSleepsUntilRenderConsumption() {
+        QFETCH(int, spriteKiB);
+        DanmakuController controller;
+        QFont font = QGuiApplication::font();
+        font.setPixelSize(DanmakuRenderStyle::kTextPixelSize);
+        const int count =
+            (spriteKiB * 1024) / (DanmakuRenderStyle::kItemHeightPx * 4) / QFontMetrics(font).horizontalAdvance('W');
+        const QString text(count, 'W');
+        QCOMPARE(controller.appendComments({comment(1, text), comment(2, text + 'W')}, 0), 2);
+        QVERIFY(waitForPublishedCompletions(controller, 2, 2));
+        QVERIFY(pumpOnlyQueuedCallbacks(controller, 1));
+        for (int i = 0; i < 20; ++i)
+            QCoreApplication::sendPostedEvents(&controller, QEvent::MetaCall);
+        const auto stalled = controller.rasterMetrics();
+        QCOMPARE(stalled.completed, 1);
+        QCOMPARE(stalled.wakePending, 0);
+        for (int i = 0; i < 20; ++i)
+            QCoreApplication::sendPostedEvents(&controller, QEvent::MetaCall);
+        QCOMPARE(controller.rasterMetrics().wakeNotifications, stalled.wakeNotifications);
+        const auto first = controller.takePendingSpriteUploads();
+        QCOMPARE(first.size(), 1);
+        QVERIFY(first.first().image.sizeInBytes() > 1024 * 1024);
+        if (spriteKiB < 2048)
+            QVERIFY(first.first().image.sizeInBytes() < 2 * 1024 * 1024);
+        else
+            QVERIFY(first.first().image.sizeInBytes() > 2 * 1024 * 1024);
+        QVERIFY(pumpOnlyQueuedCallbacks(controller, 2));
+        QCOMPARE(controller.takePendingSpriteUploads().size(), 1);
+        QCOMPARE(controller.pendingCommentCountForTesting(), 0);
+    }
+    void queuedWakeSurvivesSeekDprAndControllerDestruction() {
+        for (int cycle = 0; cycle < 10; ++cycle) {
+            auto controller = std::make_unique<DanmakuController>();
+            QCOMPARE(controller->appendComments({comment(1)}, 0), 1);
+            QVERIFY(waitForPublishedCompletions(*controller, 1, 1));
+            QCOMPARE(controller->rasterMetrics().wakePending, 1);
+            controller->resetForSeek();
+            controller->setRenderDevicePixelRatio(2);
+            QCOMPARE(controller->appendComments({comment(2)}, 0), 1);
+            QVERIFY(pumpOnlyQueuedCallbacks(*controller, 1));
+            QCOMPARE(controller->renderSnapshot()->instances.first().commentId, "id-2");
+            const auto uploads = controller->takePendingSpriteUploads();
+            QCOMPARE(uploads.size(), 1);
+            QCOMPARE(uploads.first().image.devicePixelRatio(), 2);
+            const auto before = controller->rasterMetrics();
+            QCOMPARE(controller->appendComments({comment(3)}, 0), 1);
+            QVERIFY(waitForPublishedCompletions(*controller, 1, before.wakeNotifications + before.wakeCoalesced + 1));
+            QCOMPARE(controller->rasterMetrics().wakePending, 1);
+            controller.reset();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        }
     }
 };
 QTEST_MAIN(DanmakuRasterPipelineTest)

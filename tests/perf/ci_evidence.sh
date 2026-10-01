@@ -46,7 +46,7 @@ fi
 if [[ "$mode" == quality || "$mode" == all ]]; then
 # Keep failures from each independent correctness scenario in its own artifact.
 for dpr in 1 2; do
-  for suite in basic wide atlas-pressure active-capacity; do
+  for suite in basic wide atlas-pressure active-capacity appearance; do
     run="$root/evidence/pixel-candidate-$suite-dpr$dpr"
     QT_QPA_PLATFORM=xcb QT_SCALE_FACTOR="$dpr" timeout 150s "$candidate/real_render_profile" \
       --sample-mode pixels --pixel-suite "$suite" --expected-dpr "$dpr" --output "$run.json" > "$run.log" 2>&1 || status=1

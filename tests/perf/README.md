@@ -94,6 +94,12 @@ so do not sum nested durations. Multiple render callbacks can share a
 `frameSequence`; do not deduplicate by that field. GL upload bytes are distinct
 from received sprite bytes and must not be substituted for each other.
 
+The raster summary also retains completion-wake pending/active counts, notification
+and coalescing totals, pending/outstanding high-water marks, maximum committed
+sprites per wake, and no-progress callbacks. The explicit bound check is pending
+<=1, active<=1, outstanding high-water<=2, and at most 8 committed sprites per wake;
+it is not a claim of GPU completion or total render-work capacity.
+
 ## Paired campaigns and analysis
 
 ```sh
@@ -173,31 +179,70 @@ QT_SCALE_FACTOR=2 ./build/release/real_render_profile --sample-mode pixels \
   --pixel-suite atlas-pressure --renderer atlas --expected-dpr 2 \
   --output /tmp/pressure-dpr2.json
 
-# Distinct overload diagnostic: do all valid admitted IDs reach a draw call?
+# Fixed finite workload above the old allocator limit: all admitted IDs must draw.
 ./build/release/real_render_profile --sample-mode pixels --pixel-suite active-capacity \
   --renderer atlas --expected-dpr 1 --output /tmp/active-capacity.json
 ```
 
-`wide` inspects both ends of a >2048-logical-pixel sprite, positioning it through
-the controller's normal drag API. `atlas-pressure` uses measured physical widths
->1024 and <=2048, so only one sprite fits each 42*DPR-high shelf. Eight 2048-square
-pages hold at most 384 such sprites at DPR1 or 192 at DPR2. Small batches preserve
-an active first-loaded sentinel while prior sprites become inactive. Every batch
-gets a strict pixel comparison. The suite exceeds that capacity, requires real
-page allocation/repacking evidence, and replays the original first-page cohort
-with fresh comment IDs, requiring additional repacking and pixel equality.
-A single arbitrary old probe would not establish that evicted content was tested.
+`wide` inspects both ends of a >2048-logical-pixel sprite, every internal 2046px core-tile
+boundary centered in the viewport (including neighboring gutter pixels),
+and a fractional x=4.25 position. The source boundary is calculated from an
+independent reference alpha bounding box plus the one-pixel margin, using the
+original full-image-to-logical-size scale, and its visibility is recorded and
+required. It uses the controller's normal drag API.
+Fractional probes use the CPU reference's linear image interpolation, matching
+the renderer's linear sampler; channel tolerance remains 8.
 
-`active-capacity` keeps capacity+1 distinct sprites active simultaneously. It
-reports actual draw-ID completeness and remaining missing/unresident sprites;
-overlapping pixels are saved for diagnosis but cannot qualify individual
-readability. This overload result is separate from the normal bounded-active
-pressure/pixel suite. `all` runs every suite, including this overload diagnostic,
-and can therefore expose several independent failures in one JSON file.
+`atlas-pressure` adapts to cropped sprite dimensions rather than assuming the
+old 42px full-image packing height. Source images still have measured physical
+widths >1024 and <=2048. Actual submission page masks select one persistent anchor
+for each of the eight atlas pages. Small, nonoverlapping batches keep all known
+anchors active and add fresh texts, up to a hard bound of 4096 distinct strings.
+Coverage requires all eight pages to contain active anchors and an observed
+repack that preserves active sprites. Every batch receives the same strict pixel
+comparison. A bounded replay then searches the whole historical non-anchor
+cohort until another active-preserving repack occurs; it does not assume that a
+particular page or the first cohort was evicted. Missing page metadata, unmet
+coverage, observer overflow or pixel mismatch fails explicitly.
+
+This corrects an observed fixture assumption: the batch planner reclaimed the
+largest inactive page and could leave the original sentinel's page untouched.
+In that run every pressure capture matched, while first-page-only replay never
+repacked. Passing pixels did not establish the intended eviction/recovery coverage.
+
+`active-capacity` retains exactly 385 active inputs at DPR1 and 193 at DPR2 for
+before/after comparison. These exceed the old uncropped shelf allocator's limit;
+they are not asserted to exceed the current cropped/tiled allocator's capacity.
+The `finite-active-legacy-limit` result requires current-frame logical draw-ID
+completeness and zero remaining missing/unresident sprites. Overlapping pixels
+are saved for diagnosis but cannot qualify individual readability. Tile quad
+counts and logical submitted-comment counts are recorded separately.
+
+`appearance` uses white text and color emoji to compare fractional positioning,
+NG hover tint, intermediate fade and disappearance against the same gray video.
+The intermediate fade is driven through the public NG API; its observed snapshot
+alpha must be between 0.25 and 0.75 and is recorded. The oracle compares against
+that exact alpha, not a claimed deterministic 0.5 injection. Fade completion must
+restore the clean video background; it tests removal, not a direct alpha-zero
+shader injection. Tint/fade coverage requires the same 120 ink pixels in the
+untinted full-opacity source reference, since tinted or translucent output is
+intentionally not white. Output pixels still use the unmodified error limit 8.
+
+```sh
+./build/release/real_render_profile --sample-mode pixels --pixel-suite appearance \
+  --renderer atlas --expected-dpr 1 --output /tmp/appearance-atlas.json
+./build/release/real_render_profile --sample-mode pixels --pixel-suite appearance \
+  --renderer frame_image --expected-dpr 1 --output /tmp/appearance-frame-image.json
+```
+
+`all` runs every suite. Each suite in a separate process is preferable for failure
+isolation and independent instrumentation bounds. A blocked or missed
+intermediate-fade observation is failed evidence; the test never substitutes an
+opaque or absent frame as a passing intermediate sample.
 
 For DPR2, provide a sufficiently large real/Xvfb display (for example 2560x1600)
 and use `--expected-dpr 2`; capture dimensions are checked against the actual
-window DPR. The same suite can be run at DPR1.5. Run basic/wide on `frame_image`
+window DPR. The same suite can be run at DPR1.5. Run basic/wide/appearance on `frame_image`
 separately; atlas-pressure and active-capacity require the atlas backend.
 An unsupported oversized sprite, missing glyph, observed corruption, or unmet
 coverage prerequisite remains failed evidence. Never weaken the pixel oracle or

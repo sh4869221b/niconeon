@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QImage>
 #include <QRect>
+#include <QRectF>
 #include <QSize>
 #include <QVector>
 
@@ -25,12 +27,12 @@ class DanmakuAtlasPacker {
 };
 
 struct DanmakuAtlasRepackCandidate {
-    quint32 spriteId = 0;
+    quint64 spriteId = 0;
     QSize size;
 };
 
 struct DanmakuAtlasPlacement {
-    quint32 spriteId = 0;
+    quint64 spriteId = 0;
     QRect rect;
 };
 
@@ -47,3 +49,13 @@ struct DanmakuAtlasRepackPlan {
 DanmakuAtlasRepackPlan planDanmakuAtlasRepack(const QSize &pageSize,
                                               QVector<DanmakuAtlasRepackCandidate> protectedSprites,
                                               QVector<DanmakuAtlasRepackCandidate> pendingSprites);
+
+// Regions retain exact source pixels. Core quads are disjoint; a one-pixel
+// neighboring gutter keeps GL_LINEAR sampling continuous at internal seams.
+struct DanmakuAtlasTileRegion {
+    QRect core;
+    QRect source;
+};
+QVector<DanmakuAtlasTileRegion> danmakuAtlasTiles(const QImage &rgbaImage, int pageSize = 2048);
+QRectF danmakuAtlasTileLogicalRect(const QRect &core, const QSize &imageSize, const QSize &logicalSize,
+                                   const QPointF &position);

@@ -39,11 +39,15 @@ struct DanmakuRenderFrameDiagnostics {
     int repackAttempts = 0;
     int repackSuccesses = 0;
     int repackedSprites = 0;
+    int repackProtectedSprites = 0;
+    int atlasPageCount = 0;
+    quint32 activeAtlasPageMask = 0;
     int activeInstances = 0;
     int activeUniqueSprites = 0;
     int missingImageUnique = 0;
     int unresidentUnique = 0;
     int submittedInstances = 0;
+    int submittedQuads = 0;
     int drawCalls = 0;
 };
 
@@ -52,6 +56,7 @@ struct DanmakuRenderSubmissionEvent {
     qint64 capturedAtNs = 0;
     QString commentId;
     quint64 spriteId = 0;
+    quint32 atlasPageMask = 0;
 };
 
 struct DanmakuRenderDiagnosticsBatch {

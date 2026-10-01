@@ -104,7 +104,7 @@ index ed45ace..d7b2758 100644
      return loadFailed ? 1 : exitCode;
  }
 diff --git a/src/danmaku/DanmakuRenderNodeItem.cpp b/src/danmaku/DanmakuRenderNodeItem.cpp
-index dad8bb0..889abb1 100644
+index dad8bb0..817928c 100644
 --- a/src/danmaku/DanmakuRenderNodeItem.cpp
 +++ b/src/danmaku/DanmakuRenderNodeItem.cpp
 @@ -11,6 +11,8 @@
@@ -212,7 +212,7 @@ index dad8bb0..889abb1 100644
              }
              if (m_atlasInstancingUnsupported) {
                  buildAtlasVertices();
-@@ -164,6 +202,23 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -164,6 +202,26 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
          } else {
              composeFrameImage();
          }
@@ -225,8 +225,11 @@ index dad8bb0..889abb1 100644
 +            for (const auto &instance : instances)
 +                uniqueIds.insert(instance.spriteId);
 +            m_frameDiagnostics.activeUniqueSprites = uniqueIds.size();
++            m_frameDiagnostics.atlasPageCount = m_atlasPages.size();
 +            for (const auto id : std::as_const(uniqueIds)) {
 +                const auto sprite = m_sprites.constFind(id);
++                if (sprite != m_sprites.constEnd() && sprite->pageIndex >= 0)
++                    m_frameDiagnostics.activeAtlasPageMask |= quint32(1) << sprite->pageIndex;
 +                if (sprite == m_sprites.constEnd() || sprite->image.isNull())
 +                    ++m_frameDiagnostics.missingImageUnique;
 +                else if (m_runtimeBackend == DanmakuRendererBackend::Atlas && sprite->pageIndex < 0)
@@ -236,7 +239,7 @@ index dad8bb0..889abb1 100644
      }
  
      RenderingFlags flags() const override {
-@@ -179,6 +234,15 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -179,6 +237,15 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
      }
  
      void render(const RenderState *state) override {
@@ -252,29 +255,31 @@ index dad8bb0..889abb1 100644
          if (m_itemSize.width() <= 0 || m_itemSize.height() <= 0) {
              return;
          }
-@@ -269,6 +333,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -269,6 +336,11 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                          m_instanceVbo.allocate(instances.constData(),
                                                 instances.size() * static_cast<int>(sizeof(InstanceData)));
                          glDrawArraysInstanced(GL_TRIANGLES, 0, 6, instances.size());
 +                        if (m_diagnostics) {
 +                            submittedPages[pageIndex] = true;
 +                            m_frameDiagnostics.submittedInstances += instances.size();
++                            m_frameDiagnostics.submittedQuads += instances.size();
 +                        }
                          page.texture->release();
                          ++drawCallsThisFrame;
                      }
-@@ -319,6 +387,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -319,6 +391,11 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                          page.texture->bind(0);
                          m_frameVbo.allocate(vertices.constData(), vertices.size() * static_cast<int>(sizeof(Vertex)));
                          glDrawArrays(GL_TRIANGLES, 0, vertices.size());
 +                        if (m_diagnostics) {
 +                            submittedPages[pageIndex] = true;
 +                            m_frameDiagnostics.submittedInstances += vertices.size() / 6;
++                            m_frameDiagnostics.submittedQuads += vertices.size() / 6;
 +                        }
                          page.texture->release();
                          ++drawCallsThisFrame;
                      }
-@@ -352,6 +424,7 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -352,6 +429,7 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
              m_frameVbo.allocate(m_frameQuadVertices.constData(),
                                  m_frameQuadVertices.size() * static_cast<int>(sizeof(Vertex)));
              glDrawArrays(GL_TRIANGLES, 0, m_frameQuadVertices.size());
@@ -282,7 +287,7 @@ index dad8bb0..889abb1 100644
              m_frameTexture->release();
              drawCallsThisFrame = m_frameQuadVertices.isEmpty() ? 0 : 1;
  
-@@ -363,6 +436,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -363,6 +441,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
          }
  
          m_perfDrawCalls += drawCallsThisFrame;
@@ -291,7 +296,7 @@ index dad8bb0..889abb1 100644
          maybeWritePerfLog();
      }
  
-@@ -704,13 +779,25 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -704,13 +784,25 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
              texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
              texture->setSize(image.width(), image.height());
              texture->setMipLevels(1);
@@ -317,7 +322,7 @@ index dad8bb0..889abb1 100644
          return true;
      }
  
-@@ -722,6 +809,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -722,6 +814,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
              if (!updateTextureFromImage(page.texture, page.image)) {
                  return false;
              }
@@ -326,7 +331,7 @@ index dad8bb0..889abb1 100644
              page.textureDirty = false;
          }
          return true;
-@@ -814,6 +903,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -814,6 +908,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
  
          AtlasPage &page = m_atlasPages[pageIndex];
          SpriteRecord &record = spriteIt.value();
@@ -340,7 +345,7 @@ index dad8bb0..889abb1 100644
          QPainter painter(&page.image);
          painter.drawImage(rect, record.image);
          record.pageIndex = pageIndex;
-@@ -838,6 +934,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -838,6 +939,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
  
      bool repackPageForSprite(int pageIndex, DanmakuSpriteId requestedSpriteId,
                               const QSet<DanmakuSpriteId> &activeSpriteIds) {
@@ -354,7 +359,7 @@ index dad8bb0..889abb1 100644
          if (pageIndex < 0 || pageIndex >= m_atlasPages.size()) {
              return false;
          }
-@@ -859,6 +962,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -859,6 +967,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
          }
  
          for (int evictCount = 1; evictCount <= evictable.size(); ++evictCount) {
@@ -363,7 +368,7 @@ index dad8bb0..889abb1 100644
              QSet<DanmakuSpriteId> survivors = page.residents;
              for (int i = 0; i < evictCount; ++i) {
                  survivors.remove(evictable[i]);
-@@ -909,7 +1014,14 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -909,7 +1019,17 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
              }
  
              page.packer = packer;
@@ -374,11 +379,14 @@ index dad8bb0..889abb1 100644
 +                m_frameDiagnostics.pageClearBytes += page.image.sizeInBytes();
 +                ++m_frameDiagnostics.repackSuccesses;
 +                m_frameDiagnostics.repackedSprites += candidates.size();
++                m_frameDiagnostics.repackProtectedSprites +=
++                    std::count_if(candidates.begin(), candidates.end(),
++                                  [&](const auto &candidate) { return activeSpriteIds.contains(candidate.spriteId); });
 +            }
              for (const DanmakuSpriteId spriteId : std::as_const(residents)) {
                  SpriteRecord &record = m_sprites[spriteId];
                  record.pageIndex = -1;
-@@ -931,7 +1043,12 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -931,7 +1051,12 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
          AtlasPage page;
          page.packer.reset(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize));
          page.image = QImage(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize), QImage::Format_RGBA8888_Premultiplied);
@@ -391,7 +399,7 @@ index dad8bb0..889abb1 100644
          page.textureDirty = true;
          m_atlasPages.push_back(std::move(page));
      }
-@@ -1063,6 +1180,58 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -1063,6 +1188,62 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
          m_frameTextureDirty = true;
      }
  
@@ -420,8 +428,10 @@ index dad8bb0..889abb1 100644
 +                continue;
 +            }
 +            m_diagnostics->submittedIds.insert(instance.commentId);
-+            submissions.push_back({m_frameDiagnostics.frameSequence, m_frameDiagnostics.capturedAtNs,
-+                                   instance.commentId, instance.spriteId});
++            submissions.push_back(
++                {m_frameDiagnostics.frameSequence, m_frameDiagnostics.capturedAtNs, instance.commentId,
++                 instance.spriteId,
++                 submittedFrameImage || sprite->pageIndex < 0 ? 0u : quint32(1) << sprite->pageIndex});
 +        }
 +        {
 +            QMutexLocker locker(&m_diagnostics->mutex);
@@ -444,13 +454,15 @@ index dad8bb0..889abb1 100644
 +        next.activeUniqueSprites = m_frameDiagnostics.activeUniqueSprites;
 +        next.missingImageUnique = m_frameDiagnostics.missingImageUnique;
 +        next.unresidentUnique = m_frameDiagnostics.unresidentUnique;
++        next.atlasPageCount = m_frameDiagnostics.atlasPageCount;
++        next.activeAtlasPageMask = m_frameDiagnostics.activeAtlasPageMask;
 +        m_frameDiagnostics = next;
 +    }
 +
      void maybeWritePerfLog() {
          const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
          if (m_perfWindowStartMs <= 0) {
-@@ -1165,14 +1334,40 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -1165,14 +1346,40 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
      qulonglong m_perfSpriteUploadCount = 0;
      qulonglong m_perfSpriteUploadBytes = 0;
      qulonglong m_perfDrawCalls = 0;
@@ -491,7 +503,7 @@ index dad8bb0..889abb1 100644
  DanmakuController *DanmakuRenderNodeItem::controller() const {
      return m_controller.data();
  }
-@@ -1209,7 +1404,7 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
+@@ -1209,7 +1416,7 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
  
      auto *node = static_cast<DanmakuRenderNode *>(oldNode);
      if (!node) {
@@ -501,10 +513,10 @@ index dad8bb0..889abb1 100644
  
      const int itemWidth = static_cast<int>(std::ceil(width()));
 diff --git a/src/danmaku/DanmakuRenderNodeItem.hpp b/src/danmaku/DanmakuRenderNodeItem.hpp
-index 7ee3e2d..4b15f64 100644
+index 7ee3e2d..eb0f444 100644
 --- a/src/danmaku/DanmakuRenderNodeItem.hpp
 +++ b/src/danmaku/DanmakuRenderNodeItem.hpp
-@@ -3,11 +3,69 @@
+@@ -3,11 +3,74 @@
  #include <QMetaObject>
  #include <QPointer>
  #include <QQuickItem>
@@ -544,11 +556,15 @@ index 7ee3e2d..4b15f64 100644
 +    int repackAttempts = 0;
 +    int repackSuccesses = 0;
 +    int repackedSprites = 0;
++    int repackProtectedSprites = 0;
++    int atlasPageCount = 0;
++    quint32 activeAtlasPageMask = 0;
 +    int activeInstances = 0;
 +    int activeUniqueSprites = 0;
 +    int missingImageUnique = 0;
 +    int unresidentUnique = 0;
 +    int submittedInstances = 0;
++    int submittedQuads = 0;
 +    int drawCalls = 0;
 +};
 +
@@ -557,6 +573,7 @@ index 7ee3e2d..4b15f64 100644
 +    qint64 capturedAtNs = 0;
 +    QString commentId;
 +    quint64 spriteId = 0;
++    quint32 atlasPageMask = 0;
 +};
 +
 +struct DanmakuRenderDiagnosticsBatch {
@@ -574,7 +591,7 @@ index 7ee3e2d..4b15f64 100644
  
  class DanmakuRenderNodeItem : public QQuickItem {
      Q_OBJECT
-@@ -19,6 +77,10 @@ class DanmakuRenderNodeItem : public QQuickItem {
+@@ -19,6 +82,10 @@ class DanmakuRenderNodeItem : public QQuickItem {
      DanmakuController *controller() const;
      void setController(DanmakuController *controller);
  
@@ -585,7 +602,7 @@ index 7ee3e2d..4b15f64 100644
    signals:
      void controllerChanged();
  
-@@ -34,4 +96,5 @@ class DanmakuRenderNodeItem : public QQuickItem {
+@@ -34,4 +101,5 @@ class DanmakuRenderNodeItem : public QQuickItem {
      QMetaObject::Connection m_frameSwappedConnection;
      std::atomic_bool m_pendingPresentedFrame = false;
      qreal m_lastRenderDevicePixelRatio = 0.0;
