@@ -35,13 +35,13 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates git g++ cmake ninja-build pkgconf python3 \
+            ca-certificates git g++ cmake ninja-build pkgconf python3 meson curl patch \
             qt6-base-dev qt6-base-private-dev qt6-base-dev-tools qt6-declarative-dev \
             qt6-declarative-dev-tools libqt6sql6-sqlite libmpv-dev \
             qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
             qml6-module-qtquick-layouts qml6-module-qtqml-workerscript \
             qml6-module-qtcore qml6-module-qttest \
-            fonts-dejavu-core fonts-noto-cjk xvfb xauth libgl1-mesa-dri \
+            fonts-dejavu-core fonts-noto-cjk xvfb xauth dbus-daemon libgl1-mesa-dri \
             zip unzip curl file patchelf desktop-file-utils
       - uses: actions/checkout@v4
         with:
@@ -51,6 +51,12 @@ jobs:
           scripts/release/generate_third_party_notices.sh
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git diff --exit-code -- THIRD_PARTY_NOTICES.txt
+      - name: Build libmpv with upstream scaler initialization fix
+        run: |
+          scripts/deps/build_mpv.sh /usr/local
+          echo "LD_LIBRARY_PATH=/usr/local/lib" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "NICONEON_MPV_SOURCE_DIR=/usr/local/share/niconeon/libmpv-source" >> "$GITHUB_ENV"
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -DNICONEON_BUILD_UI_E2E=ON
       - name: Build
@@ -61,12 +67,12 @@ jobs:
       - name: Strict OpenGL integration with default scaling
         env:
           NICONEON_MPV_SCALE: default
-        run: xvfb-run -a -s '-screen 0 1280x1024x24 -ac' ctest --preset ${{ matrix.preset }} -L opengl --output-junit opengl-default.xml
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1280x1024x24 -ac' ctest --preset ${{ matrix.preset }} -L opengl --output-junit opengl-default.xml
       - name: Strict OpenGL integration with explicit bilinear compatibility scaling
         if: ${{ !cancelled() && (success() || failure()) && steps.build.outcome == 'success' }}
         env:
           NICONEON_MPV_SCALE: bilinear
-        run: xvfb-run -a -s '-screen 0 1280x1024x24 -ac' ctest --preset ${{ matrix.preset }} -L opengl --output-junit opengl-bilinear.xml
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1280x1024x24 -ac' ctest --preset ${{ matrix.preset }} -L opengl --output-junit opengl-bilinear.xml
       - name: Package single Linux executable
         if: ${{ !cancelled() && (success() || failure()) && steps.build.outcome == 'success' && matrix.preset == 'release' }}
         env:
@@ -145,7 +151,11 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-mpv
             mingw-w64-ucrt-x86_64-mesa
-            python zip unzip
+            mingw-w64-ucrt-x86_64-meson
+            python zip unzip patch curl
+      - name: Build libmpv with upstream scaler initialization fix
+        shell: msys2 {0}
+        run: scripts/deps/build_mpv.sh /ucrt64
       - name: Build and test single C++23 application
         shell: msys2 {0}
         run: |
@@ -157,6 +167,7 @@ jobs:
         env:
           NICONEON_RELEASE_BASENAME: niconeon-windows-x86_64
           NICONEON_BUILD_DIR: build/windows-release
+          NICONEON_MPV_SOURCE_DIR: /ucrt64/share/niconeon/libmpv-source
         run: |
           scripts/release/package_windows_msys2.sh ci
           scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-windows-x86_64-binaries.zip

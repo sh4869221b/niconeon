@@ -3,6 +3,7 @@
 from pathlib import Path
 import hashlib
 import importlib.util
+import hashlib
 import os
 import shutil
 import subprocess
@@ -203,6 +204,35 @@ class PackagingSmoke(unittest.TestCase):
                                          "THIRD_PARTY_NOTICES.txt"})
             subprocess.run(["bash", str(root / "scripts/release/verify_binary_artifact_licenses.sh"),
                             str(artifact)], check=True)
+
+    def test_runtime_hash_rejects_unpatched_or_changed_library(self):
+        with tempfile.TemporaryDirectory(prefix="niconeon-runtime-test-") as directory:
+            root = Path(directory)
+            runtime = root / "libmpv.so.2"
+            runtime.write_bytes(b"fixture-patched-runtime")
+            digest = hashlib.sha256(runtime.read_bytes()).hexdigest()
+            (root / "library.sha256").write_text(f"{digest}  libmpv.so.2\n")
+            environment = os.environ.copy()
+            environment["NICONEON_MPV_SOURCE_DIR"] = str(root)
+            command = ["bash", str(ROOT / "scripts/release/verify_mpv_runtime.sh"), str(runtime)]
+            self.assertEqual(subprocess.run(command, env=environment, capture_output=True).returncode, 0)
+            runtime.write_bytes(b"fixture-unpatched-runtime")
+            self.assertNotEqual(subprocess.run(command, env=environment, capture_output=True).returncode, 0)
+
+    def test_modified_library_source_rejects_corrupt_archive(self):
+        with tempfile.TemporaryDirectory(prefix="niconeon-source-test-") as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            for name in ["mpv-v0.41.0.tar.gz", "mpv-lut-padding.patch", "build_mpv.sh", "Copyright", "README.txt", "library.sha256"]:
+                (source / name).write_text("deliberately invalid fixture")
+            environment = os.environ.copy()
+            environment["NICONEON_MPV_SOURCE_DIR"] = str(source)
+            destination = root / "output"
+            result = subprocess.run(["bash", str(ROOT / "scripts/release/copy_mpv_source.sh"), str(destination)],
+                                    env=environment, text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(destination.exists())
 
     def test_apprun_preserves_arguments_and_uses_local_loader_paths(self):
         with tempfile.TemporaryDirectory(prefix="niconeon-apprun-test-") as directory:

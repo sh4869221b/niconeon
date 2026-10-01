@@ -70,6 +70,7 @@ cp "${license_file}" "${staging}/${base}/LICENSE"
 cp "${gpl_file}" "${staging}/${base}/COPYING"
 cp "${source_code_file}" "${staging}/${base}/SOURCE_CODE.md"
 cp "${notices_file}" "${staging}/${base}/THIRD_PARTY_NOTICES.txt"
+"${repo_root}/scripts/release/copy_mpv_source.sh" "${staging}/${base}/licenses"
 
 # Ensure Qt resolves bundled plugins/QML modules from the app directory.
 cat >"${staging}/${base}/qt.conf" <<'EOF'
@@ -85,6 +86,8 @@ for dll in libmpv-2.dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; 
     cp "/ucrt64/bin/${dll}" "${staging}/${base}/${dll}"
   fi
 done
+
+"${repo_root}/scripts/release/verify_mpv_runtime.sh" "${staging}/${base}/libmpv-2.dll"
 
 # SQLite is required for cache/filter persistence, including deployments with no QML SQL imports.
 for plugin in /ucrt64/share/qt6/plugins/sqldrivers/qsqlite.dll /ucrt64/lib/qt6/plugins/sqldrivers/qsqlite.dll; do

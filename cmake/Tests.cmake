@@ -27,6 +27,7 @@ niconeon_test(license_resource_test tests/unit/license_resource_test.cpp Qt6::Co
 niconeon_license_resources(license_resource_test)
 
 # Source lists are explicit so adding a test always requires an intentional build change.
+niconeon_test(graphics_environment_test tests/unit/graphics_environment_test.cpp niconeon_domain)
 niconeon_test(domain_test tests/unit/domain_test.cpp niconeon_domain)
 niconeon_test(filter_manager_test tests/unit/filter_manager_test.cpp niconeon_domain)
 niconeon_test(comment_timeline_test tests/unit/comment_timeline_test.cpp niconeon_domain)

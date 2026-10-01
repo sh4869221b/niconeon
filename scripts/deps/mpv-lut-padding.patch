@@ -1,0 +1,19 @@
+From: https://github.com/mpv-player/mpv/commit/72d43dc9c999a21d867cdc0f934f3e4cd2195aa9
+Subject: vo_gpu: fill the padding of the scaler LUT
+Upstream license: GPL-2.0-or-later / LGPL-2.1-or-later (mpv build configuration)
+
+--- a/video/out/gpu/video.c
++++ b/video/out/gpu/video.c
+@@ -1863,6 +1863,12 @@
+     float *weights = talloc_array(NULL, float, lut_size * stride);
+     mp_compute_lut(scaler->kernel, lut_size, stride, weights);
+ 
++    for (int n = 0; n < lut_size; n++) {
++        float *row = weights + n * stride;
++        for (int i = size; i < stride; i++)
++            row[i] = row[i - num_components];
++    }
++
+     bool use_1d = scaler->kernel->polar && (p->ra->caps & RA_CAP_TEX_1D);
+ 
+     struct ra_tex_params lut_params = {

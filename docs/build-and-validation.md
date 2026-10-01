@@ -17,10 +17,14 @@ CMake is the only build entry point. No generated RPC bridge or separate core ex
 ## Linux (Debian 13)
 
 ```sh
-sudo apt-get install g++ cmake ninja-build pkgconf qt6-base-dev qt6-base-private-dev qt6-declarative-dev \
+sudo apt-get install g++ cmake ninja-build meson curl patch pkgconf qt6-base-dev qt6-base-private-dev qt6-declarative-dev \
   libqt6sql6-sqlite libmpv-dev qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
   qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qml6-module-qtcore \
   qml6-module-qttest fonts-dejavu-core fonts-noto-cjk
+scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+export PKG_CONFIG_PATH="$PWD/build/mpv-runtime/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export LD_LIBRARY_PATH="$PWD/build/mpv-runtime/lib:${LD_LIBRARY_PATH:-}"
+export NICONEON_MPV_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libmpv-source"
 cmake --preset debug
 cmake --build --preset debug --parallel
 ctest --preset debug
@@ -34,8 +38,9 @@ Qt prefixes set `CMAKE_PREFIX_PATH`; make pkgconf resolve the corresponding mpv 
 ## Windows
 
 Use an MSYS2 **UCRT64** shell, not MINGW64 and not MSVC. Install the
-`mingw-w64-ucrt-x86_64-` packages for gcc, cmake, ninja, pkgconf, qt6-base,
-qt6-declarative, qt6-tools, mpv and mesa. Run the `windows-debug` or `windows-release`
+`mingw-w64-ucrt-x86_64-` packages for gcc, cmake, ninja, meson, pkgconf, qt6-base,
+qt6-declarative, qt6-tools, mpv and mesa, plus MSYS python/curl/patch.
+Build the patched libmpv into the selected UCRT64 SDK before configuring. Run the `windows-debug` or `windows-release`
 configure/build/test presets; their outputs are in `build/windows-debug` and `build/windows-release`.
 The Qt, libmpv, C++ runtime and application must all use the same UCRT64 toolchain.
 
@@ -186,3 +191,35 @@ ownership, SHA-256 inventory and installed license texts are retained under
 The native clean-startup check requires a real OpenGL QRhi context, not the Qt Quick
 software backend. A software-fallback startup pass is not real-GPU, media, HDR or
 60fps qualification.
+
+## Patched libmpv and graphics initialization
+
+Supported binary distributions build libmpv 0.41.0 with the upstream fix
+[72d43dc9](https://github.com/mpv-player/mpv/commit/72d43dc9c999a21d867cdc0f934f3e4cd2195aa9).
+Uninitialized padding in six-tap scaler lookup tables can contain NaNs and corrupt
+otherwise valid video. This fixes the data rather than reducing interpolation quality.
+The versioned source download is SHA-256 checked; Meson may not download subprojects.
+Meson builds only this external dependency; the application remains CMake-only.
+
+```sh
+# Install Meson, Ninja, curl, patch and libmpv development dependencies first.
+scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+export PKG_CONFIG_PATH="$PWD/build/mpv-runtime/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export LD_LIBRARY_PATH="$PWD/build/mpv-runtime/lib:${LD_LIBRARY_PATH:-}"
+export NICONEON_MPV_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libmpv-source"
+cmake --preset debug
+cmake --build --preset debug
+```
+
+In a disposable Windows UCRT64 SDK, CI installs the patched dependency into `/ucrt64`
+before configuring the application. AppImage/Windows packaging requires and includes
+the exact corresponding source archive, patch, build script and license information.
+
+On Linux/X11 the application prefers Qt's real EGL/OpenGL integration; Qt can fall
+back to GLX if EGL cannot initialize. An explicit `QT_XCB_GL_INTEGRATION` is preserved.
+This avoids the independently reproduced GLX driver teardown leak without disabling
+sanitizers or reducing raster quality. OpenGL CI uses an ephemeral D-Bus session,
+matching a desktop environment and letting Qt's portal queries complete and clean up.
+On Windows `GALLIUM_DRIVER=llvmpipe` is selected only if unset: proprietary system
+OpenGL drivers ignore this Mesa-specific setting, so Qt remains hardware-first,
+while its bundled Mesa software fallback does not route through D3D12/WARP.

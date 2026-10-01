@@ -5,6 +5,31 @@
 最終 Linux AppImage は SDK の loader/plugin/QML 環境変数を外した desktop 起動・自動終了が code 0。
 直近のローカル build 成功を、最終 CI や runtime 全体の合格として扱わない。
 
+## 追補: 既定描画と起動環境の修正（12:00 UTC）
+
+以下の元の記録は修正前の結果。追加調査で、libmpv の6-tap補間 LUT が
+8要素幅にpackされる際の未初期化paddingにNaNが入り、GPUにも転送されることを確認した。
+公式修正 [72d43dc9](https://github.com/mpv-player/mpv/commit/72d43dc9c999a21d867cdc0f934f3e4cd2195aa9)
+を適用した同一条件のlibmpvで交互に比較し、修正なし0/3、修正あり3/3がfull描画試験に合格。
+Lanczosなどの画質設定は変更していない。
+
+配布にはSHA-256検証したlibmpv 0.41.0 sourceと同修正からbuildしたlibraryを使い、
+対応source archive・patch・build script・licenseを同梱する。
+Linux/X11はQtのEGL/OpenGLを優先し、必要ならQtがGLXへfallbackする。
+明示的な利用者の設定は維持。plain Qt対照・アプリ試験の両方でGLX teardownの漏れを回避できた。
+CIはQt portal問い合わせを正しく完了できるよう独立D-Bus session内で動かす。
+
+修正後のローカル結果:
+
+- Debug / Release: 非OpenGL17/17
+- Debug / Release / ASan+UBSan+LSan: 既定画質のOpenGL2suiteを各3回繰り返し、すべてpass
+- ASan+UBSan+LSan: 非OpenGL17/17、desktopで再検証してpass
+- leak suppression・pixel条件の緩和・bilinearへの既定変更は行っていない
+- Windowsは同梱Mesaでcontext生成まで到達。software fallbackのD3D12/WARP経路を避け、
+  Mesaに限ってllvmpipeを選ぶ。system GPU優先は維持。最終Windows CIは再検証中
+
+この追補の最終CI結果はPR本文に記録する。
+
 ## 検証環境
 
 - Debian GNU/Linux 13.6 (x86-64)

@@ -30,9 +30,15 @@ IDなし・コメント取得失敗・キャッシュ不正でも、有効なロ
 ## 開発
 
 採用環境は C++23 対応 compiler、CMake 3.25+、Ninja、Qt 6.8+、同一 Qt build の GuiPrivate 開発ヘッダー（Debian: `qt6-base-private-dev`）、libmpv、pkg-config、Qt SQL SQLite driver です。GuiPrivate は renderer の render-target pixel size 取得だけに使い、Qt minor 更新時には rebuild と OpenGL 回帰テストが必要です。Windows UCRT64 は `qt6-base` package に同ヘッダーを含みます。
-Linux はディストリビューションの依存を使い、Windows は MSYS2 UCRT64 を使用します。
+Linux はディストリビューションの開発依存を使い、Windows は MSYS2 UCRT64 を使用します。
+libmpv は公式の補間テーブル初期化修正を適用した 0.41.0 を使用します。Meson はこの外部依存だけの build に使い、アプリ本体は CMake で build します。
 
 ```sh
+# Meson / curl / patch と libmpv の開発依存をインストール後:
+scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+export PKG_CONFIG_PATH="$PWD/build/mpv-runtime/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export LD_LIBRARY_PATH="$PWD/build/mpv-runtime/lib:${LD_LIBRARY_PATH:-}"
+export NICONEON_MPV_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libmpv-source"
 cmake --preset linux-debug
 cmake --build --preset linux-debug
 ctest --preset linux-debug

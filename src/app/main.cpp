@@ -1,5 +1,6 @@
 #include "app/ApplicationController.hpp"
 #include "danmaku/DanmakuRenderNodeItem.hpp"
+#include "playback/GraphicsEnvironment.hpp"
 #include "playback/MpvItem.hpp"
 #include "ui/LicenseProvider.hpp"
 #include <QGuiApplication>
@@ -11,6 +12,7 @@
 #include <clocale>
 
 int main(int argc, char *argv[]) {
+    niconeon::configureGraphicsEnvironment();
     setlocale(LC_NUMERIC, "C");
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
         qputenv("QT_QUICK_CONTROLS_STYLE", "Fusion");

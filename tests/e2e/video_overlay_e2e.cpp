@@ -1,5 +1,6 @@
 #include "danmaku/DanmakuController.hpp"
 #include "danmaku/DanmakuRenderNodeItem.hpp"
+#include "playback/GraphicsEnvironment.hpp"
 #include "playback/MpvItem.hpp"
 
 #include <QDir>
@@ -244,5 +245,10 @@ class VideoOverlayE2E : public QObject {
     }
 };
 
-QTEST_MAIN(VideoOverlayE2E)
+int main(int argc, char **argv) {
+    niconeon::configureGraphicsEnvironment();
+    QGuiApplication app(argc, argv);
+    VideoOverlayE2E test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "video_overlay_e2e.moc"

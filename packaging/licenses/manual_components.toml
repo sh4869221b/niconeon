@@ -6,9 +6,9 @@ notes = "Deployed with windeployqt/AppImage packaging as dynamic runtime librari
 
 [[component]]
 name = "libmpv"
-license = "GPL-2.0-or-later (package dependent)"
+license = "GPL-2.0-or-later (this build)"
 source = "https://github.com/mpv-player/mpv/blob/master/Copyright"
-notes = "Bundled as runtime shared library/DLL from platform packages."
+notes = "libmpv 0.41.0 with upstream LUT padding fix 72d43dc9. Corresponding source archive, patch and build script are included under libmpv-source in the distribution license directory."
 
 [[component]]
 name = "FFmpeg (via libmpv)"

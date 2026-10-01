@@ -65,6 +65,9 @@ fetch_verified_tool "${LINUXDEPLOY_QT_URL}" "${linuxdeploy_qt_img}" "${LINUXDEPL
 staging="$(mktemp -d "${TMPDIR:-/tmp}/niconeon-appimage-XXXXXX")"
 trap 'rm -rf "${staging}"' EXIT
 
+# Verify before deployment tools rewrite ELF paths.
+mpv_runtime="$(ldd "$app_bin" | awk '$1 ~ /^libmpv[.]so/ { sub(/^.* => /, ""); sub(/ \(0x[^)]*\).*$/, ""); print; exit }')"
+"${repo_root}/scripts/release/verify_mpv_runtime.sh" "$mpv_runtime"
 app_dir="${staging}/AppDir"
 mkdir -p "${app_dir}/usr/bin" "${app_dir}/usr/share/applications" "${app_dir}/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "${app_dir}/usr/share/licenses/niconeon"
@@ -80,6 +83,7 @@ cp "${license_file}" "${app_dir}/usr/share/licenses/niconeon/LICENSE"
 cp "${gpl_file}" "${app_dir}/usr/share/licenses/niconeon/COPYING"
 cp "${source_code_file}" "${app_dir}/usr/share/licenses/niconeon/SOURCE_CODE.md"
 cp "${notices_file}" "${app_dir}/usr/share/licenses/niconeon/THIRD_PARTY_NOTICES.txt"
+"${repo_root}/scripts/release/copy_mpv_source.sh" "${app_dir}/usr/share/licenses/niconeon"
 cp "${repo_root}/packaging/appimage/AppRun" "${app_dir}/AppRun"
 chmod 755 "${app_dir}/AppRun"
 

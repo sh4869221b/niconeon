@@ -1,5 +1,6 @@
 #include "danmaku/DanmakuController.hpp"
 #include "danmaku/DanmakuRenderNodeItem.hpp"
+#include "playback/GraphicsEnvironment.hpp"
 
 #include <QColor>
 #include <QDir>
@@ -236,6 +237,11 @@ Item {
     QVERIFY2(minYInLogical >= containerRect.top() + 6, "danmaku was rendered without item Y translation");
 }
 
-QTEST_MAIN(RenderNodeAlignmentE2E)
+int main(int argc, char **argv) {
+    niconeon::configureGraphicsEnvironment();
+    QGuiApplication app(argc, argv);
+    RenderNodeAlignmentE2E test;
+    return QTest::qExec(&test, argc, argv);
+}
 
 #include "rendernode_alignment_e2e.moc"
