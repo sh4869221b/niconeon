@@ -115,7 +115,10 @@ done
 # Resolve PE imports directly: ldd can silently omit loader failures and is not
 # sufficient to qualify an SDK-path-independent Windows distribution.
 system_root="$(cygpath -u "${SYSTEMROOT:-${WINDIR:-C:\Windows}}")"
-python3 "${repo_root}/scripts/release/collect_windows_dlls.py" \
+# Use MSYS Python: pacman ownership/license paths live in the POSIX MSYS root.
+# UCRT Python can appear first after installing Mesa and interprets those paths
+# against the Windows drive instead, breaking otherwise valid provenance queries.
+/usr/bin/python3 "${repo_root}/scripts/release/collect_windows_dlls.py" \
   --bundle "${staging}/${base}" --sqlite-only --software-opengl \
   --sdk-bin /ucrt64/bin \
   --system-dir "${system_root}/System32" \
