@@ -1,0 +1,3 @@
+
+# A unified diff needs single-space blank context lines.
+tests/perf/baseline-observer.patch -whitespace

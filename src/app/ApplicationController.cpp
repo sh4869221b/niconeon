@@ -45,6 +45,10 @@ ApplicationController::ApplicationController(ServiceOptions options, QObject *pa
     });
     connect(&m_service, &CommentService::commentsReady, this, [this](const PlaybackBatchResult &result) {
         m_results += static_cast<int>(result.processedTicks);
+        m_performanceTotals.sourceEmitted += result.emitComments.size();
+        m_performanceTotals.sourceQosDropped += result.droppedComments;
+        m_performanceTotals.sourceCoalesced += result.coalescedComments;
+        m_performanceTotals.sourcePositionMs = result.lastPositionMs;
         m_dropped += result.droppedComments;
         m_coalesced += result.coalescedComments;
         if (result.emitOverBudget)
@@ -52,6 +56,7 @@ ApplicationController::ApplicationController(ServiceOptions options, QObject *pa
         if (!m_commentsVisible || result.emitComments.isEmpty())
             return;
         if (m_renderQueue.size() >= 2) {
+            m_performanceTotals.sourceQueueDropped += result.emitComments.size();
             m_dropped += result.emitComments.size();
             ++m_overBudget;
             return;
@@ -421,6 +426,7 @@ void ApplicationController::drainRenderBatch() {
     // it can arrive before mpv publishes the new clock; using the old player
     // position would spawn every restored comment outside the viewport.
     const int accepted = m_danmaku.appendComments(comments, batch.positionMs, batch.motionTime);
+    m_performanceTotals.admitted += accepted;
     batch.offset = accepted == comments.size() ? end : sourceOffsets[accepted];
     if (batch.offset == batch.comments.size())
         m_renderQueue.dequeue();
@@ -511,7 +517,16 @@ void ApplicationController::shutdown() {
     m_seekTimer.stop();
     m_tickTimer.stop();
     m_perfTimer.stop();
+    for (const auto &batch : std::as_const(m_renderQueue))
+        m_performanceTotals.discardedAtShutdown += batch.comments.size() - batch.offset;
     m_renderQueue.clear();
+    const auto raster = m_danmaku.rasterMetrics();
+    m_performanceTotals.rasterCountersAvailable = true;
+    m_performanceTotals.pendingRasterAtShutdown = raster.pending;
+    m_performanceTotals.pendingCommentsAtShutdown = m_danmaku.pendingCommentCountForTesting();
+    m_performanceTotals.rasterFailed = raster.failed;
+    m_performanceTotals.rasterExpired = m_danmaku.expiredRasterComments();
+    m_performanceTotals.rasterCancelledBeforeShutdown = raster.cancelled;
     m_danmaku.shutdownRaster();
     m_service.shutdown();
     maybeFinishShutdown();

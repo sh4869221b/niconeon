@@ -1,0 +1,76 @@
+name: Raster performance evidence
+on:
+  pull_request:
+    paths:
+      - 'src/danmaku/**'
+      - 'src/app/**'
+      - 'tests/perf/**'
+      - '.github/workflows/raster-performance.yml'
+permissions:
+  contents: read
+concurrency:
+  group: raster-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  software-renderer-comparison:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 40
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+      QT_HASH_SEED: '0'
+      LP_NUM_THREADS: '2'
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      NICONEON_MPV_SCALE: default
+    steps:
+      - name: Install supported comparison toolchain
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git g++ cmake ninja-build pkgconf python3 meson curl patch \
+            qt6-base-dev qt6-base-private-dev qt6-declarative-dev libqt6sql6-sqlite libmpv-dev \
+            qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-layouts \
+            qml6-module-qtqml-workerscript qml6-module-qtcore fonts-dejavu-core fonts-noto-cjk fonts-noto-color-emoji \
+            ffmpeg xvfb xauth dbus-daemon libgl1-mesa-dri
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Build one common patched libmpv
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          scripts/deps/build_mpv.sh /usr/local
+          echo 'LD_LIBRARY_PATH=/usr/local/lib' >> "$GITHUB_ENV"
+          echo 'PKG_CONFIG_PATH=/usr/local/lib/pkgconfig' >> "$GITHUB_ENV"
+      - name: Build candidate and fixed baseline with identical observers
+        run: |
+          tests/perf/prepare_baseline.sh "$GITHUB_WORKSPACE/../raster-baseline"
+          cmake -S . -B build/evidence -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DNICONEON_BUILD_PERF_TOOLS=ON
+          cmake --build build/evidence --target niconeon real_render_profile
+          cmake -S ../raster-baseline -B ../raster-baseline/build/evidence -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DNICONEON_BUILD_PERF_TOOLS=ON
+          cmake --build ../raster-baseline/build/evidence --target niconeon real_render_profile
+      - name: Generate and identify deterministic fixture
+        run: |
+          mkdir -p evidence
+          ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=s=640x360:r=30:d=180' -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -an evidence/motion_sm9.mp4
+          sha256sum evidence/motion_sm9.mp4 > evidence/fixture.sha256
+          git rev-parse HEAD > evidence/candidate-head.txt
+          git -C ../raster-baseline rev-parse HEAD > evidence/baseline-head.txt
+          git -C ../raster-baseline diff > evidence/baseline-observer-applied.patch
+          dpkg-query -W > evidence/packages.txt
+      - name: Isolated real-render profiling and pixel checks
+        id: measurement
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x1024x24 -ac' bash tests/perf/ci_evidence.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: raster-performance-${{ github.event.pull_request.head.sha }}
+          path: |
+            evidence/**/*.json
+            evidence/**/*.log
+            evidence/**/*.png
+            evidence/**/*.txt
+            evidence/**/*.sha256
+            evidence/**/*.patch
+          retention-days: 14

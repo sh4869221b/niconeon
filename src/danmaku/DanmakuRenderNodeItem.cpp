@@ -11,6 +11,8 @@
 #include <QHash>
 #include <QImage>
 #include <QMetaObject>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QOpenGLBuffer>
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
@@ -23,6 +25,7 @@
 #include <QRectF>
 #include <QSGNode>
 #include <QSGRenderNode>
+#include <QScopeGuard>
 #include <QSet>
 #include <QSharedPointer>
 #include <QSize>
@@ -32,13 +35,35 @@
 #include <rhi/qrhi.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <utility>
+
+struct DanmakuRenderDiagnosticsState {
+    QMutex mutex;
+    DanmakuRenderDiagnosticsBatch pending;
+    qsizetype framesRead = 0;
+    qsizetype submissionsRead = 0;
+    // Render-thread-only identity index survives scene graph node recreation.
+    QSet<QString> submittedIds;
+
+    DanmakuRenderDiagnosticsState() {
+        pending.enabled = true;
+        pending.frames.reserve(DanmakuRenderDiagnosticsBatch::FrameCapacity);
+        pending.submissions.reserve(DanmakuRenderDiagnosticsBatch::SubmissionCapacity);
+        submittedIds.reserve(DanmakuRenderDiagnosticsBatch::SubmissionCapacity);
+    }
+};
 
 namespace {
 constexpr int kAtlasPagePixelSize = 2048;
 constexpr int kMaxAtlasPages = 8;
 constexpr qint64 kPerfLogWindowMs = 2000;
+using DiagnosticClock = std::chrono::steady_clock;
+qint64 diagnosticElapsedNs(DiagnosticClock::time_point started) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(DiagnosticClock::now() - started).count();
+}
 
 enum class DanmakuRendererBackend {
     Atlas,
@@ -91,9 +116,9 @@ QImage colorizeSpriteImage(const QImage &source, const QColor &color) {
 
 class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunctions {
   public:
-    DanmakuRenderNode()
+    explicit DanmakuRenderNode(QSharedPointer<DanmakuRenderDiagnosticsState> diagnostics)
         : m_quadVbo(QOpenGLBuffer::VertexBuffer), m_instanceVbo(QOpenGLBuffer::VertexBuffer),
-          m_frameVbo(QOpenGLBuffer::VertexBuffer) {}
+          m_frameVbo(QOpenGLBuffer::VertexBuffer), m_diagnostics(std::move(diagnostics)) {}
 
     ~DanmakuRenderNode() override {
         releaseResources();
@@ -101,6 +126,9 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
 
     void setFrame(const DanmakuRenderFrameConstPtr &frame, const QVector<DanmakuSpriteUpload> &uploads,
                   const QSize &itemSize, qreal devicePixelRatio, DanmakuRendererBackend backend) {
+        const auto syncStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
+        if (m_diagnostics)
+            m_frameDiagnostics = {};
         if (m_requestedBackend != backend) {
             m_requestedBackend = backend;
             m_runtimeBackend = backend;
@@ -118,11 +146,18 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
             if (upload.spriteId == 0 || upload.image.isNull()) {
                 continue;
             }
+            if (m_diagnostics) {
+                ++m_frameDiagnostics.receivedSprites;
+                m_frameDiagnostics.receivedSpriteBytes += upload.image.sizeInBytes();
+            }
 
             SpriteRecord &record = m_sprites[upload.spriteId];
             record.spriteId = upload.spriteId;
             record.logicalSize = upload.logicalSize;
+            const auto normalizeStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
             record.image = normalizedImageForAtlas(upload.image);
+            if (m_diagnostics)
+                m_frameDiagnostics.normalizeNs += diagnosticElapsedNs(normalizeStarted);
             record.hoverImage = {};
             record.lastUsedFrame = m_frameSequence;
             if (record.pageIndex >= 0) {
@@ -152,7 +187,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                 for (const DanmakuRenderInstance &instance : instances) {
                     activeSpriteIds.insert(instance.spriteId);
                 }
+                const auto residencyStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
                 ensureActiveSpritesResident(activeSpriteIds);
+                if (m_diagnostics)
+                    m_frameDiagnostics.residencyNs += diagnosticElapsedNs(residencyStarted);
             }
             if (m_atlasInstancingUnsupported) {
                 buildAtlasVertices();
@@ -163,6 +201,23 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
             }
         } else {
             composeFrameImage();
+        }
+        if (m_diagnostics) {
+            m_frameDiagnostics.frameSequence = m_frameSequence;
+            m_frameDiagnostics.setFrameNs = diagnosticElapsedNs(syncStarted);
+            m_frameDiagnostics.activeInstances = instances.size();
+            QSet<DanmakuSpriteId> uniqueIds;
+            uniqueIds.reserve(instances.size());
+            for (const auto &instance : instances)
+                uniqueIds.insert(instance.spriteId);
+            m_frameDiagnostics.activeUniqueSprites = uniqueIds.size();
+            for (const auto id : std::as_const(uniqueIds)) {
+                const auto sprite = m_sprites.constFind(id);
+                if (sprite == m_sprites.constEnd() || sprite->image.isNull())
+                    ++m_frameDiagnostics.missingImageUnique;
+                else if (m_runtimeBackend == DanmakuRendererBackend::Atlas && sprite->pageIndex < 0)
+                    ++m_frameDiagnostics.unresidentUnique;
+            }
         }
     }
 
@@ -179,6 +234,15 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
     }
 
     void render(const RenderState *state) override {
+        const auto renderStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
+        QVector<bool> submittedPages;
+        if (m_diagnostics)
+            submittedPages.fill(false, m_atlasPages.size());
+        bool submittedFrameImage = false;
+        const auto diagnosticsGuard = qScopeGuard([&] {
+            if (m_diagnostics)
+                publishDiagnostics(renderStarted, submittedPages, submittedFrameImage);
+        });
         if (m_itemSize.width() <= 0 || m_itemSize.height() <= 0) {
             return;
         }
@@ -269,6 +333,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                         m_instanceVbo.allocate(instances.constData(),
                                                instances.size() * static_cast<int>(sizeof(InstanceData)));
                         glDrawArraysInstanced(GL_TRIANGLES, 0, 6, instances.size());
+                        if (m_diagnostics) {
+                            submittedPages[pageIndex] = true;
+                            m_frameDiagnostics.submittedInstances += instances.size();
+                        }
                         page.texture->release();
                         ++drawCallsThisFrame;
                     }
@@ -319,6 +387,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                         page.texture->bind(0);
                         m_frameVbo.allocate(vertices.constData(), vertices.size() * static_cast<int>(sizeof(Vertex)));
                         glDrawArrays(GL_TRIANGLES, 0, vertices.size());
+                        if (m_diagnostics) {
+                            submittedPages[pageIndex] = true;
+                            m_frameDiagnostics.submittedInstances += vertices.size() / 6;
+                        }
                         page.texture->release();
                         ++drawCallsThisFrame;
                     }
@@ -352,6 +424,7 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
             m_frameVbo.allocate(m_frameQuadVertices.constData(),
                                 m_frameQuadVertices.size() * static_cast<int>(sizeof(Vertex)));
             glDrawArrays(GL_TRIANGLES, 0, m_frameQuadVertices.size());
+            submittedFrameImage = true;
             m_frameTexture->release();
             drawCallsThisFrame = m_frameQuadVertices.isEmpty() ? 0 : 1;
 
@@ -363,6 +436,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         }
 
         m_perfDrawCalls += drawCallsThisFrame;
+        if (m_diagnostics)
+            m_frameDiagnostics.drawCalls = drawCallsThisFrame;
         maybeWritePerfLog();
     }
 
@@ -704,13 +779,25 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
             texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
             texture->setSize(image.width(), image.height());
             texture->setMipLevels(1);
+            const auto allocationStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
             texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+            if (m_diagnostics) {
+                m_frameDiagnostics.glAllocationNs += diagnosticElapsedNs(allocationStarted);
+                m_frameDiagnostics.glAllocationBytes += quint64(image.width()) * image.height() * 4;
+                ++m_frameDiagnostics.glAllocationCount;
+            }
         }
 
         QOpenGLPixelTransferOptions options;
         options.setAlignment(1);
         options.setRowLength(image.bytesPerLine() / 4);
+        const auto uploadStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
         texture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, image.constBits(), &options);
+        if (m_diagnostics) {
+            m_frameDiagnostics.glUploadNs += diagnosticElapsedNs(uploadStarted);
+            m_frameDiagnostics.glUploadBytes += quint64(image.width()) * image.height() * 4;
+            ++m_frameDiagnostics.glUploadCount;
+        }
         return true;
     }
 
@@ -722,6 +809,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
             if (!updateTextureFromImage(page.texture, page.image)) {
                 return false;
             }
+            if (m_diagnostics)
+                ++m_frameDiagnostics.atlasPagesUploaded;
             page.textureDirty = false;
         }
         return true;
@@ -814,6 +903,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
 
         AtlasPage &page = m_atlasPages[pageIndex];
         SpriteRecord &record = spriteIt.value();
+        const auto copyStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
+        const auto copyGuard = qScopeGuard([&] {
+            if (m_diagnostics) {
+                m_frameDiagnostics.spriteCopyNs += diagnosticElapsedNs(copyStarted);
+                m_frameDiagnostics.spriteCopyBytes += quint64(rect.width()) * rect.height() * 4;
+            }
+        });
         QPainter painter(&page.image);
         painter.drawImage(rect, record.image);
         record.pageIndex = pageIndex;
@@ -838,6 +934,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
 
     bool repackPageForSprite(int pageIndex, DanmakuSpriteId requestedSpriteId,
                              const QSet<DanmakuSpriteId> &activeSpriteIds) {
+        const auto repackStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
+        const auto repackGuard = qScopeGuard([&] {
+            if (m_diagnostics)
+                m_frameDiagnostics.repackNs += diagnosticElapsedNs(repackStarted);
+        });
+        if (m_diagnostics)
+            ++m_frameDiagnostics.repackPageAttempts;
         if (pageIndex < 0 || pageIndex >= m_atlasPages.size()) {
             return false;
         }
@@ -859,6 +962,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         }
 
         for (int evictCount = 1; evictCount <= evictable.size(); ++evictCount) {
+            if (m_diagnostics)
+                ++m_frameDiagnostics.repackAttempts;
             QSet<DanmakuSpriteId> survivors = page.residents;
             for (int i = 0; i < evictCount; ++i) {
                 survivors.remove(evictable[i]);
@@ -909,7 +1014,14 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
             }
 
             page.packer = packer;
+            const auto clearStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
             page.image.fill(Qt::transparent);
+            if (m_diagnostics) {
+                m_frameDiagnostics.pageClearNs += diagnosticElapsedNs(clearStarted);
+                m_frameDiagnostics.pageClearBytes += page.image.sizeInBytes();
+                ++m_frameDiagnostics.repackSuccesses;
+                m_frameDiagnostics.repackedSprites += candidates.size();
+            }
             for (const DanmakuSpriteId spriteId : std::as_const(residents)) {
                 SpriteRecord &record = m_sprites[spriteId];
                 record.pageIndex = -1;
@@ -931,7 +1043,12 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         AtlasPage page;
         page.packer.reset(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize));
         page.image = QImage(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize), QImage::Format_RGBA8888_Premultiplied);
+        const auto clearStarted = m_diagnostics ? DiagnosticClock::now() : DiagnosticClock::time_point{};
         page.image.fill(Qt::transparent);
+        if (m_diagnostics) {
+            m_frameDiagnostics.pageClearNs += diagnosticElapsedNs(clearStarted);
+            m_frameDiagnostics.pageClearBytes += page.image.sizeInBytes();
+        }
         page.textureDirty = true;
         m_atlasPages.push_back(std::move(page));
     }
@@ -1063,6 +1180,58 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         m_frameTextureDirty = true;
     }
 
+    void publishDiagnostics(DiagnosticClock::time_point renderStarted, const QVector<bool> &submittedPages,
+                            bool submittedFrameImage) {
+        m_frameDiagnostics.capturedAtNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(DiagnosticClock::now().time_since_epoch()).count();
+        m_frameDiagnostics.renderCpuNs = diagnosticElapsedNs(renderStarted);
+        QVector<DanmakuRenderSubmissionEvent> submissions;
+        quint64 droppedObservations = 0;
+        for (const auto &instance : currentInstances()) {
+            const auto sprite = m_sprites.constFind(instance.spriteId);
+            if (sprite == m_sprites.constEnd() || sprite->image.isNull())
+                continue;
+            const bool submitted =
+                submittedFrameImage || (sprite->pageIndex >= 0 && sprite->pageIndex < submittedPages.size() &&
+                                        submittedPages[sprite->pageIndex]);
+            if (!submitted)
+                continue;
+            if (submittedFrameImage)
+                ++m_frameDiagnostics.submittedInstances;
+            if (m_diagnostics->submittedIds.contains(instance.commentId))
+                continue;
+            if (m_diagnostics->submittedIds.size() >= DanmakuRenderDiagnosticsBatch::SubmissionCapacity) {
+                ++droppedObservations;
+                continue;
+            }
+            m_diagnostics->submittedIds.insert(instance.commentId);
+            submissions.push_back({m_frameDiagnostics.frameSequence, m_frameDiagnostics.capturedAtNs,
+                                   instance.commentId, instance.spriteId});
+        }
+        {
+            QMutexLocker locker(&m_diagnostics->mutex);
+            auto &pending = m_diagnostics->pending;
+            if (pending.recordedFrames < DanmakuRenderDiagnosticsBatch::FrameCapacity) {
+                pending.frames.push_back(m_frameDiagnostics);
+                ++pending.recordedFrames;
+            } else {
+                ++pending.droppedFrames;
+            }
+            pending.recordedSubmissions += submissions.size();
+            pending.submissions.append(std::move(submissions));
+            pending.droppedSubmissionObservations += droppedObservations;
+        }
+        // render() can run again without a new sync. Retain the snapshot's
+        // identity/counts but never charge its sync/upload work twice.
+        DanmakuRenderFrameDiagnostics next;
+        next.frameSequence = m_frameDiagnostics.frameSequence;
+        next.activeInstances = m_frameDiagnostics.activeInstances;
+        next.activeUniqueSprites = m_frameDiagnostics.activeUniqueSprites;
+        next.missingImageUnique = m_frameDiagnostics.missingImageUnique;
+        next.unresidentUnique = m_frameDiagnostics.unresidentUnique;
+        m_frameDiagnostics = next;
+    }
+
     void maybeWritePerfLog() {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         if (m_perfWindowStartMs <= 0) {
@@ -1165,12 +1334,38 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
     qulonglong m_perfSpriteUploadCount = 0;
     qulonglong m_perfSpriteUploadBytes = 0;
     qulonglong m_perfDrawCalls = 0;
+    QSharedPointer<DanmakuRenderDiagnosticsState> m_diagnostics;
+    DanmakuRenderFrameDiagnostics m_frameDiagnostics;
 };
 } // namespace
 
 DanmakuRenderNodeItem::DanmakuRenderNodeItem(QQuickItem *parent) : QQuickItem(parent) {
+    if (qEnvironmentVariableIntValue("NICONEON_RENDER_DIAGNOSTICS") == 1)
+        m_diagnostics = QSharedPointer<DanmakuRenderDiagnosticsState>::create();
     setFlag(QQuickItem::ItemHasContents, true);
     connect(this, &QQuickItem::windowChanged, this, &DanmakuRenderNodeItem::handleWindowChanged);
+}
+
+DanmakuRenderDiagnosticsBatch DanmakuRenderNodeItem::takeRenderDiagnostics() {
+    DanmakuRenderDiagnosticsBatch result;
+    if (!m_diagnostics)
+        return result;
+    QMutexLocker locker(&m_diagnostics->mutex);
+    const auto &pending = m_diagnostics->pending;
+    result.enabled = true;
+    result.recordedFrames = pending.recordedFrames;
+    result.recordedSubmissions = pending.recordedSubmissions;
+    result.droppedFrames = pending.droppedFrames;
+    result.droppedSubmissionObservations = pending.droppedSubmissionObservations;
+    // Copy only unread values into independent output buffers. Sharing the
+    // retained QVector would trigger detach/copies on the render thread.
+    result.frames.reserve(pending.frames.size() - m_diagnostics->framesRead);
+    while (m_diagnostics->framesRead < pending.frames.size())
+        result.frames.push_back(pending.frames[m_diagnostics->framesRead++]);
+    result.submissions.reserve(pending.submissions.size() - m_diagnostics->submissionsRead);
+    while (m_diagnostics->submissionsRead < pending.submissions.size())
+        result.submissions.push_back(pending.submissions[m_diagnostics->submissionsRead++]);
+    return result;
 }
 
 DanmakuController *DanmakuRenderNodeItem::controller() const {
@@ -1209,7 +1404,7 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
 
     auto *node = static_cast<DanmakuRenderNode *>(oldNode);
     if (!node) {
-        node = new DanmakuRenderNode();
+        node = new DanmakuRenderNode(m_diagnostics);
     }
 
     const int itemWidth = static_cast<int>(std::ceil(width()));

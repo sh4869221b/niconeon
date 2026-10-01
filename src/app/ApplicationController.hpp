@@ -25,6 +25,24 @@ class ApplicationController : public QObject {
     Q_PROPERTY(QVariantList regexFilters READ regexFilters NOTIFY changed)
     Q_PROPERTY(DanmakuController *danmaku READ danmaku CONSTANT)
   public:
+    struct PerformanceTotals {
+        quint64 sourceEmitted = 0;
+        quint64 sourceQosDropped = 0;
+        quint64 sourceQueueDropped = 0;
+        quint64 sourceCoalesced = 0;
+        quint64 admitted = 0;
+        quint64 discardedAtShutdown = 0;
+        qint64 sourcePositionMs = 0;
+        bool rasterCountersAvailable = false;
+        quint64 pendingRasterAtShutdown = 0;
+        quint64 pendingCommentsAtShutdown = 0;
+        quint64 rasterFailed = 0;
+        quint64 rasterExpired = 0;
+        quint64 rasterCancelledBeforeShutdown = 0;
+    };
+    PerformanceTotals performanceTotals() const {
+        return m_performanceTotals;
+    }
     explicit ApplicationController(ServiceOptions options = {}, QObject *parent = nullptr);
     ~ApplicationController() override;
     QString selectedVideoPath() const {
@@ -118,6 +136,7 @@ class ApplicationController : public QObject {
     double nearestPreset(double value) const;
     void persistPresets();
     void queueFailure(bool accepted);
+    PerformanceTotals m_performanceTotals;
     QSettings m_settings;
     CommentService m_service;
     DanmakuController m_danmaku;
