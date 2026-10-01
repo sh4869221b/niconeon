@@ -115,6 +115,28 @@ class StoreTest : public QObject {
         QVERIFY(Store::openWithPaths(dataPath, cachePath));
     }
 
+    void oversizedLegacyPayloadIsRejectedWithoutDroppingSource() {
+        QTemporaryDir directory;
+        const auto dataPath = directory.filePath(QStringLiteral("data.db"));
+        const auto cachePath = directory.filePath(QStringLiteral("cache.db"));
+        {
+            Database legacy(dataPath);
+            QVERIFY(legacy.exec(cacheSchema));
+            QVERIFY(legacy.exec(
+                QStringLiteral("INSERT INTO comment_cache VALUES('large','2024-01-01T00:00:00Z',zeroblob(%1))")
+                    .arg(MaxPayloadBytes + 1)));
+        }
+        auto failed = Store::openWithPaths(dataPath, cachePath);
+        QVERIFY(!failed);
+        QVERIFY(failed.error().message.contains(QStringLiteral("64 MiB")));
+        Database legacy(dataPath), cache(cachePath);
+        QSqlQuery source(legacy.db), destination(cache.db);
+        QVERIFY(source.exec(QStringLiteral("SELECT COUNT(*) FROM comment_cache")) && source.next());
+        QCOMPARE(source.value(0).toInt(), 1);
+        QVERIFY(destination.exec(QStringLiteral("SELECT COUNT(*) FROM comment_cache")) && destination.next());
+        QCOMPARE(destination.value(0).toInt(), 0);
+    }
+
     void failedMigrationRetainsLegacyAndRollsBackDestination() {
         QTemporaryDir directory;
         const auto dataPath = directory.filePath(QStringLiteral("data.db"));

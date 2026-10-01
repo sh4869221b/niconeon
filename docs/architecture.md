@@ -39,6 +39,7 @@ requires measurements and the same bounded admission contracts.
 |---|---|---|
 | Application commands/results | 32 admitted commands, GUI → comment worker → GUI acknowledgement | Mutations reject with visible busy error; admission released only after GUI acknowledgement, bounding queued results too |
 | Latest open request | One coalesced pending open in GUI | Newer navigation replaces it even when command queue saturated. Old generation invalidates immediately |
+| Latest runtime profile | One coalesced pending profile in GUI | Retained under saturation, admitted before subsequent ticks; shutdown discards it |
 | Tick requests | One in flight + one pending latest tick | Coalesce pending position, retain seek flag; revision rejects old seek/visibility result |
 | HTTP | One active reply, 1 MiB read buffer, 64 MiB accumulated response | Abort previous on new load; 15s total stage deadline (test injectable); oversize/error/redirect fail closed |
 | Dataset | At most 250,000 comments / conservative 64 MiB serialized budget; 16 KiB text, 1 KiB IDs | Reject malformed/oversize dataset with error; cached fallback or empty dataset keeps local video alive |
@@ -48,6 +49,12 @@ requires measurements and the same bounded admission contracts.
 Filters are limited to 10,000 entries, patterns to 4 KiB and IDs to 1 KiB.
 No arbitrary method-name or JSON parameter dispatch remains. Filter mutations preserve
 persist-first ordering: a failed DB write cannot change in-memory filters or Undo.
+Regex execution uses PCRE2 limits (100,000 match steps, 1,000 depth, 1 MiB interpreter heap).
+Invalid/resource-exhausted matches are explicit errors, never silently treated as visible comments.
+Tick processing checks cancellation between comments and regexes and limits each batch to
+100,000 regex evaluations, independent of machine speed. A currently executing regex finishes
+within its engine limits before the next check; this is not a hard real-time deadline. Cancellation, seek revision changes, and errors leave the
+cursor unchanged and discard partial output. NG-user filtering still short-circuits regex work.
 
 ## Generations
 
@@ -55,6 +62,9 @@ persist-first ordering: a failed DB write cannot change in-memory filters or Und
 - A seek advances the tick revision, invalidates already queued output, resets visible renderer state
 - Newest navigation is retained under queue saturation; stale HTTP/parser output cannot commit
 - Pending render preparation is cleared on seek/hide/video switch
+- Failed mpv seeks are correlated by request ID; stale failures cannot cancel a newer seek.
+  One replaceable 5-second timer reconciles comments to the observed media clock if
+  a demuxer never lands within the position tolerance; file changes and shutdown cancel it.
 - Existing renderer DPR/font/resource invalidation remains part of #65/#78 qualification;
   this document does not claim those old queues are fully bounded or async-raster compliant
 

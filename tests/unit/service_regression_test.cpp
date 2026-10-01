@@ -75,6 +75,36 @@ class ServiceRegressionTest : public QObject {
         QTRY_VERIFY(service.isStopped());
     }
 
+    void latestProfileSurvivesFullIngressQueue() {
+        MockHttpServer server;
+        QVERIFY(server.start());
+        server.handler = [&server](const QByteArray &request) {
+            return MockHttpServer::Reply{request.startsWith("GET") ? server.watch() : seekComments()};
+        };
+        CommentService service(serviceOptions(server));
+        QSignalSpy ready(&service, &CommentService::ready), opened(&service, &CommentService::opened),
+            comments(&service, &CommentService::commentsReady);
+        QTRY_COMPARE(ready.size(), 1);
+        service.openVideo(QStringLiteral("sm9.mp4"), QStringLiteral("sm9"));
+        QTRY_COMPARE(opened.size(), 1);
+        QTRY_COMPARE(service.queueDepth(), 0);
+        for (int index = 0; index < 32; ++index)
+            QVERIFY(service.listFilters());
+        QCOMPARE(service.queueDepth(), 32);
+        RuntimeProfileConfig profile;
+        profile.maxEmitPerTick = 2;
+        QVERIFY(service.setRuntimeProfile(profile));
+        profile.maxEmitPerTick = 1;
+        QVERIFY(service.setRuntimeProfile(profile));
+        service.requestTick(700, false, false);
+        QTRY_COMPARE(comments.size(), 1);
+        QCOMPARE(qvariant_cast<PlaybackBatchResult>(comments.first()[0]).emitComments.size(), 1);
+        QVERIFY(service.highWaterMark() <= 32);
+        service.shutdown();
+        QVERIFY(!service.setRuntimeProfile(profile));
+        QTRY_VERIFY(service.isStopped());
+    }
+
     void noVideoIdStillProcessesPlaybackTicks() {
         ServiceOptions options;
         options.memoryStore = true;
@@ -216,6 +246,7 @@ class ServiceRegressionTest : public QObject {
         QTRY_COMPARE(server.requests.size(), 1);
         for (int index = 0; index < 32; ++index)
             service.addNgUser(QString::number(index));
+        QVERIFY(service.setRuntimeProfile(RuntimeProfileConfig{}));
         service.shutdown();
         service.requestTick(500, false, true);
         QVERIFY(!service.addNgUser(QStringLiteral("after-shutdown")));

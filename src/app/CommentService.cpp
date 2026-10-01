@@ -70,7 +70,10 @@ class CommentWorker : public QObject {
         QString error;
         if (current(generation) && m_timeline) {
             const FilterEngine emptyFilters;
-            auto processed = m_timeline->process({tick}, m_filters ? m_filters->engine() : emptyFilters, m_profile);
+            auto processed = m_timeline->process(
+                {tick}, m_filters ? m_filters->engine() : emptyFilters, m_profile, [this, generation, revision] {
+                    return !current(generation) || revision != m_control->revision.load();
+                });
             if (processed)
                 result = std::move(*processed);
             else
@@ -235,7 +238,11 @@ CommentService::CommentService(ServiceOptions options, QObject *parent)
     connect(m_thread, &QThread::started, m_worker, &CommentWorker::initialize);
     connect(m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
     connect(m_thread, &QThread::finished, this, &CommentService::stopped);
-    connect(m_worker, &CommentWorker::ready, this, &CommentService::ready);
+    connect(m_worker, &CommentWorker::ready, this, [this] {
+        pumpProfile();
+        pumpOpen();
+        emit ready();
+    });
     connect(m_worker, &CommentWorker::warning, this, &CommentService::warning);
     connect(m_worker, &CommentWorker::filtersChanged, this, &CommentService::filtersChanged);
     connect(m_worker, &CommentWorker::ngAdded, this, &CommentService::ngAdded);
@@ -246,6 +253,7 @@ CommentService::CommentService(ServiceOptions options, QObject *parent)
     connect(m_worker, &CommentWorker::operationFailed, this, &CommentService::operationFailed);
     connect(m_worker, &CommentWorker::commandFinished, this, [this](qint64) {
         m_pendingCommands = std::max(0, m_pendingCommands - 1);
+        pumpProfile();
         pumpOpen();
         pumpTick();
     });
@@ -261,7 +269,7 @@ CommentService::CommentService(ServiceOptions options, QObject *parent)
             [this](quint64 generation, quint64 revision, PlaybackBatchResult result, const QString &error) {
                 m_tickInFlight = false;
                 if (!m_control->stopping.load() && generation == m_control->generation.load() &&
-                    revision == m_revision) {
+                    revision == m_control->revision.load()) {
                     if (error.isEmpty())
                         emit commentsReady(result);
                     else
@@ -306,7 +314,7 @@ quint64 CommentService::openVideo(const QString &path, const QString &id) {
     if (m_control->stopping.load())
         return m_control->generation.load();
     const auto generation = ++m_control->generation;
-    ++m_revision;
+    ++m_control->revision;
     m_sessionReady = false;
     m_pendingTick.reset();
     // Never lose the newest navigation when the mutation queue is saturated.
@@ -328,7 +336,7 @@ void CommentService::requestTick(qint64 positionMs, bool paused, bool seek) {
     if (!m_sessionReady || m_control->stopping.load())
         return;
     if (seek)
-        ++m_revision;
+        ++m_control->revision;
     if (m_pendingTick) {
         ++m_coalescedTicks;
         seek = seek || m_pendingTick->isSeek;
@@ -337,18 +345,31 @@ void CommentService::requestTick(qint64 positionMs, bool paused, bool seek) {
     pumpTick();
 }
 void CommentService::pumpTick() {
-    if (m_tickInFlight || !m_pendingTick || m_control->stopping.load())
+    if (m_tickInFlight || !m_pendingTick || m_pendingProfile || m_control->stopping.load())
         return;
     const auto tick = *m_pendingTick;
     const auto generation = m_control->generation.load();
-    const auto revision = m_revision;
+    const auto revision = m_control->revision.load();
     if (post([tick, generation, revision](CommentWorker &worker) { worker.tick(tick, generation, revision); })) {
         m_pendingTick.reset();
         m_tickInFlight = true;
     }
 }
 bool CommentService::setRuntimeProfile(const RuntimeProfileConfig &profile) {
-    return post([profile](CommentWorker &worker) { worker.profile(profile); });
+    if (m_control->stopping.load())
+        return false;
+    // Settings are latest-wins state, not a lossy mutation. Retain one value even
+    // when all command slots are occupied, and admit it before the next tick.
+    m_pendingProfile = profile;
+    pumpProfile();
+    return true;
+}
+void CommentService::pumpProfile() {
+    if (!m_pendingProfile || m_control->stopping.load())
+        return;
+    const auto profile = *m_pendingProfile;
+    if (post([profile](CommentWorker &worker) { worker.profile(profile); }))
+        m_pendingProfile.reset();
 }
 bool CommentService::addNgUser(const QString &id) {
     return post([id](CommentWorker &worker) { worker.addNg(id); });
@@ -374,6 +395,7 @@ void CommentService::shutdown() {
     ++m_control->generation;
     m_pendingTick.reset();
     m_pendingOpen.reset();
+    m_pendingProfile.reset();
     if (m_thread && m_thread->isRunning()) {
         auto *worker = m_worker;
         QMetaObject::invokeMethod(worker, [worker] { worker->shutdown(); }, Qt::QueuedConnection);

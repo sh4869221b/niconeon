@@ -30,11 +30,15 @@ qsizetype CommentTimeline::size() const {
 }
 
 Result<PlaybackBatchResult> CommentTimeline::process(const QVector<PlaybackTick> &ticks, const FilterEngine &filters,
-                                                     const RuntimeProfileConfig &profile) {
+                                                     const RuntimeProfileConfig &profile,
+                                                     const std::function<bool()> &cancelled) {
     if (ticks.size() > MaxBatchTicks)
         return std::unexpected(AppError{QStringLiteral("playback batch exceeds the 32-tick safety limit")});
     if (m_comments.size() > MaxComments)
         return std::unexpected(AppError{QStringLiteral("comment count exceeds the 250000-comment safety limit")});
+    const auto interrupted = [&] { return cancelled && cancelled(); };
+    qsizetype regexEvaluations = 0;
+    const auto filterInterrupted = [&] { return interrupted() || ++regexEvaluations > 100000; };
     PlaybackBatchResult result;
     auto cursor = m_cursor;
     auto lastPosition = m_lastPositionMs;
@@ -45,9 +49,18 @@ Result<PlaybackBatchResult> CommentTimeline::process(const QVector<PlaybackTick>
                m_comments.cbegin();
     };
     for (const auto &tick : ticks) {
+        if (interrupted())
+            return std::unexpected(
+                AppError{QStringLiteral("comment filtering interrupted or exceeded its work budget")});
         qsizetype emittedThisTick = 0;
         auto append = [&](const CommentEvent &comment) -> Result<void> {
-            if (filters.shouldHide(comment))
+            if (interrupted())
+                return std::unexpected(
+                    AppError{QStringLiteral("comment filtering interrupted or exceeded its work budget")});
+            auto hidden = filters.shouldHide(comment, filterInterrupted);
+            if (!hidden)
+                return std::unexpected(hidden.error());
+            if (*hidden)
                 return {};
             if (profile.maxEmitPerTick > 0 && emittedThisTick >= profile.maxEmitPerTick) {
                 ++result.droppedComments;
@@ -80,6 +93,9 @@ Result<PlaybackBatchResult> CommentTimeline::process(const QVector<PlaybackTick>
             lastPosition = tick.positionMs;
         } else {
             while (cursor < m_comments.size() && m_comments[cursor].atMs <= tick.positionMs) {
+                if (interrupted())
+                    return std::unexpected(
+                        AppError{QStringLiteral("comment filtering interrupted or exceeded its work budget")});
                 if (m_comments[cursor].atMs > lastPosition) {
                     if (auto added = append(m_comments[cursor]); !added)
                         return std::unexpected(added.error());

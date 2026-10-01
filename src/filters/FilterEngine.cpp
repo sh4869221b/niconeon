@@ -7,11 +7,15 @@ namespace niconeon {
 Result<QRegularExpression> FilterEngine::compileRegex(const QString &pattern) {
     if (pattern.size() > MaxPatternBytes || pattern.toUtf8().size() > MaxPatternBytes)
         return std::unexpected(AppError{QStringLiteral("invalid regex: pattern exceeds the 4096-byte safety limit")});
-    QRegularExpression expression(pattern, QRegularExpression::UseUnicodePropertiesOption);
+    // PCRE2 uses the lowest duplicate limit, so a user pattern cannot raise these.
+    // Keep the original pattern unchanged in storage and diagnostics.
+    const auto limits = QStringLiteral("(*LIMIT_MATCH=100000)(*LIMIT_DEPTH=1000)(*LIMIT_HEAP=1024)");
+    QRegularExpression expression(limits + pattern, QRegularExpression::UseUnicodePropertiesOption);
     if (!expression.isValid())
-        return std::unexpected(AppError{QStringLiteral("invalid regex: %1 (offset %2)")
-                                            .arg(expression.errorString())
-                                            .arg(expression.patternErrorOffset())});
+        return std::unexpected(
+            AppError{QStringLiteral("invalid regex: %1 (offset %2)")
+                         .arg(expression.errorString())
+                         .arg(std::max(qsizetype{0}, expression.patternErrorOffset() - limits.size()))});
     return expression;
 }
 
@@ -79,12 +83,23 @@ bool FilterEngine::removeRegexFilter(qint64 filterId) {
     return before != m_regexFilters.size();
 }
 
-bool FilterEngine::shouldHide(const CommentEvent &comment) const {
+Result<bool> FilterEngine::shouldHide(const CommentEvent &comment, const std::function<bool()> &interrupted) const {
     // Deliberately short-circuit before any regular-expression work.
     if (m_ngUsers.contains(comment.userId))
         return true;
-    return std::any_of(m_regexFilters.cbegin(), m_regexFilters.cend(),
-                       [&comment](const auto &filter) { return filter.compiled.match(comment.text).hasMatch(); });
+    for (const auto &filter : m_regexFilters) {
+        if (interrupted && interrupted())
+            return std::unexpected(
+                AppError{QStringLiteral("comment filtering interrupted or exceeded its work budget")});
+        const auto match = filter.compiled.match(comment.text);
+        if (!match.isValid())
+            return std::unexpected(
+                AppError{QStringLiteral("regex filter %1 execution failed (resource limit or invalid subject)")
+                             .arg(filter.raw.filterId)});
+        if (match.hasMatch())
+            return true;
+    }
+    return false;
 }
 
 } // namespace niconeon

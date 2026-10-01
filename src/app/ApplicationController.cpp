@@ -103,6 +103,10 @@ ApplicationController::ApplicationController(ServiceOptions options, QObject *pa
         toast(message);
     });
     connect(&m_service, &CommentService::stopped, this, &ApplicationController::readyToQuit);
+    m_seekTimer.setParent(this);
+    m_seekTimer.setObjectName(QStringLiteral("seekReconciliationTimer"));
+    m_seekTimer.setSingleShot(true);
+    connect(&m_seekTimer, &QTimer::timeout, this, &ApplicationController::reconcileSeek);
     m_tickTimer.setInterval(50);
     connect(&m_tickTimer, &QTimer::timeout, this, &ApplicationController::playbackTick);
     m_tickTimer.start();
@@ -153,6 +157,8 @@ void ApplicationController::attachPlayer(MpvItem *player) {
         return;
     if (m_player)
         disconnect(m_player, nullptr, this, nullptr);
+    m_waitingSeek = false;
+    m_seekTimer.stop();
     m_player = player;
     connect(player, &MpvItem::pausedChanged, this, [this] { m_danmaku.setPlaybackPaused(m_player->paused()); });
     connect(player, &MpvItem::speedChanged, this, [this] {
@@ -160,6 +166,11 @@ void ApplicationController::attachPlayer(MpvItem *player) {
         m_settings.setValue("playback/rate", nearestPreset(m_player->speed()));
     });
     connect(player, &MpvItem::errorOccurred, this, [this](const QString &message) { toast(message); });
+    connect(player, &MpvItem::seekFailed, this, [this](quint64 requestId) {
+        if (!m_waitingSeek || requestId != m_seekRequest)
+            return;
+        reconcileSeek();
+    });
     setPlaybackRate(m_settings.value("playback/rate", 1.0).toDouble());
     m_danmaku.setPlaybackPaused(player->paused());
     const auto autoPerf = qEnvironmentVariable("NICONEON_AUTO_PERF_LOG");
@@ -173,6 +184,7 @@ void ApplicationController::resetComments() {
     m_renderQueue.clear();
     m_totalComments = 0;
     m_waitingSeek = false;
+    m_seekTimer.stop();
     m_danmaku.resetForSeek();
     emit changed();
 }
@@ -209,11 +221,28 @@ void ApplicationController::seek(qint64 positionMs) {
     m_waitingSeek = true;
     m_renderQueue.clear();
     m_danmaku.resetForSeek();
-    m_player->seek(m_seekTarget);
+    m_seekRequest = m_player->seek(m_seekTarget);
+    if (m_seekRequest == 0) {
+        m_waitingSeek = false;
+        toast(QStringLiteral("シーク要求に失敗しました"));
+        return;
+    }
+    // One replaceable timer bounds pending reconciliation under rapid seeks.
+    m_seekTimer.start(5000);
     if (m_commentsVisible) {
         m_service.requestTick(m_seekTarget, m_player->paused(), true);
         ++m_sent;
     }
+}
+void ApplicationController::reconcileSeek() {
+    if (!m_player || !m_waitingSeek || m_closing)
+        return;
+    m_seekTimer.stop();
+    m_waitingSeek = false;
+    m_renderQueue.clear();
+    m_danmaku.resetForSeek();
+    if (m_commentsVisible)
+        m_service.requestTick(m_player->positionMs(), m_player->paused(), true);
 }
 void ApplicationController::setVolume(double value) {
     if (m_player && std::isfinite(value))
@@ -353,6 +382,7 @@ void ApplicationController::playbackTick() {
         if (std::abs(m_player->positionMs() - m_seekTarget) >= 250)
             return;
         m_waitingSeek = false;
+        m_seekTimer.stop();
     }
     m_service.requestTick(m_player->positionMs(), m_player->paused(), false);
     ++m_sent;
@@ -456,6 +486,7 @@ void ApplicationController::shutdown() {
     if (m_closing)
         return;
     m_closing = true;
+    m_seekTimer.stop();
     m_tickTimer.stop();
     m_renderTimer.stop();
     m_perfTimer.stop();

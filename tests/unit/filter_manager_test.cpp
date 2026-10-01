@@ -31,13 +31,56 @@ class FilterManagerTest : public QObject {
         FilterEngine engine;
         QVERIFY(engine.addRegexFilter({1, QStringLiteral("hello"), QDateTime::currentDateTimeUtc()}));
         engine.addNgUser(QStringLiteral("u1"));
-        QVERIFY(engine.shouldHide({QStringLiteral("c1"), 100, QStringLiteral("u1"), QStringLiteral("anything")}));
-        QVERIFY(engine.shouldHide({QStringLiteral("c2"), 100, QStringLiteral("u2"), QStringLiteral("hello world")}));
-        QVERIFY(!engine.shouldHide({QStringLiteral("c3"), 100, QStringLiteral("u2"), QStringLiteral("other")}));
+        QCOMPARE(engine.shouldHide({QStringLiteral("c1"), 100, QStringLiteral("u1"), QStringLiteral("anything")})
+                     .value_or(false),
+                 true);
+        QCOMPARE(engine.shouldHide({QStringLiteral("c2"), 100, QStringLiteral("u2"), QStringLiteral("hello world")})
+                     .value_or(false),
+                 true);
+        QCOMPARE(engine.shouldHide({QStringLiteral("c3"), 100, QStringLiteral("u2"), QStringLiteral("other")})
+                     .value_or(true),
+                 false);
         QVERIFY(!engine.addRegexFilter({2, QStringLiteral("("), QDateTime::currentDateTimeUtc()}));
         QCOMPARE(engine.listRegexFilters().size(), 1);
         QVERIFY(engine.addRegexFilter({3, QStringLiteral("^\\w+$"), QDateTime::currentDateTimeUtc()}));
-        QVERIFY(engine.shouldHide({QStringLiteral("jp"), 0, QStringLiteral("u2"), QStringLiteral("日本語")}));
+        QCOMPARE(engine.shouldHide({QStringLiteral("jp"), 0, QStringLiteral("u2"), QStringLiteral("日本語")})
+                     .value_or(false),
+                 true);
+    }
+
+    void regexLeadingOptionsRetainTheirMeaning() {
+        for (const auto &pattern : {QStringLiteral("(?i)^hello$"), QStringLiteral("(?x)^ h e l l o $"),
+                                    QStringLiteral("(*UTF)^hello$"), QStringLiteral("(*LIMIT_MATCH=1000)^hello$")}) {
+            auto compiled = FilterEngine::compileRegex(pattern);
+            QVERIFY2(compiled, qPrintable(pattern));
+            QVERIFY(compiled->match(QStringLiteral("hello")).hasMatch());
+        }
+        auto insensitive = FilterEngine::compileRegex(QStringLiteral("(?i)^hello$"));
+        QVERIFY(insensitive->match(QStringLiteral("HELLO")).hasMatch());
+        auto lowerLimit = FilterEngine::compileRegex(QStringLiteral("(*LIMIT_MATCH=1)^(a+)+$"));
+        QVERIFY(lowerLimit);
+        QVERIFY(!lowerLimit->match(QString(16000, QLatin1Char('a')) + QLatin1Char('!')).isValid());
+    }
+
+    void regexResourceFailureIsExplicitAndNgStillWins() {
+        FilterEngine engine;
+        QVERIFY(engine.addRegexFilter({7, QStringLiteral("^(a+)+$"), QDateTime::currentDateTimeUtc()}));
+        const CommentEvent hostile{QStringLiteral("c"), 0, QStringLiteral("u"),
+                                   QString(16000, QLatin1Char('a')) + QLatin1Char('!')};
+        const auto failed = engine.shouldHide(hostile);
+        QVERIFY(!failed);
+        QVERIFY(failed.error().message.contains(QStringLiteral("regex filter 7 execution failed")));
+        engine.addNgUser(QStringLiteral("u"));
+        QCOMPARE(engine.shouldHide(hostile).value_or(false), true);
+    }
+
+    void regexCancellationDoesNotBecomeNonMatch() {
+        FilterEngine engine;
+        QVERIFY(engine.addRegexFilter({1, QStringLiteral("not present"), QDateTime::currentDateTimeUtc()}));
+        const auto result = engine.shouldHide({QStringLiteral("c"), 0, QStringLiteral("u"), QStringLiteral("text")},
+                                              [] { return true; });
+        QVERIFY(!result);
+        QVERIFY(result.error().message.contains(QStringLiteral("interrupted")));
     }
 
     void onlyLatestSuccessfulAdditionCanBeUndone() {
@@ -188,7 +231,10 @@ class FilterManagerTest : public QObject {
         QVERIFY(manager.removeNgUser(QString())->removed);
         auto emptyPattern = manager.addRegexFilter(QString());
         QVERIFY(emptyPattern);
-        QVERIFY(manager.engine().shouldHide({QStringLiteral("c"), 0, QStringLiteral("u"), QStringLiteral("anything")}));
+        QCOMPARE(manager.engine()
+                     .shouldHide({QStringLiteral("c"), 0, QStringLiteral("u"), QStringLiteral("anything")})
+                     .value_or(false),
+                 true);
         QVERIFY((*opened)->listRegexFilters()->first().pattern.isEmpty());
     }
 };

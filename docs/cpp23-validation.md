@@ -136,3 +136,31 @@ NICONEON_MPV_SCALE=bilinear ./build/debug/niconeon
 - 正式な順序・性能・配布 qualification は [#75](https://github.com/sh4869221b/niconeon/issues/75) と [test-plan.md](test-plan.md) に従う
 
 この記録だけで後続 issue を close したり、release-ready と判定したりしない。
+
+## PR review round (2026-10-01)
+
+Four actionable review findings were reproduced and corrected after the initial green CI:
+
+- **P2 — saturated profile updates:** the UI/settings changed while a full 32-command
+  queue rejected the worker profile. A bounded latest-profile slot now survives saturation
+  and precedes subsequent ticks. Regression covers multiple replacements and shutdown.
+- **P2 — regex resource failure and cancellation:** Qt/PCRE2 returned an invalid match
+  for `^(a+)+$` against a long near-match; `hasMatch()` alone silently allowed it.
+  Matching now returns an explicit error, has engine resource limits, and cooperatively
+  checks cancellation/work budget between filters/comments. Partial batches never commit
+  the cursor. Tests cover NG priority, cancellation, retry after filter removal, leading
+  regex options, Unicode mode, and a user-specified lower resource limit.
+- **P2 — oversized legacy cache materialization:** Qt's SQLite driver materializes all
+  selected columns before callers inspect them. Migration now gates the payload column
+  in SQL before conversion to QString. An oversized source row remains intact and the
+  destination transaction rolls back. Reference: Qt v6.8.2
+  `src/plugins/sqldrivers/sqlite/qsql_sqlite.cpp`, `QSQLiteResultPrivate::fetchNext`.
+- **P2 — failed seek stalls comment ticks:** an unsuccessful asynchronous seek could
+  leave the controller waiting indefinitely for a target position. Failures now carry
+  request IDs, stale failures cannot clear a newer request, and one replaceable five-second
+  timer reconciles to the actual media clock if position tolerance is never reached.
+  Regression includes a real libmpv rejected seek with no media loaded.
+
+These changes do not alter default interpolation quality, add sanitizer suppressions,
+remove assertions, or grant CI write permissions. Final verification and current commit
+are recorded in PR #87; physical-GPU/HDR/120 Hz qualification remains separate.

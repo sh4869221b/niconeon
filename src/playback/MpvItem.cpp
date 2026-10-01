@@ -229,14 +229,17 @@ void MpvItem::setPaused(bool paused) {
     }
 }
 
-void MpvItem::seek(qint64 ms) {
+quint64 MpvItem::seek(qint64 ms) {
     if (!m_mpv) {
-        return;
+        return 0;
     }
 
     const QByteArray sec = QByteArray::number(ms / 1000.0, 'f', 3);
     const char *cmd[] = {"seek", sec.constData(), "absolute+exact", nullptr};
-    mpv_command_async(m_mpv, 0, cmd);
+    const auto requestId = ++m_seekSerial;
+    if (mpv_command_async(m_mpv, requestId, cmd) < 0)
+        return 0;
+    return requestId;
 }
 
 qint64 MpvItem::positionMs() const {
@@ -300,6 +303,8 @@ void MpvItem::pollProperties() {
             event->error < 0)
             emit errorOccurred(
                 QStringLiteral("再生操作に失敗しました: %1").arg(QString::fromUtf8(mpv_error_string(event->error))));
+        if (event->event_id == MPV_EVENT_COMMAND_REPLY && event->error < 0 && event->reply_userdata != 0)
+            emit seekFailed(event->reply_userdata);
         if (event->event_id == MPV_EVENT_END_FILE && event->data) {
             const auto *end = static_cast<const mpv_event_end_file *>(event->data);
             if (end->reason == MPV_END_FILE_REASON_ERROR)

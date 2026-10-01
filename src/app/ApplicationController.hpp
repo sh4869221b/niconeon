@@ -88,6 +88,9 @@ class ApplicationController : public QObject {
     Q_INVOKABLE void shutdown();
     static QVector<double> normalizedPresets(const QVector<double> &values);
     static QString localPath(const QString &value);
+    bool seekPending() const {
+        return m_waitingSeek;
+    }
 
   signals:
     void changed();
@@ -103,6 +106,7 @@ class ApplicationController : public QObject {
     void toast(const QString &text, const QString &action = {});
     void applyProfile(RuntimeProfileConfig profile, bool persist);
     void resetComments();
+    void reconcileSeek();
     void playbackTick();
     void drainRenderBatch();
     void performanceWindow();
@@ -116,6 +120,7 @@ class ApplicationController : public QObject {
     DanmakuController m_danmaku;
     QPointer<MpvItem> m_player;
     QTimer m_tickTimer;
+    QTimer m_seekTimer;
     QTimer m_renderTimer;
     QTimer m_perfTimer;
     QQueue<RenderBatch> m_renderQueue;
@@ -130,6 +135,7 @@ class ApplicationController : public QObject {
     bool m_perfLog = false;
     bool m_closing = false;
     bool m_waitingSeek = false;
+    quint64 m_seekRequest = 0;
     qint64 m_seekTarget = 0;
     qsizetype m_totalComments = 0;
     int m_fontLevel = 1;

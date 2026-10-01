@@ -253,8 +253,13 @@ Result<void> Store::migrateLegacyCache() {
     {
         QSqlQuery rows(m_data);
         rows.setForwardOnly(true);
-        if (!rows.exec(QStringLiteral(
-                "SELECT video_id, fetched_at, length(CAST(payload_json AS BLOB)), payload_json FROM comment_cache"))) {
+        // Qt's SQLite driver eagerly materializes every selected column. Gate the
+        // payload in SQL, before Qt can allocate a QString for an oversized row.
+        rows.prepare(QStringLiteral(
+            "SELECT video_id, fetched_at, length(CAST(payload_json AS BLOB)), "
+            "CASE WHEN length(CAST(payload_json AS BLOB)) <= ? THEN payload_json ELSE NULL END FROM comment_cache"));
+        rows.addBindValue(MaxPayloadBytes);
+        if (!rows.exec()) {
             copied = std::unexpected(sqlError(QStringLiteral("prepare legacy comment cache select"), rows));
         } else {
             QSqlQuery insert(m_cache);

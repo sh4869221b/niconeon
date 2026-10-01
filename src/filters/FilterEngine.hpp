@@ -2,6 +2,7 @@
 
 #include "domain/Domain.hpp"
 #include <QRegularExpression>
+#include <functional>
 #include <set>
 
 namespace niconeon {
@@ -17,7 +18,7 @@ class FilterEngine {
     bool removeNgUser(const QString &userId);
     Result<void> addRegexFilter(const RegexFilter &filter);
     bool removeRegexFilter(qint64 filterId);
-    bool shouldHide(const CommentEvent &comment) const;
+    Result<bool> shouldHide(const CommentEvent &comment, const std::function<bool()> &interrupted = {}) const;
     static Result<QRegularExpression> compileRegex(const QString &pattern);
 
   private:

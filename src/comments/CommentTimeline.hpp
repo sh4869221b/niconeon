@@ -11,7 +11,8 @@ class CommentTimeline {
     const QString &id() const;
     qsizetype size() const;
     Result<PlaybackBatchResult> process(const QVector<PlaybackTick> &ticks, const FilterEngine &filters,
-                                        const RuntimeProfileConfig &profile);
+                                        const RuntimeProfileConfig &profile,
+                                        const std::function<bool()> &cancelled = {});
 
   private:
     QString m_sessionId;

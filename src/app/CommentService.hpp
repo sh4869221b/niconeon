@@ -21,6 +21,7 @@ struct ServiceOptions {
 struct SessionControl {
     std::atomic<quint64> generation{0};
     std::atomic<bool> stopping{false};
+    std::atomic<quint64> revision{0};
 };
 
 // GUI facade. At most 32 admitted commands, one running tick and one coalesced tick.
@@ -73,6 +74,7 @@ class CommentService : public QObject {
     bool post(std::function<void(CommentWorker &)> action);
     void pumpTick();
     void pumpOpen();
+    void pumpProfile();
     std::shared_ptr<SessionControl> m_control;
     QPointer<QThread> m_thread;
     CommentWorker *m_worker = nullptr;
@@ -80,10 +82,10 @@ class CommentService : public QObject {
     int m_highWater = 0;
     bool m_tickInFlight = false;
     bool m_sessionReady = false;
-    quint64 m_revision = 0;
     quint64 m_staleResults = 0;
     quint64 m_coalescedTicks = 0;
     std::optional<PlaybackTick> m_pendingTick;
+    std::optional<RuntimeProfileConfig> m_pendingProfile;
     struct PendingOpen {
         QString path;
         QString id;

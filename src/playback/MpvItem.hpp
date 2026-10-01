@@ -25,7 +25,7 @@ class MpvItem : public QQuickFramebufferObject {
     Q_INVOKABLE bool openFile(const QString &path);
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE void setPaused(bool paused);
-    Q_INVOKABLE void seek(qint64 ms);
+    Q_INVOKABLE quint64 seek(qint64 ms);
 
     qint64 positionMs() const;
     qint64 durationMs() const;
@@ -46,6 +46,7 @@ class MpvItem : public QQuickFramebufferObject {
     void speedChanged();
     void videoFpsChanged();
     void errorOccurred(const QString &message);
+    void seekFailed(quint64 requestId);
 
   private slots:
     void pollProperties();
@@ -62,6 +63,7 @@ class MpvItem : public QQuickFramebufferObject {
 
     QTimer m_pollTimer;
 
+    quint64 m_seekSerial = 0;
     qint64 m_positionMs = 0;
     qint64 m_durationMs = 0;
     bool m_paused = true;

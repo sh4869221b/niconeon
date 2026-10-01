@@ -1,4 +1,5 @@
 #include "app/ApplicationController.hpp"
+#include "playback/MpvItem.hpp"
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -24,6 +25,51 @@ class ControllerTest : public QObject {
                  QStringLiteral("/tmp/hello 日.mp4"));
         QCOMPARE(ApplicationController::localPath(" /tmp/hello.mp4 "), QStringLiteral("/tmp/hello.mp4"));
     }
+    void failedSeekRecoversAndStaleFailureCannotCancelNewSeek() {
+        ServiceOptions options;
+        options.memoryStore = true;
+        ApplicationController controller(options);
+        MpvItem player;
+        controller.attachPlayer(&player);
+        controller.seek(0);
+        QVERIFY(controller.seekPending());
+        controller.seek(0);
+        QVERIFY(controller.seekPending());
+        emit player.seekFailed(1); // First request must not cancel the second.
+        QVERIFY(controller.seekPending());
+        emit player.seekFailed(2);
+        QVERIFY(!controller.seekPending());
+        controller.seek(0); // With no media loaded libmpv actually rejects this.
+        QVERIFY(controller.seekPending());
+        QTRY_VERIFY(!controller.seekPending());
+        controller.shutdown();
+    }
+
+    void seekReconciliationTimerIsSingleAndClearsPendingState() {
+        ServiceOptions options;
+        options.memoryStore = true;
+        ApplicationController controller(options);
+        MpvItem player;
+        controller.attachPlayer(&player);
+        auto *timer = controller.findChild<QTimer *>(QStringLiteral("seekReconciliationTimer"));
+        QVERIFY(timer);
+        for (int index = 0; index < 20; ++index)
+            controller.seek(0);
+        QVERIFY(controller.seekPending());
+        QVERIFY(timer->isActive());
+        QCOMPARE(timer->interval(), 5000);
+        QVERIFY(timer->isSingleShot());
+        QCOMPARE(controller.findChildren<QTimer *>(QStringLiteral("seekReconciliationTimer")).size(), 1);
+        // Deterministically simulate expiry before the media event loop runs.
+        QVERIFY(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection));
+        QVERIFY(!controller.seekPending());
+        QVERIFY(!timer->isActive());
+        controller.seek(0);
+        QVERIFY(timer->isActive());
+        controller.shutdown();
+        QVERIFY(!timer->isActive());
+    }
+
     void settingsAndCommands() {
         ServiceOptions options;
         options.memoryStore = true;

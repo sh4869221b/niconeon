@@ -15,6 +15,41 @@ const auto unlimited = makeRuntimeProfile(RuntimeProfile::High);
 class CommentTimelineTest : public QObject {
     Q_OBJECT
   private slots:
+    void cancellationAndRegexFailureDoNotAdvanceCursor() {
+        FilterEngine filters;
+        CommentTimeline timeline(QStringLiteral("one"), {comment("a", 0), comment("b", 100)});
+        int checks = 0;
+        auto cancelled =
+            timeline.process({{200, false, false}}, filters, unlimited, [&checks] { return ++checks >= 3; });
+        QVERIFY(!cancelled);
+        auto retry = timeline.process({{200, false, false}}, filters, unlimited);
+        QVERIFY(retry);
+        QCOMPARE(retry->emitComments.size(), 2);
+
+        QVERIFY(filters.addRegexFilter({1, QStringLiteral("^(a+)+$"), QDateTime::currentDateTimeUtc()}));
+        CommentEvent hostile{QStringLiteral("bad"), 0, QStringLiteral("u"),
+                             QString(16000, QLatin1Char('a')) + QLatin1Char('!')};
+        CommentTimeline regexTimeline(QStringLiteral("regex"), {hostile});
+        QVERIFY(!regexTimeline.process({{1, false, false}}, filters, unlimited));
+        QVERIFY(filters.removeRegexFilter(1));
+        auto afterRemoval = regexTimeline.process({{1, false, false}}, filters, unlimited);
+        QVERIFY(afterRemoval);
+        QCOMPARE(afterRemoval->emitComments.size(), 1);
+    }
+
+    void regexEvaluationBudgetDoesNotCommitPartialOutput() {
+        FilterEngine filters;
+        QVERIFY(filters.addRegexFilter({1, QStringLiteral("absent"), QDateTime::currentDateTimeUtc()}));
+        CommentTimeline timeline(QStringLiteral("budget"), CommentList(100001, comment("same", 0)));
+        auto exhausted = timeline.process({{1, false, false}}, filters, unlimited);
+        QVERIFY(!exhausted);
+        QVERIFY(exhausted.error().message.contains(QStringLiteral("work budget")));
+        QVERIFY(filters.removeRegexFilter(1));
+        auto retry = timeline.process({{1, false, false}}, filters, unlimited);
+        QVERIFY(retry);
+        QCOMPARE(retry->emitComments.size(), 100001);
+    }
+
     void emitsNormalWindowsAndInitialZero() {
         FilterEngine filters;
         CommentTimeline timeline(QStringLiteral("one"),
