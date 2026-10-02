@@ -41,13 +41,21 @@ struct DanmakuTextSpriteCache::State {
                  std::clamp<qint64>(requested.completedBytes, 1, MaxSpriteBytes)},
           beforeRaster(std::move(hook)), worker([this] { run(); }) {}
 
-    void requestWake(qint64 maxBytes = 0, bool allowOversize = true) {
+    void requestWake(qint64 maxBytes = 0, bool allowOversize = true, bool capacityRestored = false) {
         {
             std::lock_guard lock(mutex);
+            if (capacityRestored) {
+                wakeHasRoom = true;
+                wakeBytes = maxBytes;
+                wakeAllowOversize = allowOversize;
+            }
             if (closing || completions.empty())
                 return;
-            if (maxBytes > 0 && !allowOversize && completions.front().upload.image.sizeInBytes() > maxBytes)
+            if (!wakeHasRoom ||
+                (wakeBytes > 0 && !wakeAllowOversize && completions.front().upload.image.sizeInBytes() > wakeBytes)) {
+                ++stats.wakeSuppressed;
                 return;
+            }
             if (stats.wakePending) {
                 ++stats.wakeCoalesced;
                 return;
@@ -143,6 +151,9 @@ struct DanmakuTextSpriteCache::State {
         stats.shutdownNs = elapsedNs(shutdownStarted);
     }
 
+    bool wakeHasRoom = true;
+    qint64 wakeBytes = 0;
+    bool wakeAllowOversize = true;
     const Limits limits;
     const BeforeRaster beforeRaster;
     mutable std::mutex mutex;
@@ -292,7 +303,11 @@ DanmakuRasterNotifier *DanmakuTextSpriteCache::notifier() const {
     return &m_state->notifier;
 }
 void DanmakuTextSpriteCache::requestCompletionWake(qint64 maxBytes, bool allowOversize) {
-    m_state->requestWake(maxBytes, allowOversize);
+    m_state->requestWake(maxBytes, allowOversize, true);
+}
+void DanmakuTextSpriteCache::blockCompletionWakes() {
+    std::lock_guard lock(m_state->mutex);
+    m_state->wakeHasRoom = false;
 }
 bool DanmakuTextSpriteCache::beginCompletionWake() {
     std::lock_guard lock(m_state->mutex);

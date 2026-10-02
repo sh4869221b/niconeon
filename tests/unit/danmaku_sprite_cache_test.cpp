@@ -378,6 +378,38 @@ class DanmakuSpriteCacheTest : public QObject {
         QCOMPARE(stats.wakePending, 0);
         QCOMPARE(stats.wakeActive, 0);
     }
+    void consumerCapacityGateSurvivesNewDataAndGeneration() {
+        DanmakuTextSpriteCache cache;
+        QObject receiver;
+        int callbacks = 0;
+        int committed = 0;
+        connect(
+            cache.notifier(), &DanmakuRasterNotifier::completionReady, &receiver,
+            [&] {
+                ++callbacks;
+                QVERIFY(cache.beginCompletionWake());
+                committed += cache.takeCompleted(8, 0).size();
+                cache.finishCompletionWake(committed);
+            },
+            Qt::QueuedConnection);
+        cache.blockCompletionWakes();
+        for (int i = 0; i < 8; ++i)
+            cache.ensureSprite(QStringLiteral("blocked %1").arg(i), 24, 1);
+        QTRY_COMPARE(cache.metrics().completed, 8);
+        QTRY_COMPARE(cache.metrics().wakeSuppressed, 8);
+        QCOMPARE(cache.metrics().wakeNotifications, 0);
+        QCOMPARE(callbacks, 0);
+        cache.clear();
+        cache.ensureSprite("new generation still blocked", 24, 2);
+        QTRY_COMPARE(cache.metrics().completed, 1);
+        QTRY_COMPARE(cache.metrics().wakeSuppressed, 9);
+        QCOMPARE(cache.metrics().wakeNotifications, 0);
+        std::thread render([&] { cache.requestCompletionWake(); });
+        render.join();
+        QTRY_COMPARE(callbacks, 1);
+        QCOMPARE(committed, 1);
+        QCOMPARE(cache.metrics().wakePending, 0);
+    }
     void wakeBudgetRejectsUnfittableFrontWithoutSpinning() {
         DanmakuTextSpriteCache cache;
         QObject receiver;
@@ -398,6 +430,11 @@ class DanmakuSpriteCacheTest : public QObject {
         QTRY_COMPARE(callbacks, 1);
         QCOMPARE(cache.metrics().wakeNotifications, 1);
         QCOMPARE(cache.metrics().completed, 1);
+        QCOMPARE(cache.metrics().wakePending, 0);
+        cache.ensureSprite("new completion must not bypass byte gate", 24, 1);
+        QTRY_COMPARE(cache.metrics().completed, 2);
+        QTRY_VERIFY(cache.metrics().wakeSuppressed >= 1);
+        QCOMPARE(callbacks, 1);
         QCOMPARE(cache.metrics().wakePending, 0);
         // The render consumer restores an empty mailbox. No new raster data is needed.
         std::thread render([&] { cache.requestCompletionWake(); });

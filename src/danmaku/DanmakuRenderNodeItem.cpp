@@ -804,9 +804,6 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         if (!texture) {
             texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
             texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
-            texture->setWrapMode(QOpenGLTexture::ClampToEdge);
-            texture->setMinificationFilter(QOpenGLTexture::Linear);
-            texture->setMagnificationFilter(QOpenGLTexture::Linear);
         }
         if (!texture->isCreated() && !texture->create()) {
             return false;
@@ -816,6 +813,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
             if (!texture->create()) {
                 return false;
             }
+            // destroy() resets sampler parameters to Nearest/Repeat in Qt.
+            // Apply these to the newly created object, not the discarded one.
+            texture->setWrapMode(QOpenGLTexture::ClampToEdge);
+            texture->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
             texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
             texture->setSize(image.width(), image.height());
             texture->setMipLevels(1);

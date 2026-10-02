@@ -124,3 +124,58 @@ The next candidate remains unqualified until real GL correctness and whole-frame
 comparisons finish. No active sprite is allowed to count as first-drawn with only
 some tiles resident. Actual hardware, Wayland/HDR and long-duration qualification
 remain outside this software-Mesa CI evidence.
+
+## Third discovery head: `b4fb483`
+
+[Regular CI](https://github.com/sh4869221b/niconeon/actions/runs/36941613279)
+passed all five jobs, including real OpenGL and sanitizers with leak checks.
+[Performance/pixel CI](https://github.com/sh4869221b/niconeon/actions/runs/36941613265)
+failed. Raw [timing](https://github.com/sh4869221b/niconeon/actions/runs/36941613265/artifacts/11201031043)
+and [pixel](https://github.com/sh4869221b/niconeon/actions/runs/36941613265/artifacts/11200468510)
+artifacts expire after 14 days. Selected raw intervals, summaries and pixel results
+are retained in [`evidence-b4fb483`](evidence-b4fb483/results.json).
+
+The unchanged 400 cps / 12,000-comment scenario now accepts, rasterizes and first-draws
+**all 12,000 IDs in both trials**, with zero expiry/failure/unresident observations.
+This fixes the previous missing-completion result, but does not prove individually
+visible pixels in heavily overlapping scenes or real-time throughput. Last draw was
+about 39s on the trace clock (measurement starts about 1s into that clock), after the
+30s feed. Admission-to-first-draw p99 was 874.942 / 869.474ms; scheduled-comment-time
+to first-draw p99 was 8.213 / 8.294s. Source backlog is material and not hidden.
+
+The wake/crop/tile commit does not alter source stamps, simulation speed, pending
+motion compensation or expiry thresholds. For example, `perf-11999` in trial1 has
+source lag 3.269s, pre-admission motion 4.436s, pending motion 0.338s, and activation
+x=-2.923 with width405. It enters partially on-screen at its compensated position;
+readiness does not restart its lifetime. The existing simulation clock/200ms cap
+remains distinct from a future high-precision media clock.
+
+Candidate feed p95/p99 was 164.457/169.126 and 161.607/169.257ms; baseline was
+132.082/143.464 and 129.589/139.086ms but submitted only 3,223 / 3,287 IDs.
+The candidate performs much more actual drawing, with up to 2,840 active instances.
+These incomplete baseline arms cannot certify an equal-work speedup or regression
+estimate. They also cannot be discarded to declare the candidate accepted.
+Normal QoS runs intentionally dropped 4,909 / 4,934, admitting/drawing 7,091 / 7,066;
+baseline intentionally dropped 440 / 492 but drew only 2,779 / 2,777. Existing
+QoS policy is unchanged. No statement here equates draw submission to pixel coverage.
+
+Basic color, eight-page protected repack/replay, finite active385/193, wide ends and
+integer internal seam, NG tint and intermediate fade passed at DPR1/2. Fractional
+position probes failed: maximum channel error38–149, with the same threshold8.
+Qt 6.8.2's [texture destroy implementation](https://github.com/qt/qtbase/blob/v6.8.2/src/opengl/qopengltexture.cpp#L177-L207)
+resets filters to Nearest and wrap to Repeat. The previous allocation applied
+Linear/ClampToEdge before destroying/recreating its texture, losing those settings.
+The next candidate restores the intended sampler after recreation and keeps the
+full-image smooth reference and tolerance unchanged. No previous fractional result
+is reclassified as passing.
+
+Wake payload bounds held (queued1, outstanding2, max8committed/callback), but trial1
+recorded 7,469 notifications / 6,167 no-progress callbacks. New worker completions
+were waking a still-full consumer. The next candidate retains the consumer's
+count/byte gate across future completions and generation changes, with tests for
+capacity-restored wakeup without new data. No payload/queue limit is increased.
+
+Next gate: retain400 and add100/200cps, identical fixture/text/duration, two BA/AB pairs
+for discovery. Only equal-complete cases can advance to >=10 pairs and >=1000 feed
+frame samples; a lower-rate success does not establish400cps acceptance. Hardware
+and all unfinished performance/pixel criteria remain explicitly unqualified.

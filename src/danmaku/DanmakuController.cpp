@@ -1462,6 +1462,8 @@ void DanmakuController::requestRasterWakeIfRoom() {
     if (m_pendingSpriteUploads.size() < kSpriteUploadMailboxCapacity && bytes < kSpriteUploadBudgetBytesPerFrame)
         m_textSpriteCache.requestCompletionWake(kSpriteUploadBudgetBytesPerFrame - bytes,
                                                 m_pendingSpriteUploads.empty());
+    else
+        m_textSpriteCache.blockCompletionWakes();
 }
 
 void DanmakuController::handleRasterCompletionWake() {

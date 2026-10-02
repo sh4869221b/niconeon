@@ -15,7 +15,7 @@ if [[ "$mode" == timing || "$mode" == all ]]; then
 python3 tests/perf/run_real_render_comparison.py \
   --baseline "$baseline/real_render_profile" --candidate "$candidate/real_render_profile" \
   --video "$video" --output-dir "$root/evidence/equal-work" \
-  --pairs 2 --cps 400 --text-modes unique --duration-ms 30000 --tail-ms 15000 \
+  --pairs 2 --cps 100 200 400 --text-modes unique --duration-ms 30000 --tail-ms 15000 \
   --keep-going || status=1
 # Keep the normal application's adaptive QoS and source policy unchanged.
 # Balanced B-A / A-B order; separate process and settings for each trial.

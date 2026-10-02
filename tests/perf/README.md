@@ -252,3 +252,12 @@ pixels independently; selected suite, DPR, fonts and backend bound each claim.
 The dedicated harness never establishes normal-QoS behavior, real hardware-GPU
 performance, Windows/Wayland/HDR correctness, 60fps qualification or long-duration
 stability. Those gates require their own evidence.
+
+The CI discovery matrix now retains the original 400 cps case and adds 100/200 cps
+with otherwise identical text, fixture, 30s feed, 15s drain and two BA/AB pairs.
+These are not qualification runs: only cases where both arms complete the same
+work may advance to the predeclared >=10 paired / >=1000 feed-frame analysis.
+A lower-rate result never establishes that the retained 400 cps case passes.
+Fractional-position probes compare against smooth full-image QPainter sampling;
+texture recreation must retain Linear/ClampToEdge. Integer pixels alone cannot
+validate that setting. No channel threshold is relaxed after a failure.

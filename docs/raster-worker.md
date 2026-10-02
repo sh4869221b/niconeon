@@ -84,9 +84,22 @@ RGB, NG SourceIn tint and premultiplied opacity are retained. The alpha scan run
 bounded incoming image on the render thread, and does not rasterize text or allocate tile images.
 The existing eight-page limit remains a finite capacity limit, not a promise that arbitrary
 simultaneous active input can fit. Pixel and pressure probes must establish supported cases.
+Texture sampler parameters are applied after each underlying texture recreation. Qt 6.8.2
+`QOpenGLTexture::destroy()` resets the earlier settings to Nearest/Repeat, so setting Linear
+before that recreation did not preserve the intended subpixel filtering. The new allocation
+restores Linear/ClampToEdge; the independent fractional-position pixel oracle keeps its same
+channel tolerance and smooth full-image reference.
 `submitted_instances` counts complete logical comments, while `submitted_quads` counts tile
 quads. First-draw records include the union of their atlas page bits. CPU atlas copy/page
 planning timings are not GPU elapsed time.
+
+The completion notifier retains the GUI consumer's latest byte/oversize capacity gate.
+When the mailbox is full the gate stays closed across new worker completions and generation
+changes; only an explicit capacity-restored request reopens it. A byte-blocked head retains
+its budget, rather than each later completion bypassing that budget. A previously reserved
+notification is never cancelled and may produce one harmless stale/no-progress callback.
+`wakeSuppressed` counts new-data wake checks held by this gate. Render mailbox consumption
+restores capacity even if the worker has no new completion to publish, preventing a lost wake.
 
 ## Time, ordering and interaction
 

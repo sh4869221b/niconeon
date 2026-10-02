@@ -145,6 +145,7 @@ template <class Controller> QJsonObject rasterSummary(const Controller &controll
                 {"raster_wake_coalesced", static_cast<qint64>(stats.wakeCoalesced)},
                 {"raster_wake_started", static_cast<qint64>(stats.wakeStarted)},
                 {"raster_wake_no_progress", static_cast<qint64>(stats.wakeNoProgress)},
+                {"raster_wake_suppressed", static_cast<qint64>(stats.wakeSuppressed)},
                 {"raster_wake_bounds_valid",
                  stats.wakePending <= 1 && stats.wakeActive <= 1 && stats.wakePendingHighWater <= 1 &&
                      stats.wakeOutstandingHighWater <= 2 && stats.wakeMaxCommittedSprites <= 8},

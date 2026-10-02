@@ -74,6 +74,7 @@ class DanmakuTextSpriteCache {
         quint64 wakeCoalesced = 0;
         quint64 wakeStarted = 0;
         quint64 wakeNoProgress = 0;
+        quint64 wakeSuppressed = 0;
     };
     // The image allocation is independently bounded, including the one image
     // currently being painted. Oversize/invalid input is an explicit failure,
@@ -100,6 +101,10 @@ class DanmakuTextSpriteCache {
     // Thread-safe, nonblocking request. maxBytes/allowOversize optionally avoid
     // scheduling when the first completion cannot fit the remaining mailbox.
     void requestCompletionWake(qint64 maxBytes = 0, bool allowOversize = true);
+    // Retain a closed consumer gate across new completions/generation changes.
+    // Only an explicit capacity-restored request reopens it. A reserved callback
+    // is never cancelled; it still acknowledges its original wake exactly once.
+    void blockCompletionWakes();
     // GUI-only: acknowledge only at the actual queued callback's entry, never
     // from takeCompleted(), timer/append drains, or generation cancellation.
     bool beginCompletionWake();
