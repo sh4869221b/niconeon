@@ -10,6 +10,9 @@
 #include <QSGRendererInterface>
 #include <QTimer>
 #include <clocale>
+#ifdef NICONEON_APP_PROFILE
+#include "app_profile.hpp"
+#endif
 
 int main(int argc, char *argv[]) {
     niconeon::configureGraphicsEnvironment();
@@ -46,6 +49,13 @@ int main(int argc, char *argv[]) {
     if (exitOk && exitMs > 0)
         QTimer::singleShot(exitMs, &controller, &niconeon::ApplicationController::shutdown);
     const bool loadFailed = engine.rootObjects().isEmpty();
+#ifdef NICONEON_APP_PROFILE
+    niconeon::perf::AppProfile profile(engine.rootObjects());
+#endif
     const int exitCode = app.exec();
+#ifdef NICONEON_APP_PROFILE
+    if (!profile.finish(controller))
+        return 3;
+#endif
     return loadFailed ? 1 : exitCode;
 }

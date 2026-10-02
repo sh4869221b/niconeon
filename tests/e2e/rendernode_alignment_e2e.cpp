@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QImage>
+#include <QOpenGLContext>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -15,6 +16,7 @@
 #include <QVariantList>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -97,10 +99,20 @@ class RenderNodeAlignmentE2E : public QObject {
     Q_OBJECT
 
   private slots:
+    void renderNodeRespectsItemTranslation_data();
     void renderNodeRespectsItemTranslation();
 };
 
+void RenderNodeAlignmentE2E::renderNodeRespectsItemTranslation_data() {
+    QTest::addColumn<bool>("gpuTiming");
+    QTest::newRow("ordinary-render") << false;
+    QTest::newRow("bounded-gpu-observer") << true;
+}
+
 void RenderNodeAlignmentE2E::renderNodeRespectsItemTranslation() {
+    QFETCH(bool, gpuTiming);
+    qputenv("NICONEON_RENDER_DIAGNOSTICS", "1");
+    qputenv("NICONEON_RENDER_GPU_TIMING", gpuTiming ? "1" : "0");
     qputenv("NICONEON_DANMAKU_WORKER", "off");
     qputenv("NICONEON_SIMD_MODE", "scalar");
     // DanmakuRenderNodeItem uses OpenGL-backed QSGRenderNode implementation.
@@ -165,6 +177,16 @@ Item {
     QVERIFY(rootItem);
 
     QQuickWindow window;
+    std::atomic<bool> supportsTimestamps{false};
+    connect(
+        &window, &QQuickWindow::sceneGraphInitialized, &window,
+        [&] {
+            const auto *context = QOpenGLContext::currentContext();
+            supportsTimestamps.store(context && !context->isOpenGLES() &&
+                                     (context->format().version() >= qMakePair(3, 3) ||
+                                      context->hasExtension(QByteArrayLiteral("GL_ARB_timer_query"))));
+        },
+        Qt::DirectConnection);
     window.resize(800, 480);
     window.setColor(QColor(QStringLiteral("#33AA77")));
     rootItem->setParentItem(window.contentItem());
@@ -235,6 +257,36 @@ Item {
     QVERIFY2(bounds.pixelCount >= kForegroundPixelMin, "danmaku pixels were not rendered inside the viewport");
     const qreal minYInLogical = bounds.minY / detectedDevicePixelRatio;
     QVERIFY2(minYInLogical >= containerRect.top() + 6, "danmaku was rendered without item Y translation");
+    bool sawFrame = false, sawGpuResult = false;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        window.requestUpdate();
+        QTest::qWait(20);
+        const auto batch = renderNode->takeRenderDiagnostics();
+        QVERIFY(batch.enabled);
+        for (const auto &frame : batch.frames) {
+            sawFrame = true;
+            QCOMPARE(frame.gpuTimingRequested, gpuTiming);
+            QVERIFY(frame.gpuPendingQueries >= 0 && frame.gpuPendingQueries <= 8);
+            QCOMPARE(frame.gpuInvalidResults, 0);
+            if (gpuTiming)
+                QCOMPARE(frame.gpuTimingSupported, supportsTimestamps.load());
+            else {
+                QVERIFY(!frame.gpuResultAvailable);
+                QCOMPARE(frame.gpuPendingQueries, 0);
+            }
+            if (frame.gpuResultAvailable) {
+                QVERIFY(frame.gpuElapsedNs >= 0);
+                QVERIFY(frame.gpuMeasuredFrameSequence <= frame.frameSequence);
+                QVERIFY(frame.gpuMeasuredCpuStartNs > 0 && frame.gpuMeasuredCpuStartNs <= frame.capturedAtNs);
+                sawGpuResult |= frame.gpuMeasuredDrawCalls > 0;
+            }
+        }
+        if (sawFrame && (!gpuTiming || !supportsTimestamps.load() || sawGpuResult))
+            break;
+    }
+    QVERIFY(sawFrame);
+    if (gpuTiming && supportsTimestamps.load())
+        QVERIFY2(sawGpuResult, "Supported GL timestamps produced no completed drawing interval");
 }
 
 int main(int argc, char **argv) {

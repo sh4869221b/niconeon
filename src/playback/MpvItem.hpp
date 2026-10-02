@@ -1,11 +1,24 @@
 #pragma once
 
+#include <QByteArray>
 #include <QQuickFramebufferObject>
 #include <QTimer>
+#include <QVector>
 #include <memory>
 
 struct mpv_handle;
 struct MpvState;
+struct MpvDiagnosticSample {
+    qint64 startedAtNs = 0;
+    qint64 elapsedNs = 0;
+    QByteArray operation;
+};
+struct MpvDiagnostics {
+    bool enabled = false;
+    quint64 overflow = 0;
+    QVector<MpvDiagnosticSample> samples;
+    static constexpr qsizetype Capacity = 32768;
+};
 
 class MpvItem : public QQuickFramebufferObject {
     Q_OBJECT
@@ -21,6 +34,7 @@ class MpvItem : public QQuickFramebufferObject {
     ~MpvItem() override;
 
     Renderer *createRenderer() const override;
+    MpvDiagnostics takeDiagnostics();
 
     Q_INVOKABLE bool openFile(const QString &path);
     Q_INVOKABLE void togglePause();
