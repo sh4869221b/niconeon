@@ -20,6 +20,7 @@
 #include <QOpenGLShader>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
+#include <QOpenGLTimerQuery>
 #include <QPainter>
 #include <QQuickWindow>
 #include <QRectF>
@@ -35,9 +36,12 @@
 #include <rhi/qrhi.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <limits>
+#include <memory>
 #include <utility>
 
 struct DanmakuRenderDiagnosticsState {
@@ -284,6 +288,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         }
 
         int drawCallsThisFrame = 0;
+        const int gpuSlot = beginGpuTiming(ctx);
+        auto gpuGuard = qScopeGuard([&] { endGpuTiming(gpuSlot, drawCallsThisFrame); });
         DanmakuRendererBackend backendForRender = m_runtimeBackend;
         if (backendForRender == DanmakuRendererBackend::Atlas) {
             const bool useInstancing = !m_atlasInstancingUnsupported && supportsAtlasInstancing(ctx);
@@ -433,6 +439,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
             m_frameProgram->release();
         }
 
+        endGpuTiming(gpuSlot, drawCallsThisFrame);
+        gpuGuard.dismiss(); // Keep log/CPU observer publication outside the GL interval.
         m_perfDrawCalls += drawCallsThisFrame;
         if (m_diagnostics)
             m_frameDiagnostics.drawCalls = drawCallsThisFrame;
@@ -440,6 +448,98 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
     }
 
   private:
+    struct GpuQuerySlot {
+        std::unique_ptr<QOpenGLTimerQuery> start;
+        std::unique_ptr<QOpenGLTimerQuery> end;
+        bool pending = false;
+        quint64 sequence = 0;
+        qint64 cpuStartNs = 0;
+        int drawCalls = 0;
+    };
+    static constexpr int kGpuQueryCapacity = 8;
+    void releaseGpuQueries() {
+        // QSGRenderNode guarantees its OpenGL context is current for both
+        // releaseResources() and destruction. No context switching is attempted.
+        for (auto &slot : m_gpuQueries)
+            slot = {};
+        m_gpuQueryRead = m_gpuQueryWrite = 0;
+        m_gpuQueriesAttempted = m_gpuQueriesSupported = false;
+    }
+    int beginGpuTiming(QOpenGLContext *context) {
+        if (!m_gpuTimingRequested)
+            return -1;
+        m_frameDiagnostics.gpuTimingRequested = true;
+        if (!m_gpuQueriesAttempted) {
+            m_gpuQueriesAttempted = true;
+            const auto version = context->format().version();
+            if (context->isOpenGLES() ||
+                (version < qMakePair(3, 3) && !context->hasExtension(QByteArrayLiteral("GL_ARB_timer_query"))))
+                return -1;
+            bool created = true;
+            for (auto &slot : m_gpuQueries) {
+                slot.start = std::make_unique<QOpenGLTimerQuery>();
+                if (!slot.start->create()) {
+                    created = false;
+                    break;
+                }
+                slot.end = std::make_unique<QOpenGLTimerQuery>();
+                if (!slot.end->create()) {
+                    created = false;
+                    break;
+                }
+            }
+            if (!created) {
+                releaseGpuQueries();
+                m_gpuQueriesAttempted = true; // Unsupported/allocation failure is not retried per frame.
+                return -1;
+            }
+            m_gpuQueriesSupported = true;
+        }
+        m_frameDiagnostics.gpuTimingSupported = m_gpuQueriesSupported;
+        if (!m_gpuQueriesSupported)
+            return -1;
+        auto &read = m_gpuQueries[m_gpuQueryRead];
+        // Read at most one completed pair per frame. Never wait for an unfinished
+        // result, reuse a pending ID, issue glFinish, or spin an event/callback.
+        if (read.pending && read.start->isResultAvailable() && read.end->isResultAvailable()) {
+            const auto start = read.start->waitForResult();
+            const auto end = read.end->waitForResult();
+            if (end >= start && end - start <= quint64(std::numeric_limits<qint64>::max())) {
+                m_frameDiagnostics.gpuResultAvailable = true;
+                m_frameDiagnostics.gpuElapsedNs = qint64(end - start);
+                m_frameDiagnostics.gpuMeasuredFrameSequence = read.sequence;
+                m_frameDiagnostics.gpuMeasuredCpuStartNs = read.cpuStartNs;
+                m_frameDiagnostics.gpuMeasuredDrawCalls = read.drawCalls;
+            } else {
+                ++m_frameDiagnostics.gpuInvalidResults;
+            }
+            read.pending = false;
+            m_gpuQueryRead = (m_gpuQueryRead + 1) % kGpuQueryCapacity;
+        }
+        auto &write = m_gpuQueries[m_gpuQueryWrite];
+        if (write.pending) {
+            ++m_frameDiagnostics.gpuSkippedQueries;
+            m_frameDiagnostics.gpuPendingQueries = kGpuQueryCapacity;
+            return -1;
+        }
+        write.sequence = m_frameSequence;
+        write.cpuStartNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(DiagnosticClock::now().time_since_epoch()).count();
+        write.start->recordTimestamp(); // Non-nesting GL_TIMESTAMP, not GL_TIME_ELAPSED.
+        write.pending = true;
+        return m_gpuQueryWrite;
+    }
+    void endGpuTiming(int index, int drawCalls) {
+        if (index < 0)
+            return;
+        auto &slot = m_gpuQueries[index];
+        slot.drawCalls = drawCalls;
+        slot.end->recordTimestamp();
+        m_gpuQueryWrite = (m_gpuQueryWrite + 1) % kGpuQueryCapacity;
+        m_frameDiagnostics.gpuPendingQueries = int(
+            std::count_if(m_gpuQueries.begin(), m_gpuQueries.end(), [](const auto &entry) { return entry.pending; }));
+    }
+
     void activateAtlasVertexFallback(const QString &reason) {
         if (m_atlasInstancingUnsupported) {
             return;
@@ -1268,7 +1368,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
         m_perfDrawCalls = 0;
     }
 
-    void releaseResources() {
+    void releaseResources() override {
+        releaseGpuQueries();
         for (AtlasPage &page : m_atlasPages) {
             delete page.texture;
             page.texture = nullptr;
@@ -1346,6 +1447,12 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
     qulonglong m_perfDrawCalls = 0;
     QSharedPointer<DanmakuRenderDiagnosticsState> m_diagnostics;
     DanmakuRenderFrameDiagnostics m_frameDiagnostics;
+    const bool m_gpuTimingRequested = m_diagnostics && qEnvironmentVariableIntValue("NICONEON_RENDER_GPU_TIMING") == 1;
+    std::array<GpuQuerySlot, kGpuQueryCapacity> m_gpuQueries;
+    int m_gpuQueryRead = 0;
+    int m_gpuQueryWrite = 0;
+    bool m_gpuQueriesAttempted = false;
+    bool m_gpuQueriesSupported = false;
 };
 } // namespace
 

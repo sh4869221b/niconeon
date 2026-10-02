@@ -43,6 +43,21 @@ class DanmakuAtlasRepackTest : public QObject {
             QCOMPARE(target.pixelColor(0, 1), QColor(116, 84, 84));
         }
     }
+    void bilinearReferenceUsesDeclaredLogicalSizeAfterCeil() {
+        QImage source(5, 3, QImage::Format_RGBA8888_Premultiplied);
+        source.setDevicePixelRatio(1.5); // logical3x2 rasterizes to ceil(4.5)x3.
+        source.fill(Qt::transparent);
+        source.setPixelColor(2, 1, QColor(255, 0, 0, 255));
+        QImage correct(12, 8, QImage::Format_RGBA8888_Premultiplied);
+        correct.setDevicePixelRatio(1.5);
+        correct.fill(Qt::black);
+        auto nominalDprOnly = correct;
+        niconeon::perf::drawBilinearReference(correct, source, {0, 0}, 1, QSizeF(3, 2));
+        niconeon::perf::drawBilinearReference(nominalDprOnly, source, {0, 0});
+        // Physical pixel center2.5 maps to source center(2.5/1.5)*(5/3)-0.5=2.2777...
+        QCOMPARE(correct.pixelColor(2, 1).red(), 184);
+        QCOMPARE(nominalDprOnly.pixelColor(2, 1).red(), 255);
+    }
     void bilinearReferenceRejectsSnappingAndDisplacement_data() {
         QTest::addColumn<QString>("family");
         QTest::addColumn<qreal>("dpr");

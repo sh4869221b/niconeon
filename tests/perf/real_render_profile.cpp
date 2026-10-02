@@ -229,6 +229,17 @@ QJsonArray renderSamplesJson(const Diagnostics &diagnostics, qint64 epoch) {
                                   {"gl_allocation_ns", frame.glAllocationNs},
                                   {"gl_upload_ns", frame.glUploadNs},
                                   {"render_cpu_ns", frame.renderCpuNs},
+                                  {"gpu_timing_requested", frame.gpuTimingRequested},
+                                  {"gpu_timing_supported", frame.gpuTimingSupported},
+                                  {"gpu_result_available", frame.gpuResultAvailable},
+                                  {"gpu_measured_frame_sequence", qint64(frame.gpuMeasuredFrameSequence)},
+                                  {"gpu_measured_cpu_start_elapsed_ns",
+                                   frame.gpuMeasuredCpuStartNs ? frame.gpuMeasuredCpuStartNs - epoch : 0},
+                                  {"gpu_elapsed_ns", frame.gpuElapsedNs},
+                                  {"gpu_measured_draw_calls", frame.gpuMeasuredDrawCalls},
+                                  {"gpu_pending_queries", frame.gpuPendingQueries},
+                                  {"gpu_skipped_queries", frame.gpuSkippedQueries},
+                                  {"gpu_invalid_results", frame.gpuInvalidResults},
                                   {"gl_allocation_bytes", static_cast<qint64>(frame.glAllocationBytes)},
                                   {"gl_upload_bytes", static_cast<qint64>(frame.glUploadBytes)},
                                   {"sprite_copy_bytes", static_cast<qint64>(frame.spriteCopyBytes)},
@@ -444,10 +455,12 @@ QJsonObject pixelBatch(QQuickWindow &window, DanmakuController &controller, Danm
                        PixelAppearance appearance = PixelAppearance::Normal) {
     const qreal dpr = window.effectiveDevicePixelRatio();
     QHash<QString, QImage> sprites;
+    QHash<QString, QSizeF> logicalSizes;
     QJsonArray descriptions;
     bool glyphsValid = true;
     for (const auto &fixture : fixtures) {
         const auto sprite = referenceSprite(fixture.text, dpr);
+        logicalSizes.insert(fixture.id, QSizeF(logicalSpriteWidth(fixture.text), DanmakuRenderStyle::kItemHeightPx));
         const auto coverage = glyphCoverage(fixture.text, sprite);
         glyphsValid &= coverage["success"].toBool();
         sprites.insert(fixture.id, sprite);
@@ -556,12 +569,16 @@ QJsonObject pixelBatch(QQuickWindow &window, DanmakuController &controller, Danm
             overlap = false;
             {
                 for (const auto &instance : before->instances) {
-                    const bool fractional = std::abs(instance.x * dpr - std::round(instance.x * dpr)) > 0.001 ||
-                                            std::abs(instance.y * dpr - std::round(instance.y * dpr)) > 0.001;
                     const auto &source = sprites.value(instance.commentId);
+                    const auto logicalSize = logicalSizes.value(instance.commentId);
+                    const bool fractional = std::abs(instance.x * dpr - std::round(instance.x * dpr)) > 0.001 ||
+                                            std::abs(instance.y * dpr - std::round(instance.y * dpr)) > 0.001 ||
+                                            std::abs(source.width() - logicalSize.width() * dpr) > 0.001 ||
+                                            std::abs(source.height() - logicalSize.height() * dpr) > 0.001;
                     const auto compose = [&](QImage &target, const QImage &image, qreal alpha) {
                         if (fractional) {
-                            niconeon::perf::drawBilinearReference(target, image, {instance.x, instance.y}, alpha);
+                            niconeon::perf::drawBilinearReference(target, image, {instance.x, instance.y}, alpha,
+                                                                  logicalSize);
                         } else {
                             // Preserve the original independent QPainter integer oracle.
                             QPainter painter(&target);
@@ -1054,7 +1071,7 @@ int main(int argc, char **argv) {
         videoFile.close();
     } else
         errors.append(QStringLiteral("Unable to open video fixture"));
-    QJsonObject glMetadata;
+    QJsonObject glMetadata{{"gpu_timing_requested", qEnvironmentVariableIntValue("NICONEON_RENDER_GPU_TIMING") == 1}};
     QJsonObject metadata{{"cps", cps},
                          {"duration_ms", durationMs},
                          {"tail_ms", tailMs},

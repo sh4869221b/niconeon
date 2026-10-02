@@ -29,6 +29,7 @@ def load_module(name: str, path: Path):
 
 
 analysis = load_module("analyze_real_render", HERE / "analyze_real_render.py")
+gpu_probe = load_module("summarize_gpu_probe", HERE / "summarize_gpu_probe.py")
 runner = load_module("run_real_render_comparison", HERE / "run_real_render_comparison.py")
 
 # A process-level fixture tests the CLI/manifest contract without exercising GL.
@@ -251,6 +252,19 @@ class EvidenceTests(unittest.TestCase):
         self.write_manifest()
         self.assert_invalid()
 
+    def test_gpu_instrumented_comparison_is_diagnostic_only(self):
+        for run in self.manifest['runs']:
+            path = self.directory / run['raw_path']
+            raw = json.loads(path.read_text(encoding='utf-8'))
+            raw['metadata']['gpu_timing_requested'] = True
+            path.write_text(json.dumps(raw), encoding='utf-8')
+            run['raw_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.write_manifest()
+        report = self.analyze()
+        self.assertEqual(report['status'], 'inconclusive', report)
+        self.assertIn('GL timestamp', report['reason'])
+        self.assertFalse(report['cases'][0]['metrics'])
+
     def test_low_samples_and_replicates_are_inconclusive(self):
         self.options.min_pairs = 10
         report = self.analyze()
@@ -313,6 +327,54 @@ class EvidenceTests(unittest.TestCase):
                                  str(directory), '--output', str(output)],
                                 text=True, capture_output=True, timeout=20, check=False)
         self.assertEqual(result.returncode, 2)
+
+
+class GpuProbeTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='niconeon-gpu-probe-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.raw = dict(metadata=dict(gpu_timing_requested=True, measurement_start_elapsed_ns=0,
+                                     measurement_end_elapsed_ns=10000),
+                        success=False, errors=['Expected retained quality failure'], summary=dict(expired=3),
+                        render_samples=[dict(elapsed_ns=i*10+1, frame_sequence=i+1,
+                            gpu_result_available=True, gpu_timing_supported=True, gpu_timing_requested=True,
+                            gpu_measured_cpu_start_elapsed_ns=i*10, gpu_measured_frame_sequence=i,
+                            gpu_elapsed_ns=1000000, gpu_measured_draw_calls=1, gpu_pending_queries=1,
+                            gpu_skipped_queries=0, gpu_invalid_results=0) for i in range(100)])
+        self.write()
+
+    def write(self):
+        data = json.dumps(self.raw).encode()
+        (self.root / 'raw.json').write_bytes(data)
+        manifest = dict(complete=True, runs=[dict(raw_path='raw.json', raw_sha256=hashlib.sha256(data).hexdigest(),
+                       run_id=str(i), variant='baseline' if i % 2 else 'candidate') for i in range(4)])
+        (self.root / 'manifest.json').write_text(json.dumps(manifest))
+
+    def test_retains_failed_quality_without_performance_acceptance(self):
+        report = gpu_probe.summarize(self.root)
+        self.assertFalse(report['errors'], report)
+        self.assertFalse(report['runs'][0]['raw_quality_success'])
+        self.assertEqual(report['runs'][0]['overlay_intervals_with_draw']['p99_ms'], 1)
+        self.assertNotIn('noninferior', json.dumps(report))
+
+    def test_rejects_bad_hash_missing_field_bound_skip_and_duplicate(self):
+        original = copy.deepcopy(self.raw)
+        for change in (
+            lambda raw: raw['render_samples'][0].pop('gpu_elapsed_ns'),
+            lambda raw: raw['render_samples'][0].__setitem__('gpu_pending_queries', 9),
+            lambda raw: raw['render_samples'][0].__setitem__('gpu_skipped_queries', 1),
+            lambda raw: raw['render_samples'][0].__setitem__('gpu_measured_frame_sequence', 1),
+            lambda raw: raw['metadata'].__setitem__('gpu_timing_requested', False),
+        ):
+            self.raw = copy.deepcopy(original)
+            change(self.raw)
+            self.write()
+            self.assertTrue(gpu_probe.summarize(self.root)['errors'])
+        self.raw = original
+        self.write()
+        (self.root / 'raw.json').write_text('{}')
+        self.assertTrue(gpu_probe.summarize(self.root)['errors'])
 
 
 if __name__ == '__main__':

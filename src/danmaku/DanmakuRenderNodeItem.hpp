@@ -13,7 +13,7 @@ class QSGNode;
 class QQuickWindow;
 struct DanmakuRenderDiagnosticsState;
 
-// Opt-in observer data. Durations measure CPU calls, never GPU completion.
+// Opt-in observer data. CPU durations and delayed GL timestamp observations are separate.
 struct DanmakuRenderFrameDiagnostics {
     quint64 frameSequence = 0;
     qint64 capturedAtNs = 0; // std::chrono::steady_clock epoch, shared with the perf harness.
@@ -26,6 +26,18 @@ struct DanmakuRenderFrameDiagnostics {
     qint64 glAllocationNs = 0;
     qint64 glUploadNs = 0;
     qint64 renderCpuNs = 0;
+    // Optional GL timestamp pair for an EARLIER frame, never charged to this frame.
+    // The interval can include command-producer gaps; it is not physical scanout.
+    bool gpuTimingRequested = false;
+    bool gpuTimingSupported = false;
+    bool gpuResultAvailable = false;
+    quint64 gpuMeasuredFrameSequence = 0;
+    qint64 gpuMeasuredCpuStartNs = 0;
+    qint64 gpuElapsedNs = 0;
+    int gpuMeasuredDrawCalls = 0;
+    int gpuPendingQueries = 0;
+    int gpuSkippedQueries = 0;
+    int gpuInvalidResults = 0;
     quint64 glAllocationBytes = 0;
     quint64 glUploadBytes = 0;
     quint64 pageClearBytes = 0;

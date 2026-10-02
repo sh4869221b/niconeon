@@ -310,3 +310,76 @@ The plan is fixed before measurement:
 
 The harness feed-duration bound is180s solely to collect enough low-FPS samples;
 its60,000-comment trace bound and every production queue/resource bound are unchanged.
+
+## Optional GL command-interval probe
+
+`NICONEON_RENDER_GPU_TIMING=1` additionally enables an opt-in timestamp probe when
+render diagnostics are enabled. It uses eight pairs (sixteen query objects), reads
+at most one old pair per render, and checks both results' availability before
+retrieval. A full ring skips a new sample instead of blocking or overwriting it.
+There is no glFinish, retry loop, queued callback or GUI GL access. OpenGL3.3 or
+ARB_timer_query is required; ES/unsupported contexts explicitly report unavailable.
+
+`gpu_elapsed_ns` belongs to `gpu_measured_frame_sequence` and
+`gpu_measured_cpu_start_elapsed_ns`, not the row in which that delayed result was
+collected. `gpu_result_available`, support, original draw-call count, pending,
+skipped and invalid-result fields are mandatory interpretation context. The final
+up-to-eight pending queries may remain unmeasured at shutdown/resource reset.
+The scope is the overlay's GL command interval, including texture work and possible
+command-producer gaps. It is not physical presentation, GPU utilization, or real
+hardware qualification when running software Mesa. Logging/JSON occurs outside
+the bracket. QSGRenderNode's documented current-context release/destructor contract
+owns deletion, and release supports a later clean reinitialization.
+
+The normal acceptance study leaves this flag off. The analyzer treats timestamp-
+instrumented runs as diagnostic-only, even when ID/quality prerequisites hold.
+The same opt-in observer is applied to the baseline without renderer optimizations.
+
+References: [Qt timer query](https://doc.qt.io/qt-6/qopengltimerquery.html),
+[QSGRenderNode resource lifecycle](https://doc.qt.io/qt-6/qsgrendernode.html#releaseResources).
+
+The `gpu400` CI study is diagnostic-only: two balanced BA/AB pairs at400unique
+comments/sec,30s feed+15s drain, seed20261002, with the timestamp flag enabled
+for both arms. The independent report requires at least100completed drawing
+intervals/run, no skipped/invalid queries, and the eight-pair bound. It retains
+all raw quality failures and does not grant frame-time or complete-text acceptance.
+PR pushes run discovery+gpu400; `workflow_dispatch` selects discovery, gpu400 or
+formal100 explicitly. The latter remains an uninstrumented65minute study.
+
+### Prespecified100cps result (2026-10-02)
+
+Immutable plan/harness/analyzer: commit `d79fb939ead68672a66313352a11a044979c3e42`.
+[Exact study run](https://github.com/sh4869221b/niconeon/actions/runs/36948408144),
+[raw20-run artifact](https://github.com/sh4869221b/niconeon/actions/runs/36948408144/artifacts/11204794309).
+The ZIP is22,187,036bytes, SHA256
+`bd0e6dbe23f7cb4305cf19409de0b35c696c796feb57761e79dc5cab1d40ef50`.
+The complete manifest and analyzer hashes are embedded in the artifact. No planned
+run was omitted or retried. All20runs reached18,000actual first-draw IDs, zero
+pending/failed/expired at the end. Candidate missing-image observations were zero;
+the baseline retains its raw quality failure with383,164–408,926transient missing
+image observations/run. This is a complete-ID comparison, not identical pixel work.
+
+| Metric | Candidate change | Pointwise paired95%CI |
+|---|---:|---:|
+| Feed frame p95 | -29.900% | [-30.249,-29.551]% |
+| Feed frame p99 | -29.069% | [-30.035,-28.164]% |
+| Feed heartbeat p95 | -30.000% | [-30.293,-29.681]% |
+| Feed heartbeat p99 | -29.723% | [-30.561,-28.999]% |
+| Full frame p95 | -29.673% | [-30.015,-29.340]% |
+| Full frame p99 | -29.457% | [-30.225,-28.765]% |
+| Full heartbeat p95 | -29.533% | [-29.854,-29.189]% |
+| Full heartbeat p99 | -29.829% | [-30.581,-29.188]% |
+
+All eight predeclared noninferiority gates pass within this software host study.
+Candidate feed framep99 was110.552–120.080ms versus160.064–166.273ms baseline; this is not
+60fps qualification. Source-to-first-drawp99 was0.546–0.559s versus4.978–5.301s.
+Candidate draw-frame instances1.910–1.931million versus1.024–1.045million;
+frame-held instance-seconds192,828–192,936versus136,673–139,880. Those are logical
+work proxies, include clipped/overlapping text, and show why final ID equality
+must not be presented as identical visible-pixel exposure.
+
+All ten candidate GL pixel suites/DPR combinations passed the unchanged threshold;
+baseline emoji corruption remains a failed negative control. The separate400cps
+n=2discovery remains incomplete (candidate11,740/11,664of12,000drawn;219/281expired;
+41/55activated but not drawn). Issue65is therefore still open and the PR stays Draft.
+Neither this study nor the timestamp probe qualifies physical GPU/Wayland/HDR hardware.

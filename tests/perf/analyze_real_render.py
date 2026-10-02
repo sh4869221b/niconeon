@@ -38,7 +38,7 @@ ENVIRONMENT_METADATA = (
     "qt_version", "mpv_version", "gl_vendor", "gl_renderer", "gl_version",
     "qpa_platform", "graphics_api", "viewport_width", "viewport_height", "dpr",
     "device_pixel_ratio", "font_family", "font_pixel_size", "simd_mode", "mpv_scale",
-    "qt", "mpv_client_api", "font", "width", "height", "video_sha256", "media_start_ms",
+    "qt", "mpv_client_api", "font", "width", "height", "video_sha256", "media_start_ms", "gpu_timing_requested",
 )
 LIMITATIONS = [
     "submitted_unique proves actual GL draw submission, not physical presentation or readable pixels",
@@ -575,6 +575,12 @@ def analyze(manifest_path: Path, args: argparse.Namespace) -> dict[str, Any]:
         report["reason"] = "pixel-instrumented runs cannot establish timing noninferiority"
         for case in report["cases"]:
             case["status"] = "correctness_only"
+        return report
+    if any(run["metadata"].get("gpu_timing_requested") is True for run in by_key.values()):
+        report["status"] = "inconclusive"
+        report["reason"] = "GL timestamp-instrumented runs are diagnostic only, not frame-time qualification"
+        for case in report["cases"]:
+            case["status"] = "diagnostic_only"
         return report
     threshold = 1 + args.noninferiority_percent / 100
     report["noninferiority_ratio_threshold"] = threshold

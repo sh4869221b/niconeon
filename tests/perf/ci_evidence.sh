@@ -9,7 +9,18 @@ candidate="$root/build/evidence"
 video="$root/evidence/motion_sm9.mp4"
 mode="${1:-all}"
 status=0
-[[ "$mode" == all || "$mode" == timing || "$mode" == quality || "$mode" == formal ]] || exit 2
+[[ "$mode" == all || "$mode" == timing || "$mode" == quality || "$mode" == formal || "$mode" == gpu ]] || exit 2
+if [[ "$mode" == gpu ]]; then
+  runner_status=0
+  NICONEON_RENDER_GPU_TIMING=1 python3 tests/perf/run_real_render_comparison.py \
+    --baseline "$baseline/real_render_profile" --candidate "$candidate/real_render_profile" \
+    --video "$video" --output-dir "$root/evidence/gpu400" \
+    --pairs 2 --seed 20261002 --cps 400 --text-modes unique \
+    --duration-ms 30000 --tail-ms 15000 --keep-going || runner_status=$?
+  printf 'runner_exit=%s\n' "$runner_status" > "$root/evidence/gpu-runner-status.txt"
+  # Quality failures stay visible; only timestamp coverage is this diagnostic gate.
+  python3 tests/perf/summarize_gpu_probe.py "$root/evidence/gpu400" || status=$?
+fi
 if [[ "$mode" == formal ]]; then
   runner_status=0
   python3 tests/perf/run_real_render_comparison.py \

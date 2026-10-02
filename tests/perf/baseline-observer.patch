@@ -104,7 +104,7 @@ index ed45ace..d7b2758 100644
      return loadFailed ? 1 : exitCode;
  }
 diff --git a/src/danmaku/DanmakuRenderNodeItem.cpp b/src/danmaku/DanmakuRenderNodeItem.cpp
-index dad8bb0..817928c 100644
+index dad8bb0..d1e95dc 100644
 --- a/src/danmaku/DanmakuRenderNodeItem.cpp
 +++ b/src/danmaku/DanmakuRenderNodeItem.cpp
 @@ -11,6 +11,8 @@
@@ -116,7 +116,13 @@ index dad8bb0..817928c 100644
  #include <QOpenGLBuffer>
  #include <QOpenGLContext>
  #include <QOpenGLExtraFunctions>
-@@ -23,6 +25,7 @@
+@@ -18,11 +20,13 @@
+ #include <QOpenGLShader>
+ #include <QOpenGLShaderProgram>
+ #include <QOpenGLTexture>
++#include <QOpenGLTimerQuery>
+ #include <QPainter>
+ #include <QQuickWindow>
  #include <QRectF>
  #include <QSGNode>
  #include <QSGRenderNode>
@@ -124,13 +130,16 @@ index dad8bb0..817928c 100644
  #include <QSet>
  #include <QSharedPointer>
  #include <QSize>
-@@ -32,13 +35,35 @@
+@@ -32,13 +36,38 @@
  #include <rhi/qrhi.h>
  
  #include <algorithm>
++#include <array>
 +#include <chrono>
  #include <cmath>
  #include <cstddef>
++#include <limits>
++#include <memory>
 +#include <utility>
 +
 +struct DanmakuRenderDiagnosticsState {
@@ -160,7 +169,7 @@ index dad8bb0..817928c 100644
  
  enum class DanmakuRendererBackend {
      Atlas,
-@@ -91,9 +116,9 @@ QImage colorizeSpriteImage(const QImage &source, const QColor &color) {
+@@ -91,9 +120,9 @@ QImage colorizeSpriteImage(const QImage &source, const QColor &color) {
  
  class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunctions {
    public:
@@ -172,7 +181,7 @@ index dad8bb0..817928c 100644
  
      ~DanmakuRenderNode() override {
          releaseResources();
-@@ -101,6 +126,9 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -101,6 +130,9 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
  
      void setFrame(const DanmakuRenderFrameConstPtr &frame, const QVector<DanmakuSpriteUpload> &uploads,
                    const QSize &itemSize, qreal devicePixelRatio, DanmakuRendererBackend backend) {
@@ -182,7 +191,7 @@ index dad8bb0..817928c 100644
          if (m_requestedBackend != backend) {
              m_requestedBackend = backend;
              m_runtimeBackend = backend;
-@@ -118,11 +146,18 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -118,11 +150,18 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
              if (upload.spriteId == 0 || upload.image.isNull()) {
                  continue;
              }
@@ -201,7 +210,7 @@ index dad8bb0..817928c 100644
              record.hoverImage = {};
              record.lastUsedFrame = m_frameSequence;
              if (record.pageIndex >= 0) {
-@@ -152,7 +187,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -152,7 +191,10 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                  for (const DanmakuRenderInstance &instance : instances) {
                      activeSpriteIds.insert(instance.spriteId);
                  }
@@ -212,7 +221,7 @@ index dad8bb0..817928c 100644
              }
              if (m_atlasInstancingUnsupported) {
                  buildAtlasVertices();
-@@ -164,6 +202,26 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -164,6 +206,26 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
          } else {
              composeFrameImage();
          }
@@ -239,7 +248,7 @@ index dad8bb0..817928c 100644
      }
  
      RenderingFlags flags() const override {
-@@ -179,6 +237,15 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -179,6 +241,15 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
      }
  
      void render(const RenderState *state) override {
@@ -255,7 +264,16 @@ index dad8bb0..817928c 100644
          if (m_itemSize.width() <= 0 || m_itemSize.height() <= 0) {
              return;
          }
-@@ -269,6 +336,11 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -222,6 +293,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+         }
+ 
+         int drawCallsThisFrame = 0;
++        const int gpuSlot = beginGpuTiming(ctx);
++        auto gpuGuard = qScopeGuard([&] { endGpuTiming(gpuSlot, drawCallsThisFrame); });
+         DanmakuRendererBackend backendForRender = m_runtimeBackend;
+         if (backendForRender == DanmakuRendererBackend::Atlas) {
+             const bool useInstancing = !m_atlasInstancingUnsupported && supportsAtlasInstancing(ctx);
+@@ -269,6 +342,11 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                          m_instanceVbo.allocate(instances.constData(),
                                                 instances.size() * static_cast<int>(sizeof(InstanceData)));
                          glDrawArraysInstanced(GL_TRIANGLES, 0, 6, instances.size());
@@ -267,7 +285,7 @@ index dad8bb0..817928c 100644
                          page.texture->release();
                          ++drawCallsThisFrame;
                      }
-@@ -319,6 +391,11 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -319,6 +397,11 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
                          page.texture->bind(0);
                          m_frameVbo.allocate(vertices.constData(), vertices.size() * static_cast<int>(sizeof(Vertex)));
                          glDrawArrays(GL_TRIANGLES, 0, vertices.size());
@@ -279,7 +297,7 @@ index dad8bb0..817928c 100644
                          page.texture->release();
                          ++drawCallsThisFrame;
                      }
-@@ -352,6 +429,7 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -352,6 +435,7 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
              m_frameVbo.allocate(m_frameQuadVertices.constData(),
                                  m_frameQuadVertices.size() * static_cast<int>(sizeof(Vertex)));
              glDrawArrays(GL_TRIANGLES, 0, m_frameQuadVertices.size());
@@ -287,16 +305,115 @@ index dad8bb0..817928c 100644
              m_frameTexture->release();
              drawCallsThisFrame = m_frameQuadVertices.isEmpty() ? 0 : 1;
  
-@@ -363,6 +441,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -362,11 +446,107 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+             m_frameProgram->release();
          }
  
++        endGpuTiming(gpuSlot, drawCallsThisFrame);
++        gpuGuard.dismiss();
          m_perfDrawCalls += drawCallsThisFrame;
 +        if (m_diagnostics)
 +            m_frameDiagnostics.drawCalls = drawCallsThisFrame;
          maybeWritePerfLog();
      }
  
-@@ -704,13 +784,25 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+   private:
++    struct GpuQuerySlot {
++        std::unique_ptr<QOpenGLTimerQuery> start;
++        std::unique_ptr<QOpenGLTimerQuery> end;
++        bool pending = false;
++        quint64 sequence = 0;
++        qint64 cpuStartNs = 0;
++        int drawCalls = 0;
++    };
++    static constexpr int kGpuQueryCapacity = 8;
++    void releaseGpuQueries() {
++        // QSGRenderNode guarantees its OpenGL context is current for both
++        // releaseResources() and destruction. No context switching is attempted.
++        for (auto &slot : m_gpuQueries)
++            slot = {};
++        m_gpuQueryRead = m_gpuQueryWrite = 0;
++        m_gpuQueriesAttempted = m_gpuQueriesSupported = false;
++    }
++    int beginGpuTiming(QOpenGLContext *context) {
++        if (!m_gpuTimingRequested)
++            return -1;
++        m_frameDiagnostics.gpuTimingRequested = true;
++        if (!m_gpuQueriesAttempted) {
++            m_gpuQueriesAttempted = true;
++            const auto version = context->format().version();
++            if (context->isOpenGLES() ||
++                (version < qMakePair(3, 3) && !context->hasExtension(QByteArrayLiteral("GL_ARB_timer_query"))))
++                return -1;
++            bool created = true;
++            for (auto &slot : m_gpuQueries) {
++                slot.start = std::make_unique<QOpenGLTimerQuery>();
++                if (!slot.start->create()) {
++                    created = false;
++                    break;
++                }
++                slot.end = std::make_unique<QOpenGLTimerQuery>();
++                if (!slot.end->create()) {
++                    created = false;
++                    break;
++                }
++            }
++            if (!created) {
++                releaseGpuQueries();
++                m_gpuQueriesAttempted = true; // Unsupported/allocation failure is not retried per frame.
++                return -1;
++            }
++            m_gpuQueriesSupported = true;
++        }
++        m_frameDiagnostics.gpuTimingSupported = m_gpuQueriesSupported;
++        if (!m_gpuQueriesSupported)
++            return -1;
++        auto &read = m_gpuQueries[m_gpuQueryRead];
++        // Read at most one completed pair per frame. Never wait for an unfinished
++        // result, reuse a pending ID, issue glFinish, or spin an event/callback.
++        if (read.pending && read.start->isResultAvailable() && read.end->isResultAvailable()) {
++            const auto start = read.start->waitForResult();
++            const auto end = read.end->waitForResult();
++            if (end >= start && end - start <= quint64(std::numeric_limits<qint64>::max())) {
++                m_frameDiagnostics.gpuResultAvailable = true;
++                m_frameDiagnostics.gpuElapsedNs = qint64(end - start);
++                m_frameDiagnostics.gpuMeasuredFrameSequence = read.sequence;
++                m_frameDiagnostics.gpuMeasuredCpuStartNs = read.cpuStartNs;
++                m_frameDiagnostics.gpuMeasuredDrawCalls = read.drawCalls;
++            } else {
++                ++m_frameDiagnostics.gpuInvalidResults;
++            }
++            read.pending = false;
++            m_gpuQueryRead = (m_gpuQueryRead + 1) % kGpuQueryCapacity;
++        }
++        auto &write = m_gpuQueries[m_gpuQueryWrite];
++        if (write.pending) {
++            ++m_frameDiagnostics.gpuSkippedQueries;
++            m_frameDiagnostics.gpuPendingQueries = kGpuQueryCapacity;
++            return -1;
++        }
++        write.sequence = m_frameSequence;
++        write.cpuStartNs =
++            std::chrono::duration_cast<std::chrono::nanoseconds>(DiagnosticClock::now().time_since_epoch()).count();
++        write.start->recordTimestamp(); // Non-nesting GL_TIMESTAMP, not GL_TIME_ELAPSED.
++        write.pending = true;
++        return m_gpuQueryWrite;
++    }
++    void endGpuTiming(int index, int drawCalls) {
++        if (index < 0)
++            return;
++        auto &slot = m_gpuQueries[index];
++        slot.drawCalls = drawCalls;
++        slot.end->recordTimestamp();
++        m_gpuQueryWrite = (m_gpuQueryWrite + 1) % kGpuQueryCapacity;
++        m_frameDiagnostics.gpuPendingQueries = int(
++            std::count_if(m_gpuQueries.begin(), m_gpuQueries.end(), [](const auto &entry) { return entry.pending; }));
++    }
++
+     void activateAtlasVertexFallback(const QString &reason) {
+         if (m_atlasInstancingUnsupported) {
+             return;
+@@ -704,13 +884,25 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
              texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
              texture->setSize(image.width(), image.height());
              texture->setMipLevels(1);
@@ -322,7 +439,7 @@ index dad8bb0..817928c 100644
          return true;
      }
  
-@@ -722,6 +814,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -722,6 +914,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
              if (!updateTextureFromImage(page.texture, page.image)) {
                  return false;
              }
@@ -331,7 +448,7 @@ index dad8bb0..817928c 100644
              page.textureDirty = false;
          }
          return true;
-@@ -814,6 +908,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -814,6 +1008,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
  
          AtlasPage &page = m_atlasPages[pageIndex];
          SpriteRecord &record = spriteIt.value();
@@ -345,7 +462,7 @@ index dad8bb0..817928c 100644
          QPainter painter(&page.image);
          painter.drawImage(rect, record.image);
          record.pageIndex = pageIndex;
-@@ -838,6 +939,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -838,6 +1039,13 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
  
      bool repackPageForSprite(int pageIndex, DanmakuSpriteId requestedSpriteId,
                               const QSet<DanmakuSpriteId> &activeSpriteIds) {
@@ -359,7 +476,7 @@ index dad8bb0..817928c 100644
          if (pageIndex < 0 || pageIndex >= m_atlasPages.size()) {
              return false;
          }
-@@ -859,6 +967,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -859,6 +1067,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
          }
  
          for (int evictCount = 1; evictCount <= evictable.size(); ++evictCount) {
@@ -368,7 +485,7 @@ index dad8bb0..817928c 100644
              QSet<DanmakuSpriteId> survivors = page.residents;
              for (int i = 0; i < evictCount; ++i) {
                  survivors.remove(evictable[i]);
-@@ -909,7 +1019,17 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -909,7 +1119,17 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
              }
  
              page.packer = packer;
@@ -386,7 +503,7 @@ index dad8bb0..817928c 100644
              for (const DanmakuSpriteId spriteId : std::as_const(residents)) {
                  SpriteRecord &record = m_sprites[spriteId];
                  record.pageIndex = -1;
-@@ -931,7 +1051,12 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -931,7 +1151,12 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
          AtlasPage page;
          page.packer.reset(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize));
          page.image = QImage(QSize(kAtlasPagePixelSize, kAtlasPagePixelSize), QImage::Format_RGBA8888_Premultiplied);
@@ -399,7 +516,7 @@ index dad8bb0..817928c 100644
          page.textureDirty = true;
          m_atlasPages.push_back(std::move(page));
      }
-@@ -1063,6 +1188,62 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -1063,6 +1288,62 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
          m_frameTextureDirty = true;
      }
  
@@ -462,12 +579,28 @@ index dad8bb0..817928c 100644
      void maybeWritePerfLog() {
          const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
          if (m_perfWindowStartMs <= 0) {
-@@ -1165,14 +1346,40 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+@@ -1094,7 +1375,8 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
+         m_perfDrawCalls = 0;
+     }
+ 
+-    void releaseResources() {
++    void releaseResources() override {
++        releaseGpuQueries();
+         for (AtlasPage &page : m_atlasPages) {
+             delete page.texture;
+             page.texture = nullptr;
+@@ -1165,14 +1447,46 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
      qulonglong m_perfSpriteUploadCount = 0;
      qulonglong m_perfSpriteUploadBytes = 0;
      qulonglong m_perfDrawCalls = 0;
 +    QSharedPointer<DanmakuRenderDiagnosticsState> m_diagnostics;
 +    DanmakuRenderFrameDiagnostics m_frameDiagnostics;
++    const bool m_gpuTimingRequested = m_diagnostics && qEnvironmentVariableIntValue("NICONEON_RENDER_GPU_TIMING") == 1;
++    std::array<GpuQuerySlot, kGpuQueryCapacity> m_gpuQueries;
++    int m_gpuQueryRead = 0;
++    int m_gpuQueryWrite = 0;
++    bool m_gpuQueriesAttempted = false;
++    bool m_gpuQueriesSupported = false;
  };
  } // namespace
  
@@ -503,7 +636,7 @@ index dad8bb0..817928c 100644
  DanmakuController *DanmakuRenderNodeItem::controller() const {
      return m_controller.data();
  }
-@@ -1209,7 +1416,7 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
+@@ -1209,7 +1523,7 @@ QSGNode *DanmakuRenderNodeItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNod
  
      auto *node = static_cast<DanmakuRenderNode *>(oldNode);
      if (!node) {
@@ -513,10 +646,10 @@ index dad8bb0..817928c 100644
  
      const int itemWidth = static_cast<int>(std::ceil(width()));
 diff --git a/src/danmaku/DanmakuRenderNodeItem.hpp b/src/danmaku/DanmakuRenderNodeItem.hpp
-index 7ee3e2d..eb0f444 100644
+index 7ee3e2d..f3ad207 100644
 --- a/src/danmaku/DanmakuRenderNodeItem.hpp
 +++ b/src/danmaku/DanmakuRenderNodeItem.hpp
-@@ -3,11 +3,74 @@
+@@ -3,11 +3,86 @@
  #include <QMetaObject>
  #include <QPointer>
  #include <QQuickItem>
@@ -530,7 +663,7 @@ index 7ee3e2d..eb0f444 100644
  class QQuickWindow;
 +struct DanmakuRenderDiagnosticsState;
 +
-+// Opt-in observer data. Durations measure CPU calls, never GPU completion.
++// Opt-in observer data. CPU durations and delayed GL timestamp observations are separate.
 +struct DanmakuRenderFrameDiagnostics {
 +    quint64 frameSequence = 0;
 +    qint64 capturedAtNs = 0; // std::chrono::steady_clock epoch, shared with the perf harness.
@@ -543,6 +676,18 @@ index 7ee3e2d..eb0f444 100644
 +    qint64 glAllocationNs = 0;
 +    qint64 glUploadNs = 0;
 +    qint64 renderCpuNs = 0;
++    // Optional GL timestamp pair for an EARLIER frame, never charged to this frame.
++    // The interval can include command-producer gaps; it is not physical scanout.
++    bool gpuTimingRequested = false;
++    bool gpuTimingSupported = false;
++    bool gpuResultAvailable = false;
++    quint64 gpuMeasuredFrameSequence = 0;
++    qint64 gpuMeasuredCpuStartNs = 0;
++    qint64 gpuElapsedNs = 0;
++    int gpuMeasuredDrawCalls = 0;
++    int gpuPendingQueries = 0;
++    int gpuSkippedQueries = 0;
++    int gpuInvalidResults = 0;
 +    quint64 glAllocationBytes = 0;
 +    quint64 glUploadBytes = 0;
 +    quint64 pageClearBytes = 0;
@@ -591,7 +736,7 @@ index 7ee3e2d..eb0f444 100644
  
  class DanmakuRenderNodeItem : public QQuickItem {
      Q_OBJECT
-@@ -19,6 +82,10 @@ class DanmakuRenderNodeItem : public QQuickItem {
+@@ -19,6 +94,10 @@ class DanmakuRenderNodeItem : public QQuickItem {
      DanmakuController *controller() const;
      void setController(DanmakuController *controller);
  
@@ -602,7 +747,7 @@ index 7ee3e2d..eb0f444 100644
    signals:
      void controllerChanged();
  
-@@ -34,4 +101,5 @@ class DanmakuRenderNodeItem : public QQuickItem {
+@@ -34,4 +113,5 @@ class DanmakuRenderNodeItem : public QQuickItem {
      QMetaObject::Connection m_frameSwappedConnection;
      std::atomic_bool m_pendingPresentedFrame = false;
      qreal m_lastRenderDevicePixelRatio = 0.0;
