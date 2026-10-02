@@ -424,6 +424,58 @@ of12,000, with272/309preactivation expirations;400cps remains incomplete.
  change with strict pixel regression tests, or record a hardware-measurement blocker.
  No further timestamp-only iteration is a substitute for an actionable cause
 
-PR pushes now select discovery+cpu400; gpu400/formal100 remain explicit modes.
+PR pushes select discovery+control; gpu400/cpu400/formal100 remain explicit modes.
 The pixel mapping/seam suites additionally cover DPR1.5 without changing the
 historical finite-pressure workloads atDPR1/2 or the error threshold.
+
+### Last software diagnostic and hardware gate
+
+The3e987a3 CPU run retained9,360samples. Its symbolized output is dominated by
+main-thread Qt wait stacks (~91%) and warns about stripped/JIT/library symbols;
+this does not establish91%CPU cost in a named semaphore function, nor isolate a
+safe renderer optimization. The independent control correctly failed closed:
+Mesa supplied a core-profile context, and the test lacked a VAO, yielding
+GL_INVALID_OPERATION and zero readback pixels. The test now creates a VAO and
+retains the original failed data. The control-only mode does not repeat the CPU
+profile. [Failed diagnostic artifact](https://github.com/sh4869221b/niconeon/actions/runs/36957333801/artifacts/11206990473),
+SHA256 `f4c3942ca33a86fb27743d4b5bb7b32b8261ba1d9370eee45ce7f19fc73620de`.
+
+No further software-only observer expansion or renderer-format change is justified
+by these inconclusive diagnostics. The unresolved400cps acceptance needs a real-GPU
+measurement, using this predeclared gate:
+
+1. Build candidate and fixed3141e66 baseline+observer with the same Release compiler,
+ Qt, patched mpv and fonts. On Windows use the supported MSYS2 UCRT64 shell for
+ `prepare_baseline.sh` and `cmake --preset windows-release`; enable
+ `NICONEON_BUILD_PERF_TOOLS=ON`. Keep each build separate and finish compilation
+ before timing. The Python runner supports native executable paths on both OSes
+2. Record GL vendor/renderer/version and verify actual hardware rendering. Do not
+ force softwareGL, install a new driver, change security/power policy, or reuse
+ software-host statistics as hardware evidence. Keep display/DPR1 and1280x720
+ viewport, the same video/hash and application settings in both arms. Use installed
+ matching fonts or stop with a font-coverage mismatch rather than accepting tofu
+3. First run the existing basic/wide/appearance and atlas-pressure/active-capacity
+ pixel suites. Run a fixed400unique-cps30s feed+15s drain discovery with2balanced
+ BA/AB pairs, seed20261002. Keep every failure; no optional retry selection
+4. Only if the candidate has12,000expected/offered/accepted/first-draw IDs, zero
+ failure/expiry/pending/missing/unresident and strict pixels, run a fresh planned
+ study:10balanced randomized pairs at400cps,30s+15s, seed20261002,1s cooldown,
+ identical existing warmup. All20runs must remain present; every feed frame and
+ heartbeat sample count must be>=1000, otherwise the study is inconclusive
+5. Use the existing strict analyzer, paired bootstrap10,000iterations, seed20261002,
+ zero regression margin and all8feed/full frame/heartbeat p95/p99 CI upper ratios
+ <=1.0. Baseline transient-missing exception is allowed only as already documented;
+ keep its quality failure visible. Report logical draw-frame/instance-time proxy,
+ first-draw latency and real-time workload as well as the timing ratios
+6. Run the unchanged normal application QoS400cps case in balanced BA/AB order.
+ Report intentional QoS omissions separately from accepted-text loss. The supplied
+ QoS shell driver isolates settings with XDG paths on Linux; do not assume those
+ variables isolate Windows QSettings. Verify a supported isolated native settings
+ path before a Windows normal-app run and preserve the user's existing settings.
+ The dedicated harness does not create ApplicationController/QSettings. Hardware
+ outcome remains specific to that machine/driver; Wayland/HDR/other devices are
+ separate qualification. Merge/Issue closure is a separate user decision
+
+The discovery/pixel failure stops formal qualification and provides the next concrete
+bug/performance trace. A successful100cps software study remains valid within its
+own scope, but cannot substitute for this400cps gate.

@@ -9,11 +9,13 @@ candidate="$root/build/evidence"
 video="$root/evidence/motion_sm9.mp4"
 mode="${1:-all}"
 status=0
-[[ "$mode" == all || "$mode" == timing || "$mode" == quality || "$mode" == formal || "$mode" == gpu || "$mode" == cpu ]] || exit 2
-if [[ "$mode" == cpu ]]; then
+[[ "$mode" == all || "$mode" == timing || "$mode" == quality || "$mode" == formal || "$mode" == gpu || "$mode" == cpu || "$mode" == control ]] || exit 2
+if [[ "$mode" == cpu || "$mode" == control ]]; then
   mkdir -p "$root/evidence/cpu400/config" "$root/evidence/cpu400/data" "$root/evidence/cpu400/cache"
   QT_QPA_PLATFORM=xcb timeout 45s "$candidate/gl_timestamp_control" "$root/evidence/cpu400/gl-control.json" \
     > "$root/evidence/cpu400/gl-control.log" 2>&1 || status=$?
+fi
+if [[ "$mode" == cpu ]]; then
   profiler="$(ldconfig -p | awk '/libprofiler.so.0 / {print $NF; exit}')"
   profile_status=0
   if [[ -z "$profiler" ]]; then

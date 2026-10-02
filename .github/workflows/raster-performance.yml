@@ -11,7 +11,7 @@ on:
       study:
         description: Explicit evidence mode (formal study is never inferred from a diagnostic run)
         type: choice
-        options: [discovery, gpu400, cpu400, formal100]
+        options: [discovery, gpu400, cpu400, control, formal100]
         default: discovery
         required: true
 permissions:
@@ -27,7 +27,7 @@ jobs:
       matrix:
         # PR pushes run the short discovery/probe stages. Select formal100
         # explicitly for a stable final runtime revision; no selective reruns.
-        study: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.study) || '["discovery","cpu400"]') }}
+        study: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.study) || '["discovery","control"]') }}
     runs-on: ubuntu-latest
     container: debian:trixie
     timeout-minutes: ${{ matrix.study == 'formal100' && 80 || 40 }}
@@ -84,6 +84,7 @@ jobs:
           if [ "$STUDY" = formal100 ]; then mode=formal; fi
           if [ "$STUDY" = gpu400 ]; then mode=gpu; fi
           if [ "$STUDY" = cpu400 ]; then mode=cpu; fi
+          if [ "$STUDY" = control ]; then mode=control; fi
           dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1600x24 -ac' bash tests/perf/ci_evidence.sh "$mode"
       - uses: actions/upload-artifact@v4
         if: always()

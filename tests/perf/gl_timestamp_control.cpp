@@ -13,6 +13,7 @@
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTimerQuery>
+#include <QOpenGLVertexArrayObject>
 #include <QSurfaceFormat>
 
 int main(int argc, char **argv) {
@@ -43,6 +44,12 @@ int main(int argc, char **argv) {
     program.bindAttributeLocation("p", 0);
     if (!program.link() || !program.bind())
         return 6;
+    // A platform may return a core context even for the compatibility request.
+    // Vertex attributes must belong to a real VAO in either profile.
+    QOpenGLVertexArrayObject vao;
+    if (!vao.create())
+        return 12;
+    vao.bind();
     QOpenGLBuffer vertices;
     if (!vertices.create() || !vertices.bind())
         return 7;
