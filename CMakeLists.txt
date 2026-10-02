@@ -146,6 +146,8 @@ endif()
 
 option(NICONEON_BUILD_PERF_TOOLS "Build deterministic raster and real-render profilers" OFF)
 if(NICONEON_BUILD_PERF_TOOLS)
+  qt_add_executable(gl_timestamp_control tests/perf/gl_timestamp_control.cpp)
+  target_link_libraries(gl_timestamp_control PRIVATE Qt6::Core Qt6::Gui Qt6::OpenGL)
   qt_add_executable(raster_profile tests/perf/raster_profile.cpp)
   target_link_libraries(raster_profile PRIVATE niconeon_render)
   set_target_properties(raster_profile PROPERTIES QT_QML_MODULE_NO_IMPORT_SCAN TRUE)

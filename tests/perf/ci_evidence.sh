@@ -9,7 +9,36 @@ candidate="$root/build/evidence"
 video="$root/evidence/motion_sm9.mp4"
 mode="${1:-all}"
 status=0
-[[ "$mode" == all || "$mode" == timing || "$mode" == quality || "$mode" == formal || "$mode" == gpu ]] || exit 2
+[[ "$mode" == all || "$mode" == timing || "$mode" == quality || "$mode" == formal || "$mode" == gpu || "$mode" == cpu ]] || exit 2
+if [[ "$mode" == cpu ]]; then
+  mkdir -p "$root/evidence/cpu400/config" "$root/evidence/cpu400/data" "$root/evidence/cpu400/cache"
+  QT_QPA_PLATFORM=xcb timeout 45s "$candidate/gl_timestamp_control" "$root/evidence/cpu400/gl-control.json" \
+    > "$root/evidence/cpu400/gl-control.log" 2>&1 || status=$?
+  profiler="$(ldconfig -p | awk '/libprofiler.so.0 / {print $NF; exit}')"
+  profile_status=0
+  if [[ -z "$profiler" ]]; then
+    printf 'libprofiler unavailable\n' > "$root/evidence/cpu400/profile.log"
+    status=2
+  else
+    # One bounded candidate diagnostic, including process startup. SIGPROF CPU
+    # sampling avoids changing kernel security settings or requiring perf access.
+    timeout 110s env QT_QPA_PLATFORM=xcb NICONEON_RENDER_GPU_TIMING=0 \
+      XDG_CONFIG_HOME="$root/evidence/cpu400/config" XDG_DATA_HOME="$root/evidence/cpu400/data" \
+      XDG_CACHE_HOME="$root/evidence/cpu400/cache" LD_PRELOAD="$profiler" \
+      CPUPROFILE="$root/evidence/cpu400/candidate.prof" CPUPROFILE_FREQUENCY=100 \
+      "$candidate/real_render_profile" --video "$video" \
+      --output "$root/evidence/cpu400/result.json" --cps 400 --duration-ms 30000 --tail-ms 15000 \
+      --text-mode unique --sample-mode timing --worker on --renderer atlas \
+      > "$root/evidence/cpu400/profile.log" 2>&1 || profile_status=$?
+    printf 'harness_exit=%s\n' "$profile_status" > "$root/evidence/cpu400/quality-status.txt"
+    google-pprof --text --nodecount=100 "$candidate/real_render_profile" \
+      "$root/evidence/cpu400/candidate.prof" > "$root/evidence/cpu400/profile-flat.txt" 2>&1 || status=$?
+    google-pprof --text --cum --nodecount=100 "$candidate/real_render_profile" \
+      "$root/evidence/cpu400/candidate.prof" > "$root/evidence/cpu400/profile-cumulative.txt" 2>&1 || status=$?
+    # Sampling and stripped/JIT symbol limits remain explicit. These files are
+    # evidence for diagnosis only; this mode never calls the acceptance analyzer.
+  fi
+fi
 if [[ "$mode" == gpu ]]; then
   runner_status=0
   NICONEON_RENDER_GPU_TIMING=1 python3 tests/perf/run_real_render_comparison.py \
@@ -71,8 +100,10 @@ done
 fi
 if [[ "$mode" == quality || "$mode" == all ]]; then
 # Keep failures from each independent correctness scenario in its own artifact.
-for dpr in 1 2; do
+for dpr in 1 1.5 2; do
   for suite in basic wide atlas-pressure active-capacity appearance; do
+    # Preserve the established finite-pressure counts at1/2; extend mapping/seam coverage only.
+    [[ "$dpr" == 1.5 && ( "$suite" == atlas-pressure || "$suite" == active-capacity ) ]] && continue
     run="$root/evidence/pixel-candidate-$suite-dpr$dpr"
     QT_QPA_PLATFORM=xcb QT_SCALE_FACTOR="$dpr" timeout 150s "$candidate/real_render_profile" \
       --sample-mode pixels --pixel-suite "$suite" --expected-dpr "$dpr" --output "$run.json" > "$run.log" 2>&1 || status=1

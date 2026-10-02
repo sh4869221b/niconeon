@@ -343,8 +343,8 @@ comments/sec,30s feed+15s drain, seed20261002, with the timestamp flag enabled
 for both arms. The independent report requires at least100completed drawing
 intervals/run, no skipped/invalid queries, and the eight-pair bound. It retains
 all raw quality failures and does not grant frame-time or complete-text acceptance.
-PR pushes run discovery+gpu400; `workflow_dispatch` selects discovery, gpu400 or
-formal100 explicitly. The latter remains an uninstrumented65minute study.
+PR mode selection is documented below; `workflow_dispatch` selects discovery,
+gpu400, cpu400 or formal100 explicitly. The latter remains an uninstrumented65minute study.
 
 ### Prespecified100cps result (2026-10-02)
 
@@ -383,3 +383,47 @@ baseline emoji corruption remains a failed negative control. The separate400cps
 n=2discovery remains incomplete (candidate11,740/11,664of12,000drawn;219/281expired;
 41/55activated but not drawn). Issue65is therefore still open and the PR stays Draft.
 Neither this study nor the timestamp probe qualifies physical GPU/Wayland/HDR hardware.
+
+### Timestamp reliability and CPU diagnostic boundary
+
+The d835095400cps probe retained all four runs but its diagnostic gate failed.
+[Raw artifact](https://github.com/sh4869221b/niconeon/actions/runs/36955826098/artifacts/11206455464)
+SHA256 `debbd814b3ff3f229b8f4ecece067e08e50cf06fc74ba003039e817337ef50f3`.
+A render snapshot/sync serial is not a unique render invocation: Qt may render the
+same snapshot repeatedly. Query identity is its original render-start timestamp
+plus sync serial, and per-render query outputs must clear even without a new sync.
+This correction does not make the measured Mesa intervals qualified GPU timing.
+
+Mesa25.0.7 llvmpipe returned mostly30ns intervals despite expensive frames. Its
+[source query handler](https://github.com/chaotic-cx/mesa-mirror/blob/mesa-25.0.7/src/gallium/drivers/llvmpipe/lp_rast.c#L657)
+records end markers per raster bin and overwrites a per-thread timestamp. Such
+measurements need an independent whole-work control; do not infer a cheap overlay
+or justify an optimization from these results. The report flags llvmpipe intervals
+as unqualified, retains all data, and never grants GPU-time acceptance.
+
+The existing CPU phase trace locates candidate feed p99 at about121ms between
+Qt afterRendering and frameSwapped, versus renderer CPU calls around4ms and
+sync around6ms. These separate percentiles are not additive or per-frame causal
+proof. libmpv render p99 is about32ms. Candidate first-draw counts were11,669/11,641
+of12,000, with272/309preactivation expirations;400cps remains incomplete.
+
+`cpu400` is one bounded diagnostic step, not another acceptance trial:
+
+- Independent `gl_timestamp_control`:64/256/768px framebuffer, full/quarter scissor,
+ 128known blended draws,3trials per condition, query interval plus CPU wall time
+ to explicitly completed work and pixel readback. This isolated executable uses
+ glFinish intentionally, never in the app or timing study;45second safety timeout
+- One candidate400cps30s feed+15s drain CPU sample profile, timestamp flag off,
+ official Debian gperftools `libprofiler`,100Hz SIGPROF,110second process timeout
+- Profiling includes process startup and may perturb scheduling. Stripped library
+ and JIT symbols can limit attribution. Neither sampled CPU data nor its frame
+ distribution is used for performance acceptance; raw quality failures stay visible
+- No perf/sysctl/security changes or credentials. Reports and the binary profile
+ stay in the diagnostic artifact; no profiler dependency is added to production
+- After this control/profile, either use an identified hot path to justify a bounded
+ change with strict pixel regression tests, or record a hardware-measurement blocker.
+ No further timestamp-only iteration is a substitute for an actionable cause
+
+PR pushes now select discovery+cpu400; gpu400/formal100 remain explicit modes.
+The pixel mapping/seam suites additionally cover DPR1.5 without changing the
+historical finite-pressure workloads atDPR1/2 or the error threshold.

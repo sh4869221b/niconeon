@@ -468,6 +468,15 @@ class DanmakuRenderNode final : public QSGRenderNode, protected QOpenGLExtraFunc
     int beginGpuTiming(QOpenGLContext *context) {
         if (!m_gpuTimingRequested)
             return -1;
+        // A snapshot can render more than once without setFrame(). Clear only
+        // this render's observer result so unavailable queries never repeat data.
+        m_frameDiagnostics.gpuResultAvailable = false;
+        m_frameDiagnostics.gpuElapsedNs = 0;
+        m_frameDiagnostics.gpuMeasuredFrameSequence = 0;
+        m_frameDiagnostics.gpuMeasuredCpuStartNs = 0;
+        m_frameDiagnostics.gpuMeasuredDrawCalls = 0;
+        m_frameDiagnostics.gpuSkippedQueries = 0;
+        m_frameDiagnostics.gpuInvalidResults = 0;
         m_frameDiagnostics.gpuTimingRequested = true;
         if (!m_gpuQueriesAttempted) {
             m_gpuQueriesAttempted = true;

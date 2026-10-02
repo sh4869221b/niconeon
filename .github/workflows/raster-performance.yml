@@ -11,7 +11,7 @@ on:
       study:
         description: Explicit evidence mode (formal study is never inferred from a diagnostic run)
         type: choice
-        options: [discovery, gpu400, formal100]
+        options: [discovery, gpu400, cpu400, formal100]
         default: discovery
         required: true
 permissions:
@@ -27,7 +27,7 @@ jobs:
       matrix:
         # PR pushes run the short discovery/probe stages. Select formal100
         # explicitly for a stable final runtime revision; no selective reruns.
-        study: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.study) || '["discovery","gpu400"]') }}
+        study: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.study) || '["discovery","cpu400"]') }}
     runs-on: ubuntu-latest
     container: debian:trixie
     timeout-minutes: ${{ matrix.study == 'formal100' && 80 || 40 }}
@@ -48,7 +48,7 @@ jobs:
             qt6-base-dev qt6-base-private-dev qt6-declarative-dev libqt6sql6-sqlite libmpv-dev \
             qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-layouts \
             qml6-module-qtqml-workerscript qml6-module-qtcore fonts-dejavu-core fonts-noto-cjk fonts-noto-color-emoji \
-            ffmpeg xvfb xauth dbus-daemon libgl1-mesa-dri
+            ffmpeg xvfb xauth dbus-daemon libgl1-mesa-dri google-perftools libgoogle-perftools4
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -63,7 +63,7 @@ jobs:
         run: |
           tests/perf/prepare_baseline.sh "$GITHUB_WORKSPACE/../raster-baseline"
           cmake -S . -B build/evidence -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DNICONEON_BUILD_PERF_TOOLS=ON
-          cmake --build build/evidence --target niconeon real_render_profile
+          cmake --build build/evidence --target niconeon real_render_profile gl_timestamp_control
           cmake -S ../raster-baseline -B ../raster-baseline/build/evidence -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DNICONEON_BUILD_PERF_TOOLS=ON
           cmake --build ../raster-baseline/build/evidence --target niconeon real_render_profile
       - name: Generate and identify deterministic fixture
@@ -83,6 +83,7 @@ jobs:
           mode=timing
           if [ "$STUDY" = formal100 ]; then mode=formal; fi
           if [ "$STUDY" = gpu400 ]; then mode=gpu; fi
+          if [ "$STUDY" = cpu400 ]; then mode=cpu; fi
           dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1600x24 -ac' bash tests/perf/ci_evidence.sh "$mode"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -95,6 +96,7 @@ jobs:
             evidence/**/*.txt
             evidence/**/*.sha256
             evidence/**/*.patch
+            evidence/**/*.prof
           retention-days: 14
       - name: Untimed text and atlas-pressure pixel checks
         if: ${{ matrix.study == 'discovery' && !cancelled() && steps.measurement.outcome != 'skipped' }}

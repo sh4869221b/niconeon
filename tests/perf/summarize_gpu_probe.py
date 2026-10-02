@@ -22,8 +22,11 @@ def summarize_checked(root):
         raw = json.loads(path.read_text())
         meta = raw['metadata']
         start, end = meta['measurement_start_elapsed_ns'], meta['measurement_end_elapsed_ns']
+        reliable = 'llvmpipe' not in meta.get('gl_renderer', '').lower()
+        if not reliable:
+            errors.append(run['run_id'] + ': llvmpipe timestamp interval is unqualified; inspect independent control, not a GPU cost estimate')
         frames = raw['render_samples']
-        seen_sequences = set()
+        seen_renders = set()
         intervals = []
         with_draw = []
         skipped = sum(x.get('gpu_skipped_queries', 0) for x in frames)
@@ -38,13 +41,16 @@ def summarize_checked(root):
             at = frame['gpu_measured_cpu_start_elapsed_ns']
             ns = frame['gpu_elapsed_ns']
             sequence = frame['gpu_measured_frame_sequence']
-            if (sequence in seen_sequences or sequence > frame['frame_sequence']
+            # Sync frames may be rendered repeatedly. The original monotonic
+            # render-start stamp identifies the query, not the snapshot serial.
+            identity = (sequence, at)
+            if (identity in seen_renders or sequence > frame['frame_sequence']
                     or not isinstance(ns, int) or not isinstance(at, int)
                     or not frame.get('gpu_timing_supported') or not frame.get('gpu_timing_requested')
                     or ns < 0 or at > frame['elapsed_ns']):
                 errors.append(run['run_id'] + ': malformed completed query')
                 continue
-            seen_sequences.add(sequence)
+            seen_renders.add(identity)
             if start <= at <= end:
                 intervals.append(ns)
                 if frame['gpu_measured_draw_calls'] > 0:
@@ -58,6 +64,8 @@ def summarize_checked(root):
                     'p99_ms': values[math.ceil(len(values)*.99)-1]/1e6,
                     'total_ms': sum(values)/1e6} if values else {'count': 0}
         runs.append({'run_id': run['run_id'], 'variant': run['variant'],
+                     'timestamp_interval_qualified': False,
+                     'llvmpipe_limitation_detected': not reliable,
                      'raw_quality_success': raw['success'], 'raw_quality_errors': raw['errors'],
                      'summary': {k: v for k, v in raw['summary'].items() if not isinstance(v, (dict, list))},
                      'all_overlay_intervals': distribution(intervals),

@@ -358,13 +358,24 @@ class GpuProbeTests(unittest.TestCase):
         self.assertEqual(report['runs'][0]['overlay_intervals_with_draw']['p99_ms'], 1)
         self.assertNotIn('noninferior', json.dumps(report))
 
+    def test_repeated_sync_frames_are_distinct_renders_but_llvmpipe_is_unqualified(self):
+        for row in self.raw['render_samples']:
+            row['gpu_measured_frame_sequence'] = 1
+        self.write()
+        self.assertFalse(gpu_probe.summarize(self.root)['errors'])
+        self.raw['metadata']['gl_renderer'] = 'llvmpipe (test)'
+        self.write()
+        result = gpu_probe.summarize(self.root)
+        self.assertTrue(result['errors'])
+        self.assertFalse(result['runs'][0]['timestamp_interval_qualified'])
+
     def test_rejects_bad_hash_missing_field_bound_skip_and_duplicate(self):
         original = copy.deepcopy(self.raw)
         for change in (
             lambda raw: raw['render_samples'][0].pop('gpu_elapsed_ns'),
             lambda raw: raw['render_samples'][0].__setitem__('gpu_pending_queries', 9),
             lambda raw: raw['render_samples'][0].__setitem__('gpu_skipped_queries', 1),
-            lambda raw: raw['render_samples'][0].__setitem__('gpu_measured_frame_sequence', 1),
+            lambda raw: raw['render_samples'].__setitem__(0, copy.deepcopy(raw['render_samples'][1])),
             lambda raw: raw['metadata'].__setitem__('gpu_timing_requested', False),
         ):
             self.raw = copy.deepcopy(original)
