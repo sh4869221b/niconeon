@@ -1,3 +1,4 @@
+#include "bilinear_reference.hpp"
 #include "comment_timing_json.hpp"
 #include "danmaku/DanmakuController.hpp"
 #include "danmaku/DanmakuRenderNodeItem.hpp"
@@ -554,18 +555,22 @@ QJsonObject pixelBatch(QQuickWindow &window, DanmakuController &controller, Danm
             QVector<QRect> visibleBounds;
             overlap = false;
             {
-                QPainter painter(&expected);
-                QPainter coveragePainter(&coverage);
                 for (const auto &instance : before->instances) {
                     const bool fractional = std::abs(instance.x * dpr - std::round(instance.x * dpr)) > 0.001 ||
                                             std::abs(instance.y * dpr - std::round(instance.y * dpr)) > 0.001;
-                    painter.setRenderHint(QPainter::SmoothPixmapTransform, fractional);
-                    coveragePainter.setRenderHint(QPainter::SmoothPixmapTransform, fractional);
                     const auto &source = sprites.value(instance.commentId);
-                    coveragePainter.drawImage(QPointF(instance.x, instance.y), source);
-                    painter.setOpacity(std::clamp(instance.alpha, qreal(0), qreal(1)));
-                    painter.drawImage(QPointF(instance.x, instance.y),
-                                      instance.ngDropHovered ? referenceTint(source) : source);
+                    const auto compose = [&](QImage &target, const QImage &image, qreal alpha) {
+                        if (fractional) {
+                            niconeon::perf::drawBilinearReference(target, image, {instance.x, instance.y}, alpha);
+                        } else {
+                            // Preserve the original independent QPainter integer oracle.
+                            QPainter painter(&target);
+                            painter.setOpacity(std::clamp(alpha, qreal(0), qreal(1)));
+                            painter.drawImage(QPointF(instance.x, instance.y), image);
+                        }
+                    };
+                    compose(coverage, source, 1);
+                    compose(expected, instance.ngDropHovered ? referenceTint(source) : source, instance.alpha);
                     const QRect bounds(static_cast<int>(std::lround(instance.x * dpr)),
                                        static_cast<int>(std::lround(instance.y * dpr)),
                                        sprites.value(instance.commentId).width(),
@@ -940,6 +945,11 @@ QJsonArray pixelOracle(QQuickWindow &window, MpvItem &player, DanmakuController 
             const auto prefix = QStringLiteral("appearance-%1").arg(index);
             add(pixelBatch(window, controller, overlay, background, prefix + "-fractional",
                            {{prefix + "-fractional", texts[index]}}, outputPath, stats, true, false, 4.25));
+            for (const auto offset : {4.5, -4.25, -4.5}) {
+                const auto name = prefix + QStringLiteral("-fractional-%1").arg(offset);
+                add(pixelBatch(window, controller, overlay, background, name, {{name, texts[index]}}, outputPath, stats,
+                               true, false, offset));
+            }
             add(pixelBatch(window, controller, overlay, background, prefix + "-hover",
                            {{prefix + "-hover", texts[index]}}, outputPath, stats, true, false, 4,
                            PixelAppearance::NgHover));
@@ -1014,7 +1024,7 @@ int main(int argc, char **argv) {
     const int durationMs = parser.value("duration-ms").toInt(&durationOk);
     const int tailMs = parser.value("tail-ms").toInt(&tailOk);
     if (outputPath.isEmpty() || !cpsOk || cps < 1 || cps > 2000 || !durationOk || durationMs < 1000 ||
-        durationMs > 120000 || !tailOk || tailMs < 1000 || tailMs > 60000 || qint64(cps) * durationMs / 1000 > 60000 ||
+        durationMs > 180000 || !tailOk || tailMs < 1000 || tailMs > 60000 || qint64(cps) * durationMs / 1000 > 60000 ||
         (textMode != "unique" && textMode != "warm") || (sampleMode != "timing" && sampleMode != "pixels") ||
         (worker != "on" && worker != "off") || (renderer != "atlas" && renderer != "frame_image") || !dprOk ||
         !std::isfinite(expectedDpr) || expectedDpr < 0 || expectedDpr > 4 ||

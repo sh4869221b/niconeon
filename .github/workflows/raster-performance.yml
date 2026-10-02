@@ -13,10 +13,16 @@ concurrency:
   cancel-in-progress: true
 jobs:
   software-renderer-comparison:
+    name: software-${{ matrix.study }}
+    strategy:
+      fail-fast: false
+      matrix:
+        study: [discovery, formal100]
     runs-on: ubuntu-latest
     container: debian:trixie
-    timeout-minutes: 40
+    timeout-minutes: ${{ matrix.study == 'formal100' && 80 || 40 }}
     env:
+      STUDY: ${{ matrix.study }}
       LIBGL_ALWAYS_SOFTWARE: '1'
       QT_HASH_SEED: '0'
       LP_NUM_THREADS: '2'
@@ -53,7 +59,9 @@ jobs:
       - name: Generate and identify deterministic fixture
         run: |
           mkdir -p evidence
-          ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=s=640x360:r=30:d=180' -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -an evidence/motion_sm9.mp4
+          duration=180
+          if [ "$STUDY" = formal100 ]; then duration=240; fi
+          ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc2=s=640x360:r=30:d=$duration" -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -an evidence/motion_sm9.mp4
           sha256sum evidence/motion_sm9.mp4 > evidence/fixture.sha256
           git rev-parse HEAD > evidence/candidate-head.txt
           git -C ../raster-baseline rev-parse HEAD > evidence/baseline-head.txt
@@ -62,11 +70,13 @@ jobs:
       - name: Isolated real-render timing and normal QoS
         id: measurement
         run: |
-          dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1600x24 -ac' bash tests/perf/ci_evidence.sh timing
+          mode=timing
+          if [ "$STUDY" = formal100 ]; then mode=formal; fi
+          dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1600x24 -ac' bash tests/perf/ci_evidence.sh "$mode"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: raster-performance-${{ github.event.pull_request.head.sha }}
+          name: raster-performance-${{ github.event.pull_request.head.sha }}-${{ matrix.study }}
           path: |
             evidence/**/*.json
             evidence/**/*.log
@@ -76,11 +86,11 @@ jobs:
             evidence/**/*.patch
           retention-days: 14
       - name: Untimed text and atlas-pressure pixel checks
-        if: ${{ !cancelled() && steps.measurement.outcome != 'skipped' }}
+        if: ${{ matrix.study == 'discovery' && !cancelled() && steps.measurement.outcome != 'skipped' }}
         run: |
           dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1600x24 -ac' bash tests/perf/ci_evidence.sh quality
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && matrix.study == 'discovery' }}
         with:
           name: raster-pixels-${{ github.event.pull_request.head.sha }}
           path: |

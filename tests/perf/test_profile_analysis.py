@@ -72,7 +72,9 @@ summary.update(feed_offered=expected, feed_accepted=expected,
                feed_submitted_unique=sum(value['elapsed_ns'] <= 31000000000 for value in submissions),
                last_submission_elapsed_ns=submissions[-1]['elapsed_ns'])
 raw = dict(format_version=1, success=True, errors=[], metadata=metadata,
-           summary=summary, frame_samples=samples, heartbeat_samples=samples, submission_samples=submissions)
+           summary=summary, frame_samples=samples, heartbeat_samples=samples, submission_samples=submissions,
+           render_samples=[dict(elapsed_ns=1000000000, submitted_instances=100, active_instances=100),
+                           dict(elapsed_ns=31000000000, submitted_instances=0, active_instances=0)])
 if args.sample_mode == 'pixels':
     raw.update(summary={}, frame_samples=[], heartbeat_samples=[],
                pixel_checks=[{'success': True, 'text': 'fake pixel oracle'}])
@@ -194,6 +196,60 @@ class EvidenceTests(unittest.TestCase):
             with self.subTest(counter=key):
                 self.alter_raw(lambda raw: raw['summary'].__setitem__(key, 1))
                 self.assert_invalid()
+
+    def test_baseline_quality_exception_is_explicit_narrow_and_not_candidate(self):
+        index = next(i for i, run in enumerate(self.manifest['runs']) if run['variant'] == 'baseline')
+        run = self.manifest['runs'][index]
+        path = self.directory / run['raw_path']
+        raw = json.loads(path.read_text(encoding='utf-8'))
+        raw.update(success=False, errors=['Equal-work/complete-text prerequisites failed'])
+        raw['summary'].update(missing_sprites=1, missing_image_observations=1)
+        run.update(status='failed', returncode=1, failure='harness exited 1')
+        def save():
+            path.write_text(json.dumps(raw), encoding='utf-8')
+            run['raw_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+            self.write_manifest()
+        save()
+        self.assert_invalid()  # Default still rejects every quality failure.
+        self.options.baseline_transient_missing = True
+        report = self.analyze()
+        self.assertEqual(report['status'], 'noninferior', report)
+        observed = next(value for value in report['cases'][0]['runs'] if value['run_id'] == run['run_id'])
+        self.assertTrue(observed['known_baseline_transient_missing'])
+        self.assertFalse(observed['raw_quality_success'])
+        self.assertEqual(observed['summary']['missing_image_observations'], 1)
+        self.assertEqual(observed['draw_work_proxy']['submitted_instance_draw_count'], 100)
+        self.assertEqual(observed['draw_work_proxy']['frame_held_submitted_instance_seconds'], 3000)
+        for key in ('expired', 'unresident_observations', 'source_pending'):
+            raw['summary'][key] = 1
+            save()
+            self.assert_invalid()
+            raw['summary'][key] = 0
+        raw['summary']['submitted_unique'] -= 1
+        save()
+        self.assert_invalid()
+        raw['summary']['submitted_unique'] += 1
+        raw['errors'].append('other failure')
+        save()
+        self.assert_invalid()
+        raw['errors'].pop()
+        draw_samples = raw.pop('render_samples')
+        save()
+        self.assert_invalid()
+        raw['render_samples'] = draw_samples
+        save()
+        self.assertEqual(self.analyze()['status'], 'noninferior')
+        # A candidate's same missing-image condition is never exempted.
+        candidate = next(value for value in self.manifest['runs'] if value['variant'] == 'candidate')
+        candidate_path = self.directory / candidate['raw_path']
+        candidate_raw = json.loads(candidate_path.read_text(encoding='utf-8'))
+        candidate_raw.update(success=False, errors=['Equal-work/complete-text prerequisites failed'])
+        candidate_raw['summary'].update(missing_sprites=1, missing_image_observations=1)
+        candidate_path.write_text(json.dumps(candidate_raw), encoding='utf-8')
+        candidate.update(status='failed', returncode=1, failure='harness exited 1',
+                         raw_sha256=hashlib.sha256(candidate_path.read_bytes()).hexdigest())
+        self.write_manifest()
+        self.assert_invalid()
 
     def test_low_samples_and_replicates_are_inconclusive(self):
         self.options.min_pairs = 10

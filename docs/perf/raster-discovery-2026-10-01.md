@@ -179,3 +179,46 @@ Next gate: retain400 and add100/200cps, identical fixture/text/duration, two BA/
 for discovery. Only equal-complete cases can advance to >=10 pairs and >=1000 feed
 frame samples; a lower-rate success does not establish400cps acceptance. Hardware
 and all unfinished performance/pixel criteria remain explicitly unqualified.
+
+
+## Fourth discovery head: `b73a3a8`
+
+[Regular CI](https://github.com/sh4869221b/niconeon/actions/runs/36944966403) passed
+all five jobs; [performance/pixel CI](https://github.com/sh4869221b/niconeon/actions/runs/36944966411)
+failed. Raw [timing](https://github.com/sh4869221b/niconeon/actions/runs/36944966411/artifacts/11201968015)
+and [pixel](https://github.com/sh4869221b/niconeon/actions/runs/36944966411/artifacts/11201948685)
+artifacts retain the exact head and fixed fixture hashes. This expanded discovery
+still uses two paired trials, not statistical qualification.
+
+| cps | Candidate final first draw | Baseline final first draw | Candidate feed p99 ms | Baseline feed p99 ms |
+|---|---|---|---|---|
+|100|3000 / 3000|3000 / 3000|113.294 / 108.503|166.455 / 165.628|
+|200|6000 / 6000|3894 / 4065|154.830 / 156.720|162.289 / 163.641|
+|400|11487 / 11553|2654 / 2634|181.070 / 181.780|165.718 / 162.514|
+
+Candidate100/200 has zero expiry, failure or missing-image observations. Baseline100
+still has 5830 / 5123 repeated transient missing-image observations, so the strict
+raw prerequisite remains false despite final ID completion. Do not silently relax
+that prerequisite to certify the table. Candidate400 expires441 /396 before activation;
+another72 /51 activated IDs do not reach first draw. It is not accepted. New capacity
+gating reduced400cps no-progress callbacks to108 /123 while suppressing9623 /9591
+new-data wake checks behind the closed gate. Queued1/outstanding2/callback8 bounds hold.
+Cross-head frame-time changes cannot be attributed to sampling or gating alone:
+these CI heads ran on different hosts and the baseline timing moved materially too.
+
+Pixel outcomes at this head retain the same fractional-position failures. The
+sampler recreation bug was real, but it was not sufficient to explain the reference
+mismatch: QPainter's equal-scale `drawImage(QPointF)` path snaps translations even
+with SmoothPixmapTransform. The expected PNG was therefore not the promised
+subpixel reference. For the captured quarter-logical-pixel white text, applying
+the analytically required physical offset to that integer-snapped reference gives
+maximum error1 at DPR1 and2 at DPR2, below the unchanged threshold8. This offline
+diagnosis does not reclassify the old run as passing.
+
+The next test-only change retains the original QPainter oracle at integer positions
+and independently evaluates full-image bilinear sampling at fractional positions.
+It derives coordinates from destination pixel centers, DPR and logical translation,
+without using candidate atlas geometry or fitting to actual output. Positive/negative
+quarter/half offsets, three font families and DPR1/1.5/2 have CPU tests, including
+negative controls that must reject snapping and a one-pixel displacement. Real GL
+revalidation is still required. Full400cps and statistical acceptance remain open.

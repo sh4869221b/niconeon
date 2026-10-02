@@ -234,11 +234,40 @@ def submission_metrics(raw: dict[str, Any], expected: int, cps: int, context: st
     }
 
 
+def draw_work_metrics(raw: dict[str, Any], context: str, errors: list[str], required: bool) -> dict[str, Any]:
+    """Logical draw counts and frame-held residence proxy, not readable ink/pixels."""
+    samples = raw.get("render_samples")
+    if not isinstance(samples, list) or len(samples) < 2:
+        if required:
+            errors.append(f"{context}: missing draw-work observations for separated quality/performance analysis")
+        return {"available": False}
+    start = raw["metadata"].get("measurement_start_elapsed_ns", 0)
+    end = raw["metadata"].get("measurement_end_elapsed_ns", 0)
+    previous = -1
+    for sample in samples:
+        if (not isinstance(sample, dict) or not number(sample.get("elapsed_ns"))
+                or sample["elapsed_ns"] < previous
+                or not integer(sample.get("submitted_instances"))
+                or not integer(sample.get("active_instances"))
+                or sample["submitted_instances"] > sample["active_instances"]):
+            errors.append(f"{context}: invalid draw-work observation")
+            return {"available": False}
+        previous = sample["elapsed_ns"]
+    selected = [sample for sample in samples if start <= sample["elapsed_ns"] <= end]
+    residence = sum(sample["submitted_instances"] * max(0, min(end, samples[index + 1]["elapsed_ns"]
+                    if index + 1 < len(samples) else end) - max(start, sample["elapsed_ns"]))
+                    for index, sample in enumerate(samples) if sample["elapsed_ns"] <= end)
+    return {"available": True, "render_sample_count": len(selected),
+            "submitted_instance_draw_count": sum(sample["submitted_instances"] for sample in selected),
+            "active_instance_draw_count": sum(sample["active_instances"] for sample in selected),
+            "frame_held_submitted_instance_seconds": residence / 1_000_000_000,
+            "max_submitted_instances": max((sample["submitted_instances"] for sample in selected), default=0),
+            "interpretation": "logical instance submissions/residence proxy; includes clipped or overlapping text, not pixel-visible duration"}
+
+
 def validate_run(root: Path, run: dict[str, Any], manifest: dict[str, Any],
-                 errors: list[str]) -> dict[str, Any] | None:
+                 errors: list[str], allow_baseline_transient: bool = False) -> dict[str, Any] | None:
     context = str(run.get("run_id", "unnamed run"))
-    if run.get("status") != "completed" or run.get("returncode") != 0:
-        errors.append(f"{context}: execution did not complete successfully")
     relative = run.get("raw_path")
     if not isinstance(relative, str):
         errors.append(f"{context}: missing raw_path")
@@ -259,8 +288,22 @@ def validate_run(root: Path, run: dict[str, Any], manifest: dict[str, Any],
         return None
     if raw.get("format_version") != 1 or type(raw.get("format_version")) is not int:
         errors.append(f"{context}: unsupported raw format_version")
-    if raw.get("success") is not True or raw.get("errors") != []:
-        errors.append(f"{context}: harness failed or has errors")
+    observed = raw.get("summary", {})
+    known_baseline_quality_failure = (
+        allow_baseline_transient and run.get("variant") == "baseline"
+        and manifest["configuration"]["sample_mode"] == "timing"
+        and isinstance(observed, dict)
+        and integer(observed.get("missing_image_observations"), positive=True)
+        and observed.get("missing_sprites") == observed["missing_image_observations"]
+        and raw.get("success") is False
+        and raw.get("errors") == ["Equal-work/complete-text prerequisites failed"]
+        and run.get("status") == "failed" and run.get("returncode") == 1
+        and run.get("failure") == "harness exited 1")
+    if not known_baseline_quality_failure:
+        if run.get("status") != "completed" or run.get("returncode") != 0:
+            errors.append(f"{context}: execution did not complete successfully")
+        if raw.get("success") is not True or raw.get("errors") != []:
+            errors.append(f"{context}: harness failed or has errors")
     configuration = manifest["configuration"]
     variant = manifest["variants"][run["variant"]]
     metadata = raw.get("metadata")
@@ -303,6 +346,8 @@ def validate_run(root: Path, run: dict[str, Any], manifest: dict[str, Any],
             if not integer(summary.get(key)) or summary[key] != expected:
                 errors.append(f"{context}: {key}={summary.get(key)!r}, expected {expected} (unequal/incomplete work)")
         for key in ZERO_COUNTS:
+            if known_baseline_quality_failure and key in ("missing_sprites", "missing_image_observations"):
+                continue
             if not integer(summary.get(key)) or summary[key] != 0:
                 errors.append(f"{context}: {key}={summary.get(key)!r}, required zero")
         if summary.get("never_submitted_ids") != []:
@@ -337,7 +382,9 @@ def validate_run(root: Path, run: dict[str, Any], manifest: dict[str, Any],
                 else {"pixel_checks": raw.get("pixel_checks", [])})
     if configuration["sample_mode"] == "timing" and isinstance(raw.get("metadata"), dict) and isinstance(raw.get("summary"), dict):
         measured.update(submission_metrics(raw, expected, run["cps"], context, errors))
-    return {"run_id": context, "pair_index": run["pair_index"], "variant": run["variant"],
+        measured["draw_work_proxy"] = draw_work_metrics(raw, context, errors, allow_baseline_transient)
+    return {"raw_quality_success": raw.get("success"), "raw_quality_errors": raw.get("errors"),
+            "known_baseline_transient_missing": known_baseline_quality_failure, "run_id": context, "pair_index": run["pair_index"], "variant": run["variant"],
             "metadata": metadata, "summary": summary, **measured}
 
 
@@ -425,6 +472,9 @@ def analyze(manifest_path: Path, args: argparse.Namespace) -> dict[str, Any]:
         return report
     root = manifest_path.parent.resolve()
     config = manifest["configuration"]
+    report["baseline_transient_missing_policy"] = getattr(args, "baseline_transient_missing", False)
+    if report["baseline_transient_missing_policy"]:
+        report["limitations"].append("Baseline transient missing-image quality failures remain failures; performance compares final completed IDs, not identical pixel or visible-frame work")
     report["video"] = manifest["video"]
     report["variants"] = manifest["variants"]
     report["machine"] = manifest["machine"]
@@ -475,7 +525,7 @@ def analyze(manifest_path: Path, args: argparse.Namespace) -> dict[str, Any]:
                     errors.append(f"runs[{ordinal}]: {variable} is missing or reused")
                 else:
                     xdg_paths.add(value)
-        measured = validate_run(root, run, manifest, errors)
+        measured = validate_run(root, run, manifest, errors, getattr(args, "baseline_transient_missing", False))
         if measured is not None:
             by_key[key] = measured
             runtime = {name: measured["metadata"].get(name) for name in ENVIRONMENT_METADATA}
@@ -513,6 +563,8 @@ def analyze(manifest_path: Path, args: argparse.Namespace) -> dict[str, Any]:
                             errors.append(f"cps{cps}/{mode}/pair{pair}: runtime metadata.{key} differs")
             if orders.count("AB") != config["pairs"] // 2 or orders.count("BA") != config["pairs"] // 2:
                 errors.append(f"cps{cps}/{mode}: AB/BA order is unbalanced or incomplete")
+    if any(run.get("known_baseline_transient_missing") for run in by_key.values()):
+        report["warnings"].append("Known baseline transient missing-image quality failures remain failed; terminal-ID-complete timing is analyzed separately, not identical visible-pixel work")
     if errors:
         # No ratios or performance decisions are emitted for invalid work.
         return report
@@ -577,6 +629,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("manifest", type=Path, help="manifest.json or its containing directory")
+    parser.add_argument("--baseline-transient-missing", action="store_true",
+                        help="separate only known baseline transient missing-image quality failures from final-ID-complete performance; candidate remains strict")
     parser.add_argument("--output", type=Path, help="write full structured analysis JSON")
     parser.add_argument("--noninferiority-percent", type=float, default=0.0,
                         help="explicit maximum regression margin; default 0 (no tolerance)")

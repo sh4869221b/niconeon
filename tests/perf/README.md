@@ -258,6 +258,55 @@ with otherwise identical text, fixture, 30s feed, 15s drain and two BA/AB pairs.
 These are not qualification runs: only cases where both arms complete the same
 work may advance to the predeclared >=10 paired / >=1000 feed-frame analysis.
 A lower-rate result never establishes that the retained 400 cps case passes.
-Fractional-position probes compare against smooth full-image QPainter sampling;
-texture recreation must retain Linear/ClampToEdge. Integer pixels alone cannot
-validate that setting. No channel threshold is relaxed after a failure.
+Fractional-position probes use an independent full-image bilinear oracle because
+QPainter's equal-scale translate fast path snaps even with SmoothPixmapTransform.
+Integer positions retain the original QPainter reference. Destination physical
+pixel center `(x+0.5)/targetDPR` minus logical translation, times sourceDPR,
+minus0.5 gives the source texel-center coordinate. Four clamped neighbors are
+interpolated in premultiplied RGBA and source-over blended. No atlas crop, UV,
+tile or candidate output is used to choose this coordinate convention.
+The unit oracle covers physical +/-0.25/0.5 offsets, DPR1/1.5/2 and three font
+families, checks integer equivalence, and rejects snapped / one-pixel-shifted
+negative controls at the unchanged channel threshold8. Actual GL probes retain
+wide internal seams and add positive/negative fractional positions. No threshold
+is relaxed after a failure. Texture recreation must retain Linear/ClampToEdge.
+
+## Prespecified 100 cps study (2026-10-02)
+
+This bounded study is separate from the retained 100/200/400 discovery job and does
+not establish 400cps acceptance. It compares final-ID-complete timing while explicitly
+retaining the baseline's existing transient missing-image quality failure. It never
+exempts candidate quality errors, terminal missing IDs, expiry, backlog, other error
+messages, unexpected process failures, metadata/hash mismatch, or observer overflow.
+The analyzer's default remains strict; the study selects `--baseline-transient-missing`
+and records that policy in its output. Raw `success=false`, errors, counts, process exit
+and the manifest remain unchanged. A baseline can therefore fail quality while its
+complete-work timing is eligible for this narrowly scoped comparison.
+
+The plan is fixed before measurement:
+
+- Baseline3141e66 plus observer-only patch, identical harness, worker on, atlas on
+- 100 unique comments/sec for180s plus15s fixed drain:18,000 comments/run
+- Identical deterministic240s H.264 fixture within the study,1280x720,DPR1, same fonts
+- One GitHub runner/container per study, Mesa software with2render threads; build both
+  arms before measurement and run them sequentially without concurrent compilation
+- Normal video/glyph startup warmup first: wait until video position>=500ms, then pause
+  and seek to exact media zero. No comment feed during warmup. Clear workload counters
+  and start the measured phases only afterward. No post-hoc warmup/sample deletion
+- Ten adjacent pairs, randomized balanced5AB/5BA, runner seed20261002,1s between processes
+- Every frame and heartbeat run must contain>=1000feed intervals; otherwise inconclusive
+- Nearest-rank p95/p99 in feed and full windows: all8frame/heartbeat metrics required
+- Paired log-ratio bootstrap resamples whole pairs, never individual frames,10,000
+  iterations, seed20261002. Each pointwise two-sided95%CI upper ratio must be<=1.0
+  (zero permitted regression). n=10and pointwise rather than family-wise CI limitations
+  remain explicit; this is within-host evidence, not a hardware-wide guarantee
+- First-draw lateness, total logical-instance draw count and frame-held instance-seconds
+  are also reported. The latter includes clipped/overlapping text and is only a workload
+  proxy, not exact visible-pixel duration. Final ID equality is not identical pixel work
+- All planned runs, including aborts/timeouts/failures, remain in the evidence. No selective
+  retries or changing margins/sample thresholds after seeing results
+- Approximately65minutes of timing,80minute job limit. Existing discovery/pixel job runs
+  separately with its40minute limit. An incomplete job is not an acceptance result
+
+The harness feed-duration bound is180s solely to collect enough low-FPS samples;
+its60,000-comment trace bound and every production queue/resource bound are unchanged.

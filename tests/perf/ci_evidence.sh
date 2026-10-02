@@ -9,7 +9,22 @@ candidate="$root/build/evidence"
 video="$root/evidence/motion_sm9.mp4"
 mode="${1:-all}"
 status=0
-[[ "$mode" == all || "$mode" == timing || "$mode" == quality ]] || exit 2
+[[ "$mode" == all || "$mode" == timing || "$mode" == quality || "$mode" == formal ]] || exit 2
+if [[ "$mode" == formal ]]; then
+  runner_status=0
+  python3 tests/perf/run_real_render_comparison.py \
+    --baseline "$baseline/real_render_profile" --candidate "$candidate/real_render_profile" \
+    --video "$video" --output-dir "$root/evidence/formal100" \
+    --pairs 10 --seed 20261002 --cps 100 --text-modes unique \
+    --duration-ms 180000 --tail-ms 15000 --keep-going || runner_status=$?
+  printf 'runner_exit=%s\n' "$runner_status" > "$root/evidence/formal-runner-status.txt"
+  # Raw baseline quality failures remain in the manifest. Only the explicit,
+  # narrowly validated historical transient-image case can be separated here.
+  python3 tests/perf/analyze_real_render.py "$root/evidence/formal100" \
+    --baseline-transient-missing --min-pairs 10 --min-samples 1000 \
+    --noninferiority-percent 0 --bootstrap-iterations 10000 --seed 20261002 \
+    --output "$root/evidence/formal100/analysis.json" || status=$?
+fi
 if [[ "$mode" == timing || "$mode" == all ]]; then
 # Discovery pass only: two balanced AB/BA pairs, not a statistical acceptance claim.
 python3 tests/perf/run_real_render_comparison.py \

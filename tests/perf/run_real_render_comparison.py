@@ -111,9 +111,9 @@ def parse_args() -> argparse.Namespace:
         parser.error("--pairs must be even for balanced AB/BA order")
     if len(set(args.cps)) != len(args.cps) or len(set(args.text_modes)) != len(args.text_modes):
         parser.error("duplicate cases are not allowed")
-    if (not 1000 <= args.duration_ms <= 120000 or not 1000 <= args.tail_ms <= 60000
+    if (not 1000 <= args.duration_ms <= 180000 or not 1000 <= args.tail_ms <= 60000
             or any(cps > 2000 or cps * args.duration_ms // 1000 > 60000 for cps in args.cps)):
-        parser.error("harness bounds: duration 1000..120000ms, tail 1000..60000ms, cps <= 2000, <= 60000 comments")
+        parser.error("harness bounds: duration 1000..180000ms, tail 1000..60000ms, cps <= 2000, <= 60000 comments")
     if args.cooldown_seconds < 0 or not args.cooldown_seconds < float("inf"):
         parser.error("--cooldown-seconds must be finite and nonnegative")
     if args.timeout_seconds is None:

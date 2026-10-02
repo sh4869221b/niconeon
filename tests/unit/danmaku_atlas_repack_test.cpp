@@ -1,3 +1,4 @@
+#include "../perf/bilinear_reference.hpp"
 #include "danmaku/DanmakuAtlasPacker.hpp"
 
 #include <QPainter>
@@ -24,6 +25,86 @@ void verifyPlacements(const DanmakuAtlasRepackPlan &plan, const QSize &pageSize)
 class DanmakuAtlasRepackTest : public QObject {
     Q_OBJECT
   private slots:
+    void bilinearReferenceUsesPhysicalPixelCenters() {
+        for (const qreal dpr : {1.0, 1.5, 2.0}) {
+            QImage source(4, 4, QImage::Format_RGBA8888_Premultiplied);
+            source.setDevicePixelRatio(dpr);
+            source.fill(Qt::transparent);
+            source.setPixelColor(1, 1, QColor(255, 0, 0, 128));
+            QImage target(8, 8, QImage::Format_RGBA8888_Premultiplied);
+            target.setDevicePixelRatio(dpr);
+            target.fill(QColor(96, 96, 96));
+            niconeon::perf::drawBilinearReference(target, source, {1.25 / dpr, 1.0 / dpr});
+            QCOMPARE(target.pixelColor(2, 2), QColor(156, 60, 60));
+            QCOMPARE(target.pixelColor(3, 2), QColor(116, 84, 84));
+            QCOMPARE(target.pixelColor(0, 0), QColor(96, 96, 96));
+            target.fill(QColor(96, 96, 96));
+            niconeon::perf::drawBilinearReference(target, source, {-0.25 / dpr, 0});
+            QCOMPARE(target.pixelColor(0, 1), QColor(116, 84, 84));
+        }
+    }
+    void bilinearReferenceRejectsSnappingAndDisplacement_data() {
+        QTest::addColumn<QString>("family");
+        QTest::addColumn<qreal>("dpr");
+        QTest::addColumn<qreal>("offset");
+        for (const auto &family :
+             {QStringLiteral("DejaVu Sans"), QStringLiteral("DejaVu Serif"), QStringLiteral("Noto Sans CJK JP")})
+            for (const qreal dpr : {1.0, 1.5, 2.0})
+                for (const qreal offset : {-0.5, -0.25, 0.25, 0.5})
+                    QTest::newRow(qPrintable(QStringLiteral("%1-%2-%3").arg(family).arg(dpr).arg(offset)))
+                        << family << dpr << offset;
+    }
+    void bilinearReferenceRejectsSnappingAndDisplacement() {
+        QFETCH(QString, family);
+        QFETCH(qreal, dpr);
+        QFETCH(qreal, offset);
+        QImage source(QSize(320 * dpr, 48 * dpr), QImage::Format_RGBA8888_Premultiplied);
+        source.setDevicePixelRatio(dpr);
+        source.fill(Qt::transparent);
+        {
+            QPainter paint(&source);
+            QFont font(family);
+            font.setPixelSize(24);
+            paint.setFont(font);
+            paint.setPen(Qt::white);
+            paint.drawText(QRectF(0, 0, 320, 48), Qt::AlignCenter, QStringLiteral("WHITE é 日本語 123"));
+        }
+        QImage background(QSize(350 * dpr, 70 * dpr), QImage::Format_RGBA8888_Premultiplied);
+        background.setDevicePixelRatio(dpr);
+        background.fill(QColor(96, 96, 96));
+        const auto differingPixels = [](const QImage &a, const QImage &b, int tolerance) {
+            int count = 0;
+            for (int y = 0; y < a.height(); ++y)
+                for (int x = 0; x < a.width(); ++x) {
+                    const auto *pa = a.constScanLine(y) + x * 4;
+                    const auto *pb = b.constScanLine(y) + x * 4;
+                    for (int c = 0; c < 4; ++c)
+                        if (std::abs(int(pa[c]) - int(pb[c])) > tolerance) {
+                            ++count;
+                            break;
+                        }
+                }
+            return count;
+        };
+        QImage integerPainter = background, integerOracle = background;
+        {
+            QPainter paint(&integerPainter);
+            paint.drawImage(QPointF(12 / dpr, 8 / dpr), source);
+        }
+        niconeon::perf::drawBilinearReference(integerOracle, source, {12 / dpr, 8 / dpr});
+        QCOMPARE(differingPixels(integerPainter, integerOracle, 1), 0);
+        QImage linear = background, snapped = background, displaced = background;
+        const QPointF position((12 + offset) / dpr, 8 / dpr);
+        niconeon::perf::drawBilinearReference(linear, source, position);
+        {
+            QPainter paint(&snapped);
+            paint.setRenderHint(QPainter::SmoothPixmapTransform);
+            paint.drawImage(position, source); // Known nearest/snap negative control.
+        }
+        niconeon::perf::drawBilinearReference(displaced, source, position + QPointF(1 / dpr, 0));
+        QVERIFY(differingPixels(linear, snapped, 8) > 50);
+        QVERIFY(differingPixels(linear, displaced, 8) > 50);
+    }
     void batchesAllFittingPendingSprites() {
         const auto plan =
             planDanmakuAtlasRepack({100, 100}, {{1, {100, 30}}}, {{2, {50, 30}}, {3, {50, 30}}, {4, {100, 40}}});
@@ -159,5 +240,5 @@ class DanmakuAtlasRepackTest : public QObject {
     }
 };
 
-QTEST_GUILESS_MAIN(DanmakuAtlasRepackTest)
+QTEST_MAIN(DanmakuAtlasRepackTest)
 #include "danmaku_atlas_repack_test.moc"
