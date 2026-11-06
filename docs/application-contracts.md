@@ -26,7 +26,9 @@ Only the latest successful new NG registration has a single-use Undo token. Dupl
 registration does not replace that token. Removing the same NG invalidates its Undo.
 Invalid regex is checked before database write. Qt uses PCRE2 semantics and Unicode properties.
 If persisted filters cannot be initialized (for example, an invalid legacy regex),
-comment emission fails closed with an explicit warning; local video playback continues.
+comment emission fails closed with one explicit warning at initialization; local video
+playback continues. Subsequent ticks acknowledge an empty, unprocessed batch without
+repeating the warning, including while paused, seeking or opening another video.
 An unavailable filter engine must never be replaced by an empty allow-all engine.
 
 ## HTTP policy
