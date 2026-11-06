@@ -33,11 +33,13 @@ notices_file="${repo_root}/THIRD_PARTY_NOTICES.txt"
 [[ -f "${source_code_file}" ]] || { echo "missing source code file: ${source_code_file}" >&2; exit 1; }
 [[ -f "${notices_file}" ]] || { echo "missing notices file: ${notices_file}" >&2; exit 1; }
 
-APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage}"
+# Pin release asset identities as well as bytes: continuous tags are rebuilt.
+# Reviewed upstream build/asset provenance is in packaging/appimage/TOOLS.md.
+APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://api.github.com/repos/AppImage/AppImageKit/releases/assets/98605504}"
 APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2}"
-LINUXDEPLOY_URL="${LINUXDEPLOY_URL:-https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage}"
-LINUXDEPLOY_SHA256="${LINUXDEPLOY_SHA256:-8aea8da0f7f7039d2a2cecb14657d752a222a5e1d3825caeef186c82f751cdd1}"
-LINUXDEPLOY_QT_URL="${LINUXDEPLOY_QT_URL:-https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage}"
+LINUXDEPLOY_URL="${LINUXDEPLOY_URL:-https://api.github.com/repos/linuxdeploy/linuxdeploy/releases/assets/699514588}"
+LINUXDEPLOY_SHA256="${LINUXDEPLOY_SHA256:-df908b19f1ed1cdafa79508d415aa12d6c56ce4d56d4149aa8c09286718706e5}"
+LINUXDEPLOY_QT_URL="${LINUXDEPLOY_QT_URL:-https://api.github.com/repos/linuxdeploy/linuxdeploy-plugin-qt/releases/assets/525032210}"
 LINUXDEPLOY_QT_SHA256="${LINUXDEPLOY_QT_SHA256:-cfc1055b2b9dbc08412b579f20990b7b41a17b61beaa5847dc9477c96c9e9617}"
 
 mkdir -p "${out_dir}"
@@ -53,7 +55,7 @@ fetch_verified_tool() {
   if [[ -f "${file}" ]] && echo "${checksum}  ${file}" | sha256sum --check --status; then
     echo "verified cached tool: ${file}"
   else
-    curl -L --retry 3 --fail -o "${file}" "${url}"
+    curl -L --retry 3 --fail -H 'Accept: application/octet-stream' -o "${file}" "${url}"
     echo "${checksum}  ${file}" | sha256sum --check -
   fi
   chmod +x "${file}"

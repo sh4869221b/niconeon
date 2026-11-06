@@ -25,11 +25,11 @@ class CommentWorker : public QObject {
             m_filters = std::make_unique<FilterManager>(*m_store);
             auto initialized = m_filters->initialize();
             if (!initialized) {
-                emit warning(initialized.error().message);
+                emit warning(QStringLiteral("comment emission is disabled: %1").arg(initialized.error().message));
                 m_filters.reset();
             }
         } else {
-            emit warning(store.error().message);
+            emit warning(QStringLiteral("comment emission is disabled: %1").arg(store.error().message));
         }
         m_fetcher = new NiconicoFetcher(m_options.fetch, this);
         connect(m_fetcher, &NiconicoFetcher::completed, this, &CommentWorker::fetchCompleted);
@@ -68,12 +68,11 @@ class CommentWorker : public QObject {
     void tick(PlaybackTick tick, quint64 generation, quint64 revision) {
         PlaybackBatchResult result;
         QString error;
-        if (current(generation) && m_timeline) {
-            const FilterEngine emptyFilters;
-            auto processed = m_timeline->process(
-                {tick}, m_filters ? m_filters->engine() : emptyFilters, m_profile, [this, generation, revision] {
-                    return !current(generation) || revision != m_control->revision.load();
-                });
+        // Unavailable filters were reported during initialization; keep ticks silent.
+        if (current(generation) && m_timeline && m_filters) {
+            auto processed = m_timeline->process({tick}, m_filters->engine(), m_profile, [this, generation, revision] {
+                return !current(generation) || revision != m_control->revision.load();
+            });
             if (processed)
                 result = std::move(*processed);
             else

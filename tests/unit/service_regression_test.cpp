@@ -234,6 +234,57 @@ class ServiceRegressionTest : public QObject {
         QTRY_VERIFY(service.isStopped());
     }
 
+    void invalidPersistedFilterWarnsOnceAndNeverEmitsUnfilteredComments() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        MockHttpServer server;
+        QVERIFY(server.start());
+        server.handler = [&server](const QByteArray &request) {
+            return MockHttpServer::Reply{request.startsWith("GET") ? server.watch() : seekComments()};
+        };
+        auto options = serviceOptions(server);
+        options.memoryStore = false;
+        options.storePaths =
+            StorePaths{directory.filePath(QStringLiteral("data.db")), directory.filePath(QStringLiteral("cache.db"))};
+        {
+            auto store = Store::openWithPaths(options.storePaths->dataPath, options.storePaths->cachePath);
+            QVERIFY(store);
+            QVERIFY((*store)->addNgUser(QStringLiteral("u1")));
+            // Store preserves legacy patterns; FilterManager validates them when loading.
+            QVERIFY((*store)->insertRegexFilter(QStringLiteral("[")));
+        }
+        CommentService service(options);
+        QSignalSpy ready(&service, &CommentService::ready), opened(&service, &CommentService::opened),
+            warnings(&service, &CommentService::warning), comments(&service, &CommentService::commentsReady);
+        QTRY_COMPARE(ready.size(), 1);
+        QCOMPARE(warnings.size(), 1);
+        QVERIFY(warnings.first()[0].toString().contains(QStringLiteral("invalid regex")));
+        QVERIFY(warnings.first()[0].toString().contains(QStringLiteral("comment emission is disabled")));
+        const QList<PlaybackTick> ticks{{700, false, false}, {750, false, false}, {750, true, false},
+                                        {750, true, false},  {150, true, true},   {200, false, false}};
+        // Playback, repeated paused ticks, seeks and a new video must not repeat
+        // the initialization warning or allow any unfiltered comment through.
+        for (int session = 1; session <= 2; ++session) {
+            service.openVideo(QStringLiteral("sm9.mp4"), QStringLiteral("sm9"));
+            QTRY_COMPARE(opened.size(), session);
+            QCOMPARE(qvariant_cast<CommentSource>(opened.last()[1]), CommentSource::Network);
+            QCOMPARE(opened.last()[2].toLongLong(), 2);
+            QTRY_COMPARE(service.queueDepth(), 0);
+            for (const auto &tick : ticks) {
+                const auto previousResults = comments.size();
+                service.requestTick(tick.positionMs, tick.paused, tick.isSeek);
+                QTRY_COMPARE(service.queueDepth(), 0);
+                QCOMPARE(warnings.size(), 1);
+                QCOMPARE(comments.size(), previousResults + 1);
+                const auto result = qvariant_cast<PlaybackBatchResult>(comments.last()[0]);
+                QVERIFY(result.emitComments.isEmpty());
+                QCOMPARE(result.processedTicks, 0);
+            }
+        }
+        service.shutdown();
+        QTRY_VERIFY(service.isStopped());
+    }
+
     void shutdownDuringNetworkAndQueuedMutations() {
         MockHttpServer server;
         QVERIFY(server.start());

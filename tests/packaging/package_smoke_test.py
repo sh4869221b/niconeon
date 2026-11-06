@@ -7,6 +7,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -180,6 +181,71 @@ class WindowsDependencyCollectorTests(unittest.TestCase):
 
 @unittest.skipIf(os.name == "nt", "Bash/AppRun packaging layout is a Linux test")
 class PackagingSmoke(unittest.TestCase):
+    def test_appimage_tools_use_pinned_assets_and_require_verified_bytes(self):
+        payload = b'#!/bin/sh\necho executed >> "$TOOL_EXECUTIONS"\n'
+        digest = hashlib.sha256(payload).hexdigest()
+        tools = ["appimagetool.AppImage", "linuxdeploy.AppImage", "linuxdeploy-plugin-qt.AppImage"]
+        for case in ["download", "cached", "replace-corrupt-cache", "corrupt-download"]:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = root / "scripts/release/package_linux_appimage.sh"
+                script.parent.mkdir(parents=True)
+                shutil.copy2(ROOT / "scripts/release/package_linux_appimage.sh", script)
+                for name in ["build/release/niconeon", "packaging/appimage/niconeon.desktop",
+                             "packaging/appimage/niconeon.png", "LICENSE", "COPYING",
+                             "SOURCE_CODE.md", "THIRD_PARTY_NOTICES.txt"]:
+                    target = root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text("fixture")
+                binaries = root / "bin"
+                binaries.mkdir()
+                curl = binaries / "curl"
+                curl.write_text(f"#!{sys.executable}\n" + '''import os, pathlib, re, sys
+args = sys.argv[1:]
+assert "Accept: application/octet-stream" in args
+assert re.fullmatch(r"https://api.github.com/repos/[^/]+/[^/]+/releases/assets/[0-9]+", args[-1])
+with open(os.environ["FETCH_LOG"], "a") as log:
+    log.write(args[-1] + "\\n")
+pathlib.Path(args[args.index("-o") + 1]).write_bytes(pathlib.Path(os.environ["FETCH_PAYLOAD"]).read_bytes())
+''')
+                curl.chmod(0o755)
+                # Stop immediately after tool verification, before any native
+                # runtime inspection/deployment. No release tool is executed.
+                ldd = binaries / "ldd"
+                ldd.write_text('#!/bin/sh\necho reached > "$NATIVE_BOUNDARY"\nexit 77\n')
+                ldd.chmod(0o755)
+                download = root / "payload"
+                download.write_bytes(b"corrupt" if case == "corrupt-download" else payload)
+                cache = root / "dist/tools"
+                cache.mkdir(parents=True)
+                if case in ["cached", "replace-corrupt-cache"]:
+                    for name in tools:
+                        (cache / name).write_bytes(payload if case == "cached" else b"corrupt cache")
+                environment = os.environ.copy()
+                for name in ["NICONEON_BUILD_DIR", "NICONEON_RELEASE_BASENAME"]:
+                    environment.pop(name, None)
+                for prefix in ["APPIMAGETOOL", "LINUXDEPLOY", "LINUXDEPLOY_QT"]:
+                    environment.pop(prefix + "_URL", None)
+                    environment[prefix + "_SHA256"] = digest
+                environment.update(PATH=str(binaries) + os.pathsep + environment["PATH"],
+                                   FETCH_PAYLOAD=str(download), FETCH_LOG=str(root / "fetch.log"),
+                                   TOOL_EXECUTIONS=str(root / "executions"), NATIVE_BOUNDARY=str(root / "native"))
+                result = subprocess.run(["bash", str(script), "test"], env=environment,
+                                        text=True, capture_output=True)
+                self.assertFalse((root / "executions").exists())
+                if case == "corrupt-download":
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((root / "native").exists())
+                    self.assertIn("checksum did NOT match", result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 77, result.stderr)
+                    self.assertTrue((root / "native").exists())
+                    for name in tools:
+                        self.assertEqual((cache / name).read_bytes(), payload)
+                        self.assertTrue(os.access(cache / name, os.X_OK))
+                fetched = (root / "fetch.log").read_text().splitlines() if (root / "fetch.log").exists() else []
+                self.assertEqual(len(fetched), 0 if case == "cached" else 1 if case == "corrupt-download" else 3)
+
     def test_linux_bundle_is_one_executable_and_licenses(self):
         with tempfile.TemporaryDirectory(prefix="niconeon-package-test-") as directory:
             root = Path(directory)
