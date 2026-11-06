@@ -68,10 +68,11 @@ class CommentWorker : public QObject {
     void tick(PlaybackTick tick, quint64 generation, quint64 revision) {
         PlaybackBatchResult result;
         QString error;
-        if (current(generation) && m_timeline) {
-            const FilterEngine emptyFilters;
+        if (current(generation) && m_timeline && !m_filters) {
+            error = QStringLiteral("persistent filters are unavailable; comment emission is disabled");
+        } else if (current(generation) && m_timeline) {
             auto processed = m_timeline->process(
-                {tick}, m_filters ? m_filters->engine() : emptyFilters, m_profile, [this, generation, revision] {
+                {tick}, m_filters->engine(), m_profile, [this, generation, revision] {
                     return !current(generation) || revision != m_control->revision.load();
                 });
             if (processed)

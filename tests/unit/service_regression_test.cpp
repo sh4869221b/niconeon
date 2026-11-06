@@ -234,6 +234,46 @@ class ServiceRegressionTest : public QObject {
         QTRY_VERIFY(service.isStopped());
     }
 
+    void invalidPersistedFilterNeverEmitsUnfilteredComments() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        MockHttpServer server;
+        QVERIFY(server.start());
+        server.handler = [&server](const QByteArray &request) {
+            return MockHttpServer::Reply{request.startsWith("GET") ? server.watch() : seekComments()};
+        };
+        auto options = serviceOptions(server);
+        options.memoryStore = false;
+        options.storePaths =
+            StorePaths{directory.filePath(QStringLiteral("data.db")), directory.filePath(QStringLiteral("cache.db"))};
+        {
+            auto store = Store::openWithPaths(options.storePaths->dataPath, options.storePaths->cachePath);
+            QVERIFY(store);
+            QVERIFY((*store)->addNgUser(QStringLiteral("u1")));
+            // Store preserves legacy patterns; FilterManager validates them when loading.
+            QVERIFY((*store)->insertRegexFilter(QStringLiteral("[")));
+        }
+        CommentService service(options);
+        QSignalSpy ready(&service, &CommentService::ready), opened(&service, &CommentService::opened),
+            warnings(&service, &CommentService::warning), comments(&service, &CommentService::commentsReady);
+        QTRY_COMPARE(ready.size(), 1);
+        QVERIFY(!warnings.isEmpty());
+        service.openVideo(QStringLiteral("sm9.mp4"), QStringLiteral("sm9"));
+        QTRY_COMPARE(opened.size(), 1);
+        QCOMPARE(qvariant_cast<CommentSource>(opened.first()[1]), CommentSource::Network);
+        QCOMPARE(opened.first()[2].toLongLong(), 2);
+        QTRY_COMPARE(service.queueDepth(), 0);
+        warnings.clear();
+        service.requestTick(700, false, false);
+        QTRY_COMPARE(service.queueDepth(), 0);
+        QVERIFY(comments.isEmpty());
+        QVERIFY(std::any_of(warnings.cbegin(), warnings.cend(), [](const auto &warning) {
+            return warning.first().toString().contains(QStringLiteral("comment emission is disabled"));
+        }));
+        service.shutdown();
+        QTRY_VERIFY(service.isStopped());
+    }
+
     void shutdownDuringNetworkAndQueuedMutations() {
         MockHttpServer server;
         QVERIFY(server.start());
