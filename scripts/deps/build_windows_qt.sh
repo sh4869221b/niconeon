@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Rebuild the official UCRT64 recipe, retaining platform patches and features.
-set -euo pipefail
+set -Eeuo pipefail
+trap 'status=$?; printf "Windows Qt build failed (exit %s) at line %s: %s\n" "$status" "$LINENO" "$BASH_COMMAND" >&2; exit "$status"' ERR
+# Explicit binary markers keep sha256sum --check in binary mode on MSYS.
 [[ ${MSYSTEM:-} == UCRT64 && ${MINGW_PREFIX:-} == /ucrt64 ]] || { echo 'UCRT64 shell required' >&2; exit 1; }
 for package in mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-declarative; do
   [[ $(pacman -Q "$package") == "$package 6.12.0-1" ]] || {
@@ -78,22 +80,30 @@ PKGBUILD
     mv "$attempt/$directory" "$work/$directory"
   done
   source_dir="$work/source"
-  (cd "$work" && sha256sum packages/*.pkg.tar.* > packages.sha256)
+  (cd "$work" && sha256sum --binary packages/*.pkg.tar.* > packages.sha256)
 fi
 # Always reinstall the verified package, including on a cache hit. No --needed.
 mapfile -t packages < <(find "$work/packages" -maxdepth 1 -name 'mingw-w64-ucrt-x86_64-qt6-base-6.12.0-1-*.pkg.tar.*' ! -name '*.sig' | sort)
 [[ ${#packages[@]} == 1 ]] || { echo 'expected exactly one QtBase binary package' >&2; exit 1; }
 pacman --noconfirm -U "${packages[0]}"
-[[ $(pacman -Q mingw-w64-ucrt-x86_64-qt6-base) == 'mingw-w64-ucrt-x86_64-qt6-base 6.12.0-1' ]]
+installed=$(pacman -Q mingw-w64-ucrt-x86_64-qt6-base)
+[[ $installed == 'mingw-w64-ucrt-x86_64-qt6-base 6.12.0-1' ]] || {
+  echo "Unexpected installed QtBase package after reinstall: $installed" >&2; exit 1;
+}
 if [[ -f "$work/complete" ]]; then
   (cd /ucrt64 && sha256sum --check "$source_dir/runtime.sha256")
 else
   # Includes Base plugins as well as Qt6Core/Network and other Base DLLs.
   pacman -Qlq mingw-w64-ucrt-x86_64-qt6-base | grep -E '^/ucrt64/.*\.dll$' | LC_ALL=C sort | while read -r dll; do
-    (cd /ucrt64 && sha256sum "${dll#/ucrt64/}")
+    (cd /ucrt64 && sha256sum --binary "${dll#/ucrt64/}")
   done > "$source_dir/runtime.sha256"
-  grep -q '  bin/Qt6Core.dll$' "$source_dir/runtime.sha256"
-  grep -q '  bin/Qt6Network.dll$' "$source_dir/runtime.sha256"
+  for required_dll in Qt6Core.dll Qt6Network.dll; do
+    grep -Eq "^[0-9a-f]{64} [ *]bin/${required_dll//./[.]}$" "$source_dir/runtime.sha256" || {
+      echo "Missing required runtime manifest entry: bin/$required_dll" >&2
+      cat "$source_dir/runtime.sha256" >&2
+      exit 1
+    }
+  done
   cp "$work/packages.sha256" "$source_dir/"
   cat > "$source_dir/README.txt" <<README
 QtBase 6.12.0-1 UCRT64 rebuilt from MSYS2 recipe $commit.
@@ -107,7 +117,7 @@ inventory and installed Base DLL hashes are retained here. Package archives
 are in the build cache alongside this source directory. This is a local
 security rebuild, not an official MSYS2 published binary.
 README
-  (cd "$source_dir" && find . -type f ! -name evidence.sha256 -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > evidence.sha256)
+  (cd "$source_dir" && find . -type f ! -name evidence.sha256 -print0 | LC_ALL=C sort -z | xargs -0 sha256sum --binary > evidence.sha256)
   printf '%s %s\n' "$identity" "$inventory" > "$work/complete"
 fi
 (cd "$source_dir" && sha256sum --check evidence.sha256)

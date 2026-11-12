@@ -162,7 +162,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             ca-certificates git g++ cmake ninja-build pkgconf python3 meson curl patch \
             python3-glad python3-jinja2 libfast-float-dev libvulkan-dev libshaderc-dev liblcms2-dev \
-            ffmpeg libmpv-dev libgl-dev libegl-dev libopengl-dev libxkbcommon-dev libxcb-cursor0 libxkbcommon-x11-0 libx11-xcb1 libxcb-icccm4 \
+            ffmpeg libmpv-dev libcurl4-openssl-dev libgl-dev libegl-dev libopengl-dev libxkbcommon-dev libxcb-cursor0 libxkbcommon-x11-0 libx11-xcb1 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 \
             fonts-dejavu-core fonts-noto-cjk xvfb xauth dbus-daemon libgl1-mesa-dri libegl-mesa0 libglx-mesa0 \
             zip unzip curl file patchelf desktop-file-utils \
@@ -198,8 +198,13 @@ jobs:
           echo "NICONEON_MPV_SOURCE_DIR=/opt/niconeon-media/share/niconeon/libmpv-source" >> "$GITHUB_ENV"
           echo "NICONEON_LIBPLACEBO_SOURCE_DIR=/opt/niconeon-media/share/niconeon/libplacebo-source" >> "$GITHUB_ENV"
           echo "NICONEON_MEDIA_PREFIX=/opt/niconeon-media" >> "$GITHUB_ENV"
-      - name: Check SDK runtime dependencies
+      - name: Check SDK discovery and runtime dependencies
         run: |
+          # Shared linking still resolves Requires.private metadata. These are
+          # consumer development dependencies, not the full SDK build toolchain.
+          pkg-config --print-errors --exists mpv
+          test "$(pkg-config --variable=prefix mpv)" = /opt/niconeon-media
+          pkg-config --cflags --libs mpv
           ldd /opt/niconeon-media/lib/*.so* /opt/niconeon-media/bin/ffmpeg \
             /opt/niconeon-sdk/qt/lib/libQt6Core.so.6 \
             /opt/niconeon-sdk/qt/lib/libQt6Quick.so.6 \
@@ -282,7 +287,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git g++ cmake ninja-build pkgconf \
-            ffmpeg libmpv-dev libgl-dev libegl-dev libopengl-dev \
+            ffmpeg libmpv-dev libcurl4-openssl-dev libshaderc-dev libgl-dev libegl-dev libopengl-dev \
             libb2-1 libicu76 libpcre2-16-0 libglib2.0-0t64 libdbus-1-3 libfontconfig1 \
             libharfbuzz0b libfreetype6 libpng16-16t64 libjpeg62-turbo libzstd1 \
             libssl3t64 libsqlite3-0 libwayland-client0 libwayland-cursor0 libwayland-egl1
@@ -315,8 +320,13 @@ jobs:
           echo "NICONEON_MPV_SOURCE_DIR=/opt/niconeon-media/share/niconeon/libmpv-source" >> "$GITHUB_ENV"
           echo "NICONEON_LIBPLACEBO_SOURCE_DIR=/opt/niconeon-media/share/niconeon/libplacebo-source" >> "$GITHUB_ENV"
           echo "NICONEON_MEDIA_PREFIX=/opt/niconeon-media" >> "$GITHUB_ENV"
-      - name: Check SDK runtime dependencies
+      - name: Check SDK discovery and runtime dependencies
         run: |
+          # Shared linking still resolves Requires.private metadata. These are
+          # consumer development dependencies, not the full SDK build toolchain.
+          pkg-config --print-errors --exists mpv
+          test "$(pkg-config --variable=prefix mpv)" = /opt/niconeon-media
+          pkg-config --cflags --libs mpv
           ldd /opt/niconeon-media/lib/*.so* /opt/niconeon-media/bin/ffmpeg \
             /opt/niconeon-sdk/qt/lib/libQt6Core.so.6 \
             /opt/niconeon-sdk/qt/lib/libQt6Quick.so.6 \
@@ -402,6 +412,19 @@ jobs:
           CMAKE_BUILD_PARALLEL_LEVEL: '3'
           MAKEFLAGS: '-j3'
         run: scripts/deps/build_windows_qt.sh
+      - name: Retain failed Qt build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-qt-build-diagnostics
+          path: |
+            C:/nqt/source/
+            C:/nqt/packages/
+            C:/nqt/packages.sha256
+            C:/nqt/attempt.*/source/
+            C:/nqt/attempt.*/packages/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Save verified Windows Qt package cache
         if: steps.windows-qt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0

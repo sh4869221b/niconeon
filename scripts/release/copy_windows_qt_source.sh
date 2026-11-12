@@ -12,7 +12,7 @@ def verify(manifest, root):
     for line in manifest.read_text().splitlines():
         if not line.strip():
             continue
-        m = re.fullmatch(r'([0-9a-f]{64})  (.+)', line)
+        m = re.fullmatch(r'([0-9a-f]{64}) [ *](.+)', line)
         if not m:
             raise SystemExit('malformed Qt manifest')
         name = m[2]

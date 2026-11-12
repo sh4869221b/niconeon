@@ -31,9 +31,11 @@ IDなし・コメント取得失敗・キャッシュ不正でも、有効なロ
 
 採用環境は C++23 対応 compiler、CMake 3.25+、Ninja、Qt 6.8+、同一 Qt build の GuiPrivate 開発ヘッダー（Debian: `qt6-base-private-dev`）、libmpv、pkg-config、Qt SQL SQLite driver です。GuiPrivate は renderer の render-target pixel size 取得だけに使い、Qt minor 更新時には rebuild と OpenGL 回帰テストが必要です。Windows UCRT64 は `qt6-base` package に同ヘッダーを含みます。
 Linux はディストリビューションの開発依存を使い、Windows は MSYS2 UCRT64 を使用します。
-Linux CIはDebian 13上でQt 6.12.0と公式セキュリティ修正をソースからbuildし、Windowsは最新のMSYS2 UCRT64 Qtを使用します。Qtの最低対応版6.8とは区別します。再現手順と対応ソースは[build-and-validation](docs/build-and-validation.md)を参照してください。
+Linux CIはDebian 13上でQt 6.12.0と公式セキュリティ修正をソースからbuildします。WindowsもMSYS2 UCRT64のQt 6.12.0を使用し、QtBaseを同じ公式修正で再buildします。Qtの最低対応版6.8とは区別します。再現手順と対応ソースは[build-and-validation](docs/build-and-validation.md)を参照してください。
 
 Linux CIのメディアSDKはFFmpeg 9.0.2、libass 0.17.5、LittleCMS 2.20もソースから構築し、対応ソースと実際の配布ライブラリを検証します。FFmpegの旧Sonic/ppなど上流で削除された機能は[更新時の互換性注意](docs/build-and-validation.md#latest-linux-media-sdk)を参照してください。
+
+Linuxで通常利用する場合はAppImageを推奨します。Linuxの`*-binaries.zip`は依存ライブラリを同梱しない開発者向け成果物で、ビルド時と同一のQt 6.12 SDK（GuiPrivateのprivate ABIを含む）とメディアSDKが必要です。Debian 13標準のQt 6.8だけでは利用できません。
 
 libmpv は補間テーブル初期化修正を含む公式 0.42.0 を使用します。Linuxではlibplaceboも公式7.387.0へ更新します。Meson はこれら外部依存の build に使い、アプリ本体は CMake で build します。
 

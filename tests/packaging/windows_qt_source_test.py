@@ -105,6 +105,62 @@ class WindowsQtSourceTests(unittest.TestCase):
         self.assertTrue(urls[0].endswith(b"/PKGBUILD"))
         self.assertTrue(urls[1].endswith(b"/qtbase-everywhere-src-6.12.0.tar.xz"))
 
+    def run_postinstall_fixture(self, include_core=True):
+        builder = (ROOT / "scripts/deps/build_windows_qt.sh").read_text()
+        # Execute the real postinstall block, redirecting its fixed MSYS prefix
+        # into this isolated fixture. Package installation alone is mocked.
+        runtime = self.root / "runtime"
+        (runtime / "bin").mkdir(parents=True)
+        names = ["Qt6Network.dll"] + (["Qt6Core.dll"] if include_core else [])
+        for name in names:
+            (runtime / "bin" / name).write_bytes(b"binary DLL fixture\r\n\x00")
+        work = self.root / "postinstall-work"
+        (work / "packages").mkdir(parents=True)
+        package = work / "packages/mingw-w64-ucrt-x86_64-qt6-base-6.12.0-1-any.pkg.tar.zst"
+        package.write_bytes(b"fake package")
+        (work / "packages.sha256").write_text(
+            self.manifest(work, ["packages/" + package.name]))
+        mock = self.root / "postinstall-bin"
+        mock.mkdir()
+        (mock / "pacman").write_text(
+            '#!/usr/bin/env bash\n'
+            'case "$1" in\n'
+            '  -Q) echo "mingw-w64-ucrt-x86_64-qt6-base 6.12.0-1" ;;\n'
+            '  -Qlq) printf "%s\\n" ' + " ".join(str(runtime / "bin" / n) for n in names)
+            + ' ;;\n  --noconfirm) exit 0 ;;\n  *) exit 91 ;;\nesac\n')
+        (mock / "pacman").chmod(0o755)
+        header = builder[builder.index('set -Eeuo pipefail'):builder.index('[[ ${MSYSTEM:')]
+        body = builder[builder.index('# Always reinstall'):].replace('/ucrt64', str(runtime))
+        script = self.root / "postinstall.sh"
+        script.write_text(header + '\nwork="$TEST_WORK"\nsource_dir="$TEST_SOURCE"\n'
+                          'identity=fixture\ninventory=fixture\ncommit=fixture\n' + body)
+        environment = dict(os.environ, TEST_WORK=str(work), TEST_SOURCE=str(self.source),
+                           PATH=str(mock) + os.pathsep + os.environ['PATH'])
+        return subprocess.run(['bash', str(script)], env=environment,
+                              capture_output=True, text=True), work
+
+    def test_postinstall_binary_hash_markers_preserved(self):
+        result, work = self.run_postinstall_fixture()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in ('runtime.sha256', 'evidence.sha256'):
+            manifest = (self.source / name).read_text()
+            self.assertIn(' *', manifest)
+        self.assertTrue((work / 'complete').is_file())
+
+    def test_postinstall_missing_core_has_diagnostic(self):
+        result, work = self.run_postinstall_fixture(include_core=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing required runtime manifest entry: bin/Qt6Core.dll', result.stderr)
+        self.assertFalse((work / 'complete').exists())
+
+    def test_valid_binary_marker_bundle(self):
+        runtime = self.source / 'runtime.sha256'
+        runtime.write_text(runtime.read_text().replace('  ', ' *'))
+        self.refresh()
+        evidence = self.source / 'evidence.sha256'
+        evidence.write_text(evidence.read_text().replace('  ', ' *'))
+        self.run_copier(True)
+
     def test_valid_bundle(self):
         self.run_copier(True)
         self.assertEqual((self.destination / "windows-qt-source/PKGBUILD").read_bytes(),

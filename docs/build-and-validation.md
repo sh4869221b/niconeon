@@ -136,8 +136,11 @@ scripts/release/package_linux_appimage.sh VERSION
 NICONEON_BUILD_DIR=build/windows-release scripts/release/package_windows_msys2.sh VERSION
 ```
 
-All scripts take `NICONEON_BUILD_DIR` (default `build/release`). The Linux ZIP contains the
-application and license/source metadata and requires compatible system Qt/libmpv libraries.
+All scripts take `NICONEON_BUILD_DIR` (default `build/release`). The Linux ZIP is a developer
+artifact containing only the application and license/source metadata, without runtime libraries.
+CI-produced ZIPs require the same Qt 6.12 SDK (including its GuiPrivate private ABI) and media
+SDK used for the build; Debian 13's standard Qt 6.8 packages are not sufficient.
+Use the AppImage for ordinary Linux installations.
 AppImage and Windows packaging collect dynamic dependencies. AppImage `AppRun` sets local library,
 plugin and QML paths and executes only `usr/bin/niconeon`. The Windows bundle includes `qt.conf`,
 Qt QML imports, the SQLite driver, libmpv and its recursive UCRT64 dependency tree.
