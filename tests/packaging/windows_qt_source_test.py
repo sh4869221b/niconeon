@@ -65,6 +65,46 @@ class WindowsQtSourceTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse((self.destination / "windows-qt-source").exists())
 
+    def test_builder_crlf_manifests_keep_checksums_enforced(self):
+        # Exercise the real builder up to its checksum gate, without network or
+        # Windows tools. The intentionally wrong Qt source must still fail.
+        builder = self.deps / "build_windows_qt.sh"
+        shutil.copyfile(ROOT / "scripts/deps/build_windows_qt.sh", builder)
+        mock = self.root / "mock-bin"
+        mock.mkdir()
+        (mock / "pacman").write_text(
+            '#!/usr/bin/env bash\n'
+            'if [[ $# == 2 ]]; then printf "%s 6.12.0-1\\n" "$2"; '
+            'else echo "fixture 1"; fi\n')
+        payload = b"synthetic upstream recipe\n"
+        digest = hashlib.sha256(payload).hexdigest()
+        (self.deps / "windows-qt-recipe.sha256").write_bytes(
+            (digest + "  PKGBUILD\r\n").encode())
+        (self.deps / "qt-sources.sha256").write_bytes(
+            ("0" * 64 + "  qtbase-everywhere-src-6.12.0.tar.xz\r\n").encode())
+        log = self.root / "curl-urls"
+        (mock / "curl").write_text(
+            '#!/usr/bin/env bash\n'
+            'url="${@: -1}"; output="${@: -2:1}"\n'
+            'printf "%s\\n" "$url" >> "$CURL_TEST_LOG"\n'
+            '[[ "$url" != *$\'\\r\'* ]] || exit 3\n'
+            'printf "synthetic upstream recipe\\n" > "$output"\n')
+        for executable in mock.iterdir():
+            executable.chmod(0o755)
+        environment = dict(os.environ, MSYSTEM="UCRT64", MINGW_PREFIX="/ucrt64",
+                           NICONEON_WINDOWS_QT_WORK_DIR=str(self.root / "build-cache"),
+                           CURL_TEST_LOG=str(log), PATH=str(mock) + os.pathsep + os.environ["PATH"])
+        result = subprocess.run(["bash", str(builder)], env=environment,
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PKGBUILD: OK", result.stdout)
+        self.assertIn("qtbase-everywhere-src-6.12.0.tar.xz: FAILED", result.stdout)
+        urls = log.read_bytes().splitlines()
+        self.assertEqual(len(urls), 2)
+        self.assertNotIn(b"\r", log.read_bytes())
+        self.assertTrue(urls[0].endswith(b"/PKGBUILD"))
+        self.assertTrue(urls[1].endswith(b"/qtbase-everywhere-src-6.12.0.tar.xz"))
+
     def test_valid_bundle(self):
         self.run_copier(True)
         self.assertEqual((self.destination / "windows-qt-source/PKGBUILD").read_bytes(),

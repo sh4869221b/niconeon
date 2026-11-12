@@ -41,12 +41,31 @@ cat > "$run_dir/pkg-config" <<'WRAPPER'
 set -euo pipefail
 for argument in "$@"; do
   if [[ "$argument" == *libplacebo* ]]; then
+    # libplacebo includes C++ objects (notably convert.cc). FFmpeg probes
+    # this C API by linking a C executable, not a C++ application.
+    # pkg-config's static closure does not imply the compiler's C++ runtime.
+    for option in "$@"; do
+      if [[ "$option" == --libs ]]; then
+        libraries=$("$NICONEON_REAL_PKG_CONFIG" --static "$@")
+        printf '%s -lstdc++\n' "$libraries"
+        exit 0
+      fi
+    done
     exec "$NICONEON_REAL_PKG_CONFIG" --static "$@"
   fi
 done
 exec "$NICONEON_REAL_PKG_CONFIG" "$@"
 WRAPPER
 chmod +x "$run_dir/pkg-config"
+# Keep dependency diagnostics visible even when configure exits before the
+# corresponding-source bundle can be created.
+printf 'libplacebo pkg-config executable: %s\n' "$real_pkg_config"
+printf 'libplacebo version: '
+"$run_dir/pkg-config" --modversion libplacebo
+printf 'libplacebo static CFLAGS: '
+"$run_dir/pkg-config" --cflags libplacebo
+printf 'libplacebo static LIBS (including C++ runtime): '
+"$run_dir/pkg-config" --libs libplacebo
 "$baseline" -hide_banner -buildconf > "$run_dir/baseline-buildconf.txt" 2>&1
 python3 - "$run_dir/baseline-buildconf.txt" "$run_dir/baseline-options.nul" <<'PY'
 import pathlib, shlex, sys
@@ -71,12 +90,23 @@ mapfile -d '' -t options < "$run_dir/baseline-options.nul"
 shader_compiler="$(command -v glslc || command -v glslangValidator || command -v glslang)"
 [[ -n "$shader_compiler" ]] || { echo "install glslc or glslang-tools" >&2; exit 1; }
 cd "$source_dir"
-./configure "${options[@]}" --prefix="$prefix" --libdir="$prefix/lib" \
+if ./configure "${options[@]}" --prefix="$prefix" --libdir="$prefix/lib" \
   --incdir="$prefix/include" --bindir="$prefix/bin" --enable-shared --disable-static \
   --pkg-config="$run_dir/pkg-config" --glslc="$shader_compiler" \
   --extra-cflags="-I$run_dir/vulkan/include" \
   --extra-ldflags="-Wl,--exclude-libs,libplacebo.a -Wl,-rpath,$prefix/lib" \
-  --extra-version=niconeon
+  --extra-version=niconeon; then
+  :
+else
+  configure_status=$?
+  echo "FFmpeg configure failed (status $configure_status); config.log tail follows" >&2
+  if [[ -f ffbuild/config.log ]]; then
+    tail -n 240 ffbuild/config.log >&2
+  else
+    echo "FFmpeg did not create ffbuild/config.log" >&2
+  fi
+  exit "$configure_status"
+fi
 # configure can auto-disable Vulkan shaders without an error: fail closed.
 grep -qx 'CONFIG_SCALE_VULKAN_FILTER=yes' ffbuild/config.mak || { echo "FFmpeg SPIR-V compiler unavailable" >&2; exit 1; }
 make -j "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"

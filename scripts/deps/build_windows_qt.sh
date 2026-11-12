@@ -28,14 +28,16 @@ else
   source_dir="$attempt/source"
   package_dir="$attempt/packages"
   mkdir -p "$recipe" "$source_dir/recipe" "$package_dir"
+  # Git autocrlf may affect checksum manifests on Windows. Normalize only
+  # trailing CR, then use the same normalized bytes for downloads and checks.
+  sed 's/\r$//' "$here/windows-qt-recipe.sha256" > "$source_dir/windows-qt-recipe.sha256"
+  sed 's/\r$//' "$here/qt-sources.sha256" | grep -E '  (qtbase-everywhere|CVE-)' > "$source_dir/qt-sources.sha256"
   while read -r digest name; do
     [[ -n $name ]] || continue
     fetch "https://raw.githubusercontent.com/msys2/MINGW-packages/$commit/mingw-w64-qt6-base/$name" "$recipe/$name"
-  done < "$here/windows-qt-recipe.sha256"
-  (cd "$recipe" && sha256sum --check "$here/windows-qt-recipe.sha256")
+  done < "$source_dir/windows-qt-recipe.sha256"
+  (cd "$recipe" && sha256sum --check "$source_dir/windows-qt-recipe.sha256")
   cp "$recipe/PKGBUILD" "$source_dir/PKGBUILD.upstream"
-  cp "$here/windows-qt-recipe.sha256" "$source_dir/"
-  grep -E '  (qtbase-everywhere|CVE-)' "$here/qt-sources.sha256" > "$source_dir/qt-sources.sha256"
   while read -r digest name; do
     case "$name" in
       CVE-*) url="https://download.qt.io/official_releases/qt/6.12/$name" ;;
