@@ -18,12 +18,15 @@ CMake is the only build entry point. No generated RPC bridge or separate core ex
 
 ```sh
 sudo apt-get install g++ cmake ninja-build meson curl patch pkgconf qt6-base-dev qt6-base-private-dev qt6-declarative-dev \
+  python3-glad python3-jinja2 libfast-float-dev libvulkan-dev libshaderc-dev liblcms2-dev \
   libqt6sql6-sqlite libmpv-dev qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
   qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qml6-module-qtcore \
   qml6-module-qttest fonts-dejavu-core fonts-noto-cjk
-scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+scripts/deps/build_libplacebo.sh "$PWD/build/mpv-runtime"
 export PKG_CONFIG_PATH="$PWD/build/mpv-runtime/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 export LD_LIBRARY_PATH="$PWD/build/mpv-runtime/lib:${LD_LIBRARY_PATH:-}"
+scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+export NICONEON_LIBPLACEBO_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libplacebo-source"
 export NICONEON_MPV_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libmpv-source"
 cmake --preset debug
 cmake --build --preset debug --parallel
@@ -40,7 +43,7 @@ Qt prefixes set `CMAKE_PREFIX_PATH`; make pkgconf resolve the corresponding mpv 
 Use an MSYS2 **UCRT64** shell, not MINGW64 and not MSVC. Install the
 `mingw-w64-ucrt-x86_64-` packages for gcc, cmake, ninja, meson, pkgconf, qt6-base,
 qt6-declarative, qt6-tools, mpv and mesa, plus MSYS python/curl/patch.
-Build the patched libmpv into the selected UCRT64 SDK before configuring. Run the `windows-debug` or `windows-release`
+Build the supported libmpv into the selected UCRT64 SDK before configuring. Run the `windows-debug` or `windows-release`
 configure/build/test presets; their outputs are in `build/windows-debug` and `build/windows-release`.
 The Qt, libmpv, C++ runtime and application must all use the same UCRT64 toolchain.
 
@@ -162,7 +165,7 @@ This migration validates build, test and distribution packaging through read-onl
 permissions and workflow artifact uploads. The manual `Release Rebuild` workflow now stops at
 those artifacts; it does not create or update a GitHub Release.
 
-The existing tag-release promotion workflow (`release.yml`) remains byte-identical to the baseline.
+The existing tag-release promotion workflow (`release.yml`) retains its publication flow; dependency action versions are updated separately.
 That publication path has not been fully qualified for this migration. Actual release publication
 requires separate authorization and end-to-end release validation; successful PR packaging alone
 is not a release-promotion approval.
@@ -192,9 +195,9 @@ The native clean-startup check requires a real OpenGL QRhi context, not the Qt Q
 software backend. A software-fallback startup pass is not real-GPU, media, HDR or
 60fps qualification.
 
-## Patched libmpv and graphics initialization
+## Supported libmpv and graphics initialization
 
-Supported binary distributions build libmpv 0.41.0 with the upstream fix
+Supported binary distributions build libmpv 0.42.0, which includes the upstream fix
 [72d43dc9](https://github.com/mpv-player/mpv/commit/72d43dc9c999a21d867cdc0f934f3e4cd2195aa9).
 Uninitialized padding in six-tap scaler lookup tables can contain NaNs and corrupt
 otherwise valid video. This fixes the data rather than reducing interpolation quality.
@@ -202,18 +205,20 @@ The versioned source download is SHA-256 checked; Meson may not download subproj
 Meson builds only this external dependency; the application remains CMake-only.
 
 ```sh
-# Install Meson, Ninja, curl, patch and libmpv development dependencies first.
-scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+# Install Meson 1.3+, Ninja, curl, patch and libmpv development dependencies first.
+scripts/deps/build_libplacebo.sh "$PWD/build/mpv-runtime"
 export PKG_CONFIG_PATH="$PWD/build/mpv-runtime/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 export LD_LIBRARY_PATH="$PWD/build/mpv-runtime/lib:${LD_LIBRARY_PATH:-}"
+scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+export NICONEON_LIBPLACEBO_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libplacebo-source"
 export NICONEON_MPV_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libmpv-source"
 cmake --preset debug
 cmake --build --preset debug
 ```
 
-In a disposable Windows UCRT64 SDK, CI installs the patched dependency into `/ucrt64`
+In a disposable Windows UCRT64 SDK, CI installs the supported dependency into `/ucrt64`
 before configuring the application. AppImage/Windows packaging requires and includes
-the exact corresponding source archive, patch, build script and license information.
+the exact corresponding source archive, integration patch, build script and license information.
 
 On Linux/X11 the application prefers Qt's real EGL/OpenGL integration; Qt can fall
 back to GLX if EGL cannot initialize. An explicit `QT_XCB_GL_INTEGRATION` is preserved.
@@ -223,3 +228,37 @@ matching a desktop environment and letting Qt's portal queries complete and clea
 On Windows `GALLIUM_DRIVER=llvmpipe` is selected only if unset: proprietary system
 OpenGL drivers ignore this Mesa-specific setting, so Qt remains hardware-first,
 while its bundled Mesa software fallback does not route through D3D12/WARP.
+
+## Dependency update policy (2026-11-12)
+
+The pinned libmpv release is 0.42.0. Its upstream requirements are FFmpeg 6.1+,
+libplacebo 7.387.0+, libass 0.12.2+ and Meson 1.3+. Debian 13 supplies only
+libplacebo 7.349.0, so Linux first builds the checksum-pinned upstream 7.387.0
+with OpenGL/Vulkan enabled as a PIC static library in the same prefix. Current MSYS2 UCRT64 supplies
+7.387.0 through its package manager. The scaler LUT fix is now part of
+the release, so the old LUT patch is removed. A small Linux-only Meson patch links libplacebo
+statically and hides its symbols, avoiding ABI interposition with the older
+libplacebo used by Debian FFmpeg. Windows retains its matching shared SDK library. Source checksum and
+built-runtime/source-bundle matching remain mandatory. AppImages also include the new libplacebo
+source archive, build script, LGPL license and static-library hash. The libmpv build rejects exported or unresolved
+`pl_*` symbols on Linux, and packaging checks its separate runtime hash. Versioned source and build
+directories keep an existing 0.41.0 workspace from being reused accidentally.
+
+Qt 6.8 is a minimum supported API, not a vendored version pin. Linux keeps the
+Debian 13 maintained Qt packages and available security updates; Windows installs the
+current UCRT64 packages with a full system update. Do not mix Qt runtimes and private
+headers from different SDKs or raise the minimum merely to match a new release.
+As of this update, upstream/MSYS2 Qt is 6.12.0 while Debian 13 supplies 6.8.2
+with distribution patches. This is not a claim that Linux uses the latest upstream
+Qt or that all known Qt vulnerabilities are fixed. Check the
+[Debian Qt security tracker](https://security-tracker.debian.org/tracker/source-package/qt6-base)
+before distributing a release.
+Every dependency update must pass the existing unit, QML, strict default/bilinear
+OpenGL and packaging gates; it does not establish real-GPU/HDR qualification.
+
+GitHub Actions use checkout 7.0.1, upload-artifact 7.0.2, download-artifact 8.0.2,
+setup-msys2 2.33.0 and action-gh-release 3.0.4. The Node.js 24 actions require
+runner 2.327.1+ (checkout authenticated Git in containers: 2.329.0+); the hosted
+`*-latest` runners supply this. Keep the artifact archive defaults and the new
+download digest-mismatch failure behavior. Release publication is not exercised by
+a PR build. AppImage tool/runtime pin provenance is in [TOOLS.md](../packaging/appimage/TOOLS.md).

@@ -1,0 +1,17 @@
+Subject: Keep Linux libplacebo private to libmpv
+
+Debian FFmpeg can depend on an older libplacebo SONAME with the same unversioned
+symbols. Link the new libplacebo statically and hide its symbols, preventing ABI
+interposition without rebuilding or replacing the distribution's FFmpeg libraries.
+Windows continues to use its matching MSYS2 shared dependency.
+
+--- a/meson.build
++++ b/meson.build
+@@ -30,3 +30,7 @@
+ libplacebo = dependency('libplacebo', version: '>=7.387.0',
++                static: host_machine.system() == 'linux',
+                 default_options: ['default_library=static', 'demos=false'])
++if host_machine.system() == 'linux'
++    add_project_link_arguments('-Wl,--exclude-libs,libplacebo.a', language: 'c')
++endif
+ 

@@ -31,13 +31,15 @@ IDなし・コメント取得失敗・キャッシュ不正でも、有効なロ
 
 採用環境は C++23 対応 compiler、CMake 3.25+、Ninja、Qt 6.8+、同一 Qt build の GuiPrivate 開発ヘッダー（Debian: `qt6-base-private-dev`）、libmpv、pkg-config、Qt SQL SQLite driver です。GuiPrivate は renderer の render-target pixel size 取得だけに使い、Qt minor 更新時には rebuild と OpenGL 回帰テストが必要です。Windows UCRT64 は `qt6-base` package に同ヘッダーを含みます。
 Linux はディストリビューションの開発依存を使い、Windows は MSYS2 UCRT64 を使用します。
-libmpv は公式の補間テーブル初期化修正を適用した 0.41.0 を使用します。Meson はこの外部依存だけの build に使い、アプリ本体は CMake で build します。
+libmpv は補間テーブル初期化修正を含む公式 0.42.0 を使用します。Linuxではlibplaceboも公式7.387.0へ更新します。Meson はこれら外部依存の build に使い、アプリ本体は CMake で build します。
 
 ```sh
-# Meson / curl / patch と libmpv の開発依存をインストール後:
-scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+# Meson / curl / patch と libmpv・libplacebo の開発依存（下記build-and-validation参照）をインストール後:
+scripts/deps/build_libplacebo.sh "$PWD/build/mpv-runtime"
 export PKG_CONFIG_PATH="$PWD/build/mpv-runtime/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 export LD_LIBRARY_PATH="$PWD/build/mpv-runtime/lib:${LD_LIBRARY_PATH:-}"
+scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+export NICONEON_LIBPLACEBO_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libplacebo-source"
 export NICONEON_MPV_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libmpv-source"
 cmake --preset linux-debug
 cmake --build --preset linux-debug

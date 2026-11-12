@@ -35,8 +35,10 @@ notices_file="${repo_root}/THIRD_PARTY_NOTICES.txt"
 
 # Pin release asset identities as well as bytes: continuous tags are rebuilt.
 # Reviewed upstream build/asset provenance is in packaging/appimage/TOOLS.md.
-APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://api.github.com/repos/AppImage/AppImageKit/releases/assets/98605504}"
-APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2}"
+APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://api.github.com/repos/AppImage/appimagetool/releases/assets/715388534}"
+APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-e8c1169c4af66c3184d7ee110713d4be04befe671fa358e2c1591ee840553b03}"
+APPIMAGE_RUNTIME_URL="${APPIMAGE_RUNTIME_URL:-https://api.github.com/repos/AppImage/type2-runtime/releases/assets/657374641}"
+APPIMAGE_RUNTIME_SHA256="${APPIMAGE_RUNTIME_SHA256:-617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46}"
 LINUXDEPLOY_URL="${LINUXDEPLOY_URL:-https://api.github.com/repos/linuxdeploy/linuxdeploy/releases/assets/699514588}"
 LINUXDEPLOY_SHA256="${LINUXDEPLOY_SHA256:-df908b19f1ed1cdafa79508d415aa12d6c56ce4d56d4149aa8c09286718706e5}"
 LINUXDEPLOY_QT_URL="${LINUXDEPLOY_QT_URL:-https://api.github.com/repos/linuxdeploy/linuxdeploy-plugin-qt/releases/assets/525032210}"
@@ -47,6 +49,7 @@ tools_dir="${out_dir}/tools"
 mkdir -p "${tools_dir}"
 
 appimagetool_img="${tools_dir}/appimagetool.AppImage"
+appimage_runtime="${tools_dir}/runtime-x86_64"
 linuxdeploy_img="${tools_dir}/linuxdeploy.AppImage"
 linuxdeploy_qt_img="${tools_dir}/linuxdeploy-plugin-qt.AppImage"
 
@@ -61,6 +64,7 @@ fetch_verified_tool() {
   chmod +x "${file}"
 }
 fetch_verified_tool "${APPIMAGETOOL_URL}" "${appimagetool_img}" "${APPIMAGETOOL_SHA256}"
+fetch_verified_tool "${APPIMAGE_RUNTIME_URL}" "${appimage_runtime}" "${APPIMAGE_RUNTIME_SHA256}"
 fetch_verified_tool "${LINUXDEPLOY_URL}" "${linuxdeploy_img}" "${LINUXDEPLOY_SHA256}"
 fetch_verified_tool "${LINUXDEPLOY_QT_URL}" "${linuxdeploy_qt_img}" "${LINUXDEPLOY_QT_SHA256}"
 
@@ -86,6 +90,8 @@ cp "${gpl_file}" "${app_dir}/usr/share/licenses/niconeon/COPYING"
 cp "${source_code_file}" "${app_dir}/usr/share/licenses/niconeon/SOURCE_CODE.md"
 cp "${notices_file}" "${app_dir}/usr/share/licenses/niconeon/THIRD_PARTY_NOTICES.txt"
 "${repo_root}/scripts/release/copy_mpv_source.sh" "${app_dir}/usr/share/licenses/niconeon"
+placebo_archive="$(pkg-config --variable=libdir libplacebo)/libplacebo.a"
+"${repo_root}/scripts/release/copy_libplacebo_source.sh" "${app_dir}/usr/share/licenses/niconeon" "$placebo_archive"
 cp "${repo_root}/packaging/appimage/AppRun" "${app_dir}/AppRun"
 chmod 755 "${app_dir}/AppRun"
 
@@ -106,7 +112,7 @@ APPIMAGE_EXTRACT_AND_RUN=1 \
 cp "${repo_root}/packaging/appimage/AppRun" "${app_dir}/AppRun"
 chmod 755 "${app_dir}/AppRun"
 out_appimage="${out_dir}/${base}.AppImage"
-APPIMAGE_EXTRACT_AND_RUN=1 "${appimagetool_img}" "${app_dir}" "${out_appimage}"
+APPIMAGE_EXTRACT_AND_RUN=1 "${appimagetool_img}" --runtime-file "${appimage_runtime}" "${app_dir}" "${out_appimage}"
 chmod 755 "${out_appimage}"
 
 echo "created: ${out_appimage}"

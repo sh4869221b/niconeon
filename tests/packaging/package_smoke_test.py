@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -184,7 +185,7 @@ class PackagingSmoke(unittest.TestCase):
     def test_appimage_tools_use_pinned_assets_and_require_verified_bytes(self):
         payload = b'#!/bin/sh\necho executed >> "$TOOL_EXECUTIONS"\n'
         digest = hashlib.sha256(payload).hexdigest()
-        tools = ["appimagetool.AppImage", "linuxdeploy.AppImage", "linuxdeploy-plugin-qt.AppImage"]
+        tools = ["appimagetool.AppImage", "runtime-x86_64", "linuxdeploy.AppImage", "linuxdeploy-plugin-qt.AppImage"]
         for case in ["download", "cached", "replace-corrupt-cache", "corrupt-download"]:
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -224,7 +225,7 @@ pathlib.Path(args[args.index("-o") + 1]).write_bytes(pathlib.Path(os.environ["FE
                 environment = os.environ.copy()
                 for name in ["NICONEON_BUILD_DIR", "NICONEON_RELEASE_BASENAME"]:
                     environment.pop(name, None)
-                for prefix in ["APPIMAGETOOL", "LINUXDEPLOY", "LINUXDEPLOY_QT"]:
+                for prefix in ["APPIMAGETOOL", "APPIMAGE_RUNTIME", "LINUXDEPLOY", "LINUXDEPLOY_QT"]:
                     environment.pop(prefix + "_URL", None)
                     environment[prefix + "_SHA256"] = digest
                 environment.update(PATH=str(binaries) + os.pathsep + environment["PATH"],
@@ -244,7 +245,7 @@ pathlib.Path(args[args.index("-o") + 1]).write_bytes(pathlib.Path(os.environ["FE
                         self.assertEqual((cache / name).read_bytes(), payload)
                         self.assertTrue(os.access(cache / name, os.X_OK))
                 fetched = (root / "fetch.log").read_text().splitlines() if (root / "fetch.log").exists() else []
-                self.assertEqual(len(fetched), 0 if case == "cached" else 1 if case == "corrupt-download" else 3)
+                self.assertEqual(len(fetched), 0 if case == "cached" else 1 if case == "corrupt-download" else 4)
 
     def test_linux_bundle_is_one_executable_and_licenses(self):
         with tempfile.TemporaryDirectory(prefix="niconeon-package-test-") as directory:
@@ -271,26 +272,83 @@ pathlib.Path(args[args.index("-o") + 1]).write_bytes(pathlib.Path(os.environ["FE
             subprocess.run(["bash", str(root / "scripts/release/verify_binary_artifact_licenses.sh"),
                             str(artifact)], check=True)
 
-    def test_runtime_hash_rejects_unpatched_or_changed_library(self):
+    def test_runtime_hash_rejects_unsupported_or_changed_library(self):
         with tempfile.TemporaryDirectory(prefix="niconeon-runtime-test-") as directory:
             root = Path(directory)
             runtime = root / "libmpv.so.2"
-            runtime.write_bytes(b"fixture-patched-runtime")
+            runtime.write_bytes(b"fixture-supported-runtime")
             digest = hashlib.sha256(runtime.read_bytes()).hexdigest()
             (root / "library.sha256").write_text(f"{digest}  libmpv.so.2\n")
             environment = os.environ.copy()
             environment["NICONEON_MPV_SOURCE_DIR"] = str(root)
             command = ["bash", str(ROOT / "scripts/release/verify_mpv_runtime.sh"), str(runtime)]
             self.assertEqual(subprocess.run(command, env=environment, capture_output=True).returncode, 0)
-            runtime.write_bytes(b"fixture-unpatched-runtime")
+            runtime.write_bytes(b"fixture-unsupported-runtime")
             self.assertNotEqual(subprocess.run(command, env=environment, capture_output=True).returncode, 0)
 
-    def test_modified_library_source_rejects_corrupt_archive(self):
+    def test_mpv_build_retains_verified_source_and_static_dependency_patch(self):
+        with tempfile.TemporaryDirectory(prefix="niconeon-mpv-build-test-") as directory:
+            root = Path(directory)
+            work, prefix = root / "work", root / "install"
+            work.mkdir()
+            # Existing 0.41 builds must not be reused by the new release.
+            (work / "build").mkdir()
+            (work / "build/old-build").write_text("keep")
+            fixture = root / "fixture/mpv-0.42.0"
+            fixture.mkdir(parents=True)
+            (fixture / "Copyright").write_text("fixture upstream license")
+            (fixture / "meson.build").write_text("\nlibplacebo = dependency('libplacebo', version: '>=7.387.0',\n                default_options: ['default_library=static', 'demos=false'])\n\nlibass = dependency('libass', version: '>= 0.12.2')\n\n")
+            archive = work / "mpv-v0.42.0.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                tar.add(fixture, arcname="mpv-0.42.0")
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            script = root / "build_mpv.sh"
+            original = (ROOT / "scripts/deps/build_mpv.sh").read_text()
+            expected = next(line.split("=", 1)[1] for line in original.splitlines()
+                            if line.startswith("checksum="))
+            script.write_text(original.replace(expected, digest))
+            shutil.copy2(ROOT / "scripts/deps/mpv-static-libplacebo.patch", root / "mpv-static-libplacebo.patch")
+            meson = root / "meson"
+            meson.write_text(f"#!{sys.executable}\n" + """import os, pathlib, sys
+work, prefix = pathlib.Path(os.environ["FIXTURE_WORK"]), pathlib.Path(os.environ["FIXTURE_PREFIX"])
+args = sys.argv[1:]
+if args[0] == "setup":
+    assert args[1:3] == [str(work / "build-0.42.0"), str(work / "mpv-0.42.0")]
+    assert "nodownload" in args and "-Dplain-gl=enabled" in args
+elif args[0] in ["compile", "install"]:
+    assert args[1:3] == ["-C", str(work / "build-0.42.0")]
+if args[0] == "install":
+    (prefix / "lib").mkdir(parents=True, exist_ok=True)
+    (prefix / "lib/libmpv.so.2").write_bytes(b"fixture upstream runtime")
+""")
+            meson.chmod(0o755)
+            (root / "nm").write_text("#!/bin/sh\nexit 0\n")
+            (root / "nm").chmod(0o755)
+            environment = dict(os.environ, NICONEON_MPV_WORK_DIR=str(work),
+                               NICONEON_MESON=str(meson), FIXTURE_WORK=str(work), FIXTURE_PREFIX=str(prefix),
+                               PATH=str(root) + os.pathsep + os.environ["PATH"])
+            for _ in range(2):
+                subprocess.run(["bash", str(script), str(prefix)], env=environment,
+                               capture_output=True, check=True)
+            bundle = prefix / "share/niconeon/libmpv-source"
+            self.assertEqual({file.name for file in bundle.iterdir()},
+                             {archive.name, "mpv-static-libplacebo.patch", "build_mpv.sh", "Copyright", "README.txt", "library.sha256"})
+            self.assertEqual(hashlib.sha256((bundle / archive.name).read_bytes()).hexdigest(), digest)
+            self.assertIn(hashlib.sha256(b"fixture upstream runtime").hexdigest(),
+                          (bundle / "library.sha256").read_text())
+            self.assertEqual((work / "build/old-build").read_text(), "keep")
+            copy_script = root / "copy_mpv_source.sh"
+            copy_script.write_text((ROOT / "scripts/release/copy_mpv_source.sh").read_text().replace(expected, digest))
+            environment["NICONEON_MPV_SOURCE_DIR"] = str(bundle)
+            subprocess.run(["bash", str(copy_script), str(root / "licenses")], env=environment, check=True)
+            self.assertEqual((root / "licenses/libmpv-source" / archive.name).read_bytes(), archive.read_bytes())
+
+    def test_library_source_rejects_corrupt_archive(self):
         with tempfile.TemporaryDirectory(prefix="niconeon-source-test-") as directory:
             root = Path(directory)
             source = root / "source"
             source.mkdir()
-            for name in ["mpv-v0.41.0.tar.gz", "mpv-lut-padding.patch", "build_mpv.sh", "Copyright", "README.txt", "library.sha256"]:
+            for name in ["mpv-v0.42.0.tar.gz", "mpv-static-libplacebo.patch", "build_mpv.sh", "Copyright", "README.txt", "library.sha256"]:
                 (source / name).write_text("deliberately invalid fixture")
             environment = os.environ.copy()
             environment["NICONEON_MPV_SOURCE_DIR"] = str(source)

@@ -8,5 +8,5 @@ fi
 [[ -f "$source_dir/library.sha256" && -f "$1" ]] || { echo "missing supported libmpv build/runtime" >&2; exit 1; }
 read -r expected _ < "$source_dir/library.sha256"
 actual="$(sha256sum "$1" | cut -d ' ' -f 1)"
-[[ "$actual" == "$expected" ]] || { echo "runtime does not match the patched libmpv build; check loader/SDK paths" >&2; exit 1; }
-echo "Patched libmpv runtime matches its corresponding source build"
+[[ "$actual" == "$expected" ]] || { echo "runtime does not match the supported libmpv build; check loader/SDK paths" >&2; exit 1; }
+echo "Supported libmpv runtime matches its corresponding source build"
