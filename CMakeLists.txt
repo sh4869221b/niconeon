@@ -138,7 +138,7 @@ if(NICONEON_BUILD_APP)
 
 endif()
 
-find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format-19 clang-format)
+find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format-23 clang-format)
 if(CLANG_FORMAT_EXECUTABLE)
   add_custom_target(format-check COMMAND "${CMAKE_COMMAND}" -DCLANG_FORMAT=${CLANG_FORMAT_EXECUTABLE}
     -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -P ${PROJECT_SOURCE_DIR}/cmake/FormatCheck.cmake VERBATIM)

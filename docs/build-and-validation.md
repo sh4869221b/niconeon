@@ -18,12 +18,15 @@ CMake is the only build entry point. No generated RPC bridge or separate core ex
 
 ```sh
 sudo apt-get install g++ cmake ninja-build meson curl patch pkgconf qt6-base-dev qt6-base-private-dev qt6-declarative-dev \
+  python3-glad python3-jinja2 libfast-float-dev libvulkan-dev libshaderc-dev liblcms2-dev \
   libqt6sql6-sqlite libmpv-dev qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
   qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qml6-module-qtcore \
   qml6-module-qttest fonts-dejavu-core fonts-noto-cjk
-scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+scripts/deps/build_libplacebo.sh "$PWD/build/mpv-runtime"
 export PKG_CONFIG_PATH="$PWD/build/mpv-runtime/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 export LD_LIBRARY_PATH="$PWD/build/mpv-runtime/lib:${LD_LIBRARY_PATH:-}"
+scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+export NICONEON_LIBPLACEBO_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libplacebo-source"
 export NICONEON_MPV_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libmpv-source"
 cmake --preset debug
 cmake --build --preset debug --parallel
@@ -40,7 +43,7 @@ Qt prefixes set `CMAKE_PREFIX_PATH`; make pkgconf resolve the corresponding mpv 
 Use an MSYS2 **UCRT64** shell, not MINGW64 and not MSVC. Install the
 `mingw-w64-ucrt-x86_64-` packages for gcc, cmake, ninja, meson, pkgconf, qt6-base,
 qt6-declarative, qt6-tools, mpv and mesa, plus MSYS python/curl/patch.
-Build the patched libmpv into the selected UCRT64 SDK before configuring. Run the `windows-debug` or `windows-release`
+Build the supported libmpv into the selected UCRT64 SDK before configuring. Run the `windows-debug` or `windows-release`
 configure/build/test presets; their outputs are in `build/windows-debug` and `build/windows-release`.
 The Qt, libmpv, C++ runtime and application must all use the same UCRT64 toolchain.
 
@@ -120,7 +123,7 @@ cmake --build --preset tidy --parallel
 cmake --build build/tidy --target format-check
 ```
 
-clang-format 19 and clang-tidy 19 are the reference tools. Format checks cover maintained C++
+clang-format 23.1.5 and clang-tidy 23.1.5 are the reference tools. Format checks cover maintained C++
 source/tests, not generated CMake/Qt output. Compiler warnings are enabled on all project libraries.
 
 ## Packaging
@@ -133,8 +136,11 @@ scripts/release/package_linux_appimage.sh VERSION
 NICONEON_BUILD_DIR=build/windows-release scripts/release/package_windows_msys2.sh VERSION
 ```
 
-All scripts take `NICONEON_BUILD_DIR` (default `build/release`). The Linux ZIP contains the
-application and license/source metadata and requires compatible system Qt/libmpv libraries.
+All scripts take `NICONEON_BUILD_DIR` (default `build/release`). The Linux ZIP is a developer
+artifact containing only the application and license/source metadata, without runtime libraries.
+CI-produced ZIPs require the same Qt 6.12 SDK (including its GuiPrivate private ABI) and media
+SDK used for the build; Debian 13's standard Qt 6.8 packages are not sufficient.
+Use the AppImage for ordinary Linux installations.
 AppImage and Windows packaging collect dynamic dependencies. AppImage `AppRun` sets local library,
 plugin and QML paths and executes only `usr/bin/niconeon`. The Windows bundle includes `qt.conf`,
 Qt QML imports, the SQLite driver, libmpv and its recursive UCRT64 dependency tree.
@@ -162,7 +168,7 @@ This migration validates build, test and distribution packaging through read-onl
 permissions and workflow artifact uploads. The manual `Release Rebuild` workflow now stops at
 those artifacts; it does not create or update a GitHub Release.
 
-The existing tag-release promotion workflow (`release.yml`) remains byte-identical to the baseline.
+The existing tag-release promotion workflow (`release.yml`) retains its publication flow; dependency action versions are updated separately.
 That publication path has not been fully qualified for this migration. Actual release publication
 requires separate authorization and end-to-end release validation; successful PR packaging alone
 is not a release-promotion approval.
@@ -192,9 +198,9 @@ The native clean-startup check requires a real OpenGL QRhi context, not the Qt Q
 software backend. A software-fallback startup pass is not real-GPU, media, HDR or
 60fps qualification.
 
-## Patched libmpv and graphics initialization
+## Supported libmpv and graphics initialization
 
-Supported binary distributions build libmpv 0.41.0 with the upstream fix
+Supported binary distributions build libmpv 0.42.0, which includes the upstream fix
 [72d43dc9](https://github.com/mpv-player/mpv/commit/72d43dc9c999a21d867cdc0f934f3e4cd2195aa9).
 Uninitialized padding in six-tap scaler lookup tables can contain NaNs and corrupt
 otherwise valid video. This fixes the data rather than reducing interpolation quality.
@@ -202,18 +208,20 @@ The versioned source download is SHA-256 checked; Meson may not download subproj
 Meson builds only this external dependency; the application remains CMake-only.
 
 ```sh
-# Install Meson, Ninja, curl, patch and libmpv development dependencies first.
-scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+# Install Meson 1.3+, Ninja, curl, patch and libmpv development dependencies first.
+scripts/deps/build_libplacebo.sh "$PWD/build/mpv-runtime"
 export PKG_CONFIG_PATH="$PWD/build/mpv-runtime/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 export LD_LIBRARY_PATH="$PWD/build/mpv-runtime/lib:${LD_LIBRARY_PATH:-}"
+scripts/deps/build_mpv.sh "$PWD/build/mpv-runtime"
+export NICONEON_LIBPLACEBO_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libplacebo-source"
 export NICONEON_MPV_SOURCE_DIR="$PWD/build/mpv-runtime/share/niconeon/libmpv-source"
 cmake --preset debug
 cmake --build --preset debug
 ```
 
-In a disposable Windows UCRT64 SDK, CI installs the patched dependency into `/ucrt64`
+In a disposable Windows UCRT64 SDK, CI installs the supported dependency into `/ucrt64`
 before configuring the application. AppImage/Windows packaging requires and includes
-the exact corresponding source archive, patch, build script and license information.
+the exact corresponding source archive, integration patch, build script and license information.
 
 On Linux/X11 the application prefers Qt's real EGL/OpenGL integration; Qt can fall
 back to GLX if EGL cannot initialize. An explicit `QT_XCB_GL_INTEGRATION` is preserved.
@@ -223,3 +231,122 @@ matching a desktop environment and letting Qt's portal queries complete and clea
 On Windows `GALLIUM_DRIVER=llvmpipe` is selected only if unset: proprietary system
 OpenGL drivers ignore this Mesa-specific setting, so Qt remains hardware-first,
 while its bundled Mesa software fallback does not route through D3D12/WARP.
+
+## Dependency update policy (2026-11-12)
+
+The pinned libmpv release is 0.42.0. Its upstream requirements are FFmpeg 6.1+,
+libplacebo 7.387.0+, libass 0.12.2+ and Meson 1.3+. Debian 13 supplies only
+libplacebo 7.349.0, so Linux first builds the checksum-pinned upstream 7.387.0
+with OpenGL/Vulkan enabled as a PIC static library in the same prefix. Current MSYS2 UCRT64 supplies
+7.387.0 through its package manager. The scaler LUT fix is now part of
+the release, so the old LUT patch is removed. A small Linux-only Meson patch links libplacebo
+statically and hides its symbols, avoiding ABI interposition with the older
+libplacebo used by Debian FFmpeg. Windows retains its matching shared SDK library. Source checksum and
+built-runtime/source-bundle matching remain mandatory. AppImages also include the new libplacebo
+source archive, build script, LGPL license and static-library hash. The libmpv build rejects exported or unresolved
+`pl_*` symbols on Linux, and packaging checks its separate runtime hash. Versioned source and build
+directories keep an existing 0.41.0 workspace from being reused accidentally.
+
+Qt 6.8 remains the minimum supported API. CI now builds Qt 6.12.0 from the
+verified official Base, ShaderTools, SVG and Declarative source archives on Debian
+13, with the applicable official CVE-2026-105924 and CVE-2026-116337 patches.
+Qt 6.12.1 was not available in the official stable source index on 2026-11-12.
+Windows installs current UCRT64 packages with a full system update (Qt 6.12.0).
+Do not mix runtime and GuiPrivate headers from different SDKs or raise the minimum
+merely to match a new release. The new Linux SDK is built once per workflow and
+shared by Debug, Release, ASan/UBSan and static-analysis jobs. A source-keyed cache
+avoids unnecessary rebuilds; source and runtime hashes are rechecked before reuse.
+This retains Debian 13's runtime baseline instead of moving to a rolling distro.
+
+`scripts/deps/build_qt.sh /opt/niconeon-sdk/qt` reproduces the shared SDK; the
+workflow's `linux-sdk` job lists its system development prerequisites. Set
+`CMAKE_PREFIX_PATH` and `QT_ROOT_DIR` to that prefix, put its `bin` on `PATH`,
+and include its `lib` in `LD_LIBRARY_PATH`. The SDK retains Test/QuickTest,
+GuiPrivate, desktop OpenGL/EGL/XCB, QtBase Wayland client, TLS and SQLite.
+Only upstream Qt's example/test executables are disabled, not Niconeon's tests.
+AppImages verify the linked Qt SDK, then retain all original module archives,
+patches, build configuration, license texts and pre-deployment runtime hashes in
+`qt-source`. This is a dated security review, not a guarantee against future flaws.
+The official patch URLs, checksums and reproduction steps are in
+`scripts/deps/qt-sources.sha256` and the retained source bundle.
+
+Linux CI uses verified official CMake 4.4.5, Ninja 1.13.2, Meson 1.12.1 and
+LLVM clang-format/clang-tidy 23.1.5 from
+`scripts/deps/install_build_tools.sh`. Minimum developer versions remain separate
+from the versions selected for CI. System-managed shaderc, fast_float,
+SQLite, OpenSSL, ICU, graphics drivers and compiler packages remain Debian 13's
+maintained versions; this update does not claim to replace every transitive OS
+package with its latest upstream release. Windows uses the current consistent
+UCRT64 package set. Compiler/formatter compatibility policy is discussed above.
+Every dependency update must pass the existing unit, QML, strict default/bilinear
+OpenGL and packaging gates; it does not establish real-GPU/HDR qualification.
+
+GitHub Actions use checkout 7.0.1, upload-artifact 7.0.2, download-artifact 8.0.2,
+cache 6.1.0, setup-msys2 2.33.0 and action-gh-release 3.0.4. The Node.js 24 actions require
+runner 2.327.1+ (checkout authenticated Git in containers: 2.329.0+); the hosted
+`*-latest` runners supply this. Keep the artifact archive defaults and the new
+download digest-mismatch failure behavior. Release publication is not exercised by
+a PR build. AppImage tool/runtime pin provenance is in [TOOLS.md](../packaging/appimage/TOOLS.md).
+
+The libplacebo build uses current Vulkan-Headers 1.4.368 and its matching vk.xml,
+with a separately checked source archive
+and license notices. Debian 13 headers expose Vulkan 1.4 but lack required newer
+KHR maintenance declarations, so checking only `VK_VERSION_1_4` is insufficient.
+The system Vulkan loader is retained; no GPU feature is disabled to bypass the
+compile gate.
+
+### Latest Linux media SDK
+
+CI builds libass 0.17.5, LittleCMS 2.20, libplacebo 7.387.0, FFmpeg 9.0.2 and
+libmpv 0.42.0 into `/opt/niconeon-media`. This is separate from system packages,
+not a replacement for Debian's libraries. The matching Debian `deb-src` suite and
+`apt-get build-dep ffmpeg` provide the original feature dependencies. The workflow
+also installs the `glslc` executable for FFmpeg's current Vulkan shader build path.
+
+Build in this order, with the prefix's `lib/pkgconfig` in `PKG_CONFIG_PATH` and
+`lib` in `LD_LIBRARY_PATH`: `build_media_support.sh`, `build_libplacebo.sh`,
+`build_ffmpeg.sh`, then `build_mpv.sh` (all under `scripts/deps/`). Each takes the
+same absolute prefix. The media SDK is shared by all Linux application jobs and
+static analysis. Source-keyed caches are verified before publishing artifacts.
+
+The FFmpeg builder records the distribution's GPL-enabled configure arguments,
+updates removed OMX/glslang configuration switches, and compares the advertised
+codec, container, filter, protocol and hardware-interface names. This is feature
+coverage verification, not a hardware-acceleration or audiovisual-quality claim.
+Private static libplacebo symbols remain hidden in both libmpv and FFmpeg to avoid
+accidental symbol interposition. AppImage packaging checks the libraries resolved
+for the application against the selected SDK and retains the corresponding source
+archives, build configuration, licenses and pristine runtime hashes.
+
+FFmpeg 9 has explicit upstream removals: experimental Sonic decoding/encoding and
+the legacy `pp` postprocessing filter are removed. The obsolete `hls` input
+protocol is removed, while normal HLS playback uses the retained HLS demuxer.
+`v308`/`v408`/`v410` codec names move to rawvideo with `vyu444`/`uyva`/`v30xle`
+pixel formats. The source-bundle audit records those exact expected changes and
+requires their replacement paths; any other missing baseline feature is an error.
+This is not full backward compatibility with removed Sonic or postproc features.
+
+NVIDIA codec headers are an explicit compatibility exception: Debian 13's
+`libffmpeg-nvenc-dev` 12.1.14.0 satisfies FFmpeg 9.0.2 and retains its Linux
+NVENC minimum driver 530.41.03. Latest headers 13.1.15.0 would raise the minimum
+to 610.0, so this update does not impose that driver change. The feature inventory
+still checks NVENC/NVDEC availability; no NVIDIA hardware execution is claimed.
+See [FFmpeg's version checks](https://github.com/FFmpeg/FFmpeg/blob/n9.0.2/configure)
+and the [new header requirements](https://github.com/FFmpeg/nv-codec-headers/blob/n13.1.15.0/README).
+
+### Windows Qt security rebuild
+
+The MSYS2 QtBase 6.12.0-1 binary was built on 2026-10-20 and predates the
+applicable official Qt security patches published on 2026-10-26 and 2026-11-09.
+A passing application test does not establish that these fixes are present.
+`scripts/deps/build_windows_qt.sh` therefore rebuilds the pinned official UCRT64
+recipe with its platform patches and the same three official Qt security patches
+used on Linux. Same-version Declarative/Tools remain ABI-compatible and are
+validated by the full Windows application, packaging and clean-startup gates.
+
+The build cache contains verified binary packages and corresponding source, and
+is keyed by the recipe/scripts and complete installed package inventory. Cached
+packages are reinstalled and DLL hashes verified rather than blindly accepted.
+A later Qt package version requires a deliberate recipe/security review; the
+script refuses to downgrade it. App packaging verifies pristine QtBase DLLs and
+retains its source bundle before `windeployqt` can adjust deployment paths.

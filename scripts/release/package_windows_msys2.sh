@@ -71,6 +71,7 @@ cp "${gpl_file}" "${staging}/${base}/COPYING"
 cp "${source_code_file}" "${staging}/${base}/SOURCE_CODE.md"
 cp "${notices_file}" "${staging}/${base}/THIRD_PARTY_NOTICES.txt"
 "${repo_root}/scripts/release/copy_mpv_source.sh" "${staging}/${base}/licenses"
+"${repo_root}/scripts/release/copy_windows_qt_source.sh" "${staging}/${base}/licenses" /ucrt64
 
 # Ensure Qt resolves bundled plugins/QML modules from the app directory.
 cat >"${staging}/${base}/qt.conf" <<'EOF'

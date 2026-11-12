@@ -17,12 +17,27 @@ Native Runtime Components
 - FFmpeg (via libmpv)
   License: LGPL-2.1-or-later OR GPL-2.0-or-later (build dependent)
   Source: https://ffmpeg.org/legal.html
-  Notes: License obligations depend on the linked FFmpeg configuration in the distributed package.
+  Notes: Linux builds FFmpeg 9.0.2 with the distribution GPL-enabled feature baseline and retains original source, configuration, licenses and runtime hashes under ffmpeg-source. Windows uses current MSYS2 FFmpeg. Exact obligations depend on the retained build configuration.
+
+- libass
+  License: ISC
+  Source: https://github.com/libass/libass/tree/0.17.5
+  Notes: Linux builds libass 0.17.5 as a shared library, preserving the font and text-shaping dependencies. Exact archive, copyright/license texts, configuration and runtime hash are retained under media-support-source.
 
 - libmpv
   License: GPL-2.0-or-later (this build)
   Source: https://github.com/mpv-player/mpv/blob/master/Copyright
-  Notes: libmpv 0.41.0 with upstream LUT padding fix 72d43dc9. Corresponding source archive, patch and build script are included under libmpv-source in the distribution license directory.
+  Notes: libmpv 0.42.0 includes upstream LUT padding fix 72d43dc9. Corresponding source archive, static-libplacebo integration patch and build script are included under libmpv-source in the distribution license directory.
+
+- libplacebo (via libmpv)
+  License: LGPL-2.1-or-later
+  Source: https://github.com/haasn/libplacebo/tree/v7.387.0
+  Notes: Linux AppImages statically link libplacebo 7.387.0 inside libmpv with hidden symbols and retain its source archive, build script, license notices and static-library hash under libplacebo-source. Windows uses the matching MSYS2 UCRT64 package; release distributors must retain its native package notices and corresponding source obligations.
+
+- LittleCMS
+  License: MIT
+  Source: https://github.com/mm2/Little-CMS/tree/lcms2.20
+  Notes: Linux builds the LittleCMS 2.20 shared core library. Exact archive, license, configuration and runtime hash are retained under media-support-source.
 
 - Mesa / LLVM (Windows OpenGL fallback)
   License: MIT (Mesa), Apache-2.0 WITH LLVM-exception (LLVM); component-dependent notices
@@ -35,9 +50,9 @@ Native Runtime Components
   Notes: Windows package may include libstdc++, libgcc, and winpthread runtime DLLs.
 
 - Qt 6 Runtime
-  License: LGPL-3.0-only OR GPL-2.0-only OR Commercial
+  License: LGPL-3.0-only OR GPL-3.0-only OR Commercial (component dependent)
   Source: https://www.qt.io/licensing/
-  Notes: Deployed with windeployqt/AppImage packaging as dynamic runtime libraries.
+  Notes: Deployed as shared runtime libraries. Linux uses Qt 6.12.0 with the applicable official CVE-2026-105924 and CVE-2026-116337 fixes; qt-source retains original archives, patches, build configuration, license texts and checked runtime hashes. Windows rebuilds matching MSYS2 QtBase with the same official security fixes and retains recipe/source/runtime evidence under windows-qt-source before windeployqt.
 
 - SQLite (via Qt SQL)
   License: Public-Domain

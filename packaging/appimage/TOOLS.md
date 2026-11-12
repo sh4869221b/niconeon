@@ -6,17 +6,19 @@ SHA-256 before running them. It never discovers a new digest or falls back to `c
 at packaging time. A cached tool is also verified before reuse; a mismatched download stops
 packaging before any tool executes.
 
-Validated on 2026-11-06 (downloaded bytes match these SHA-256 values):
+Validated on 2026-11-12 (downloaded bytes match these SHA-256 values):
 
 | Tool | Official asset metadata | Upstream build | SHA-256 |
 | --- | --- | --- | --- |
-| appimagetool | [98605504](https://api.github.com/repos/AppImage/AppImageKit/releases/assets/98605504) | commit 5735cc5; unchanged binary | b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2 |
+| appimagetool | [715388534](https://api.github.com/repos/AppImage/appimagetool/releases/assets/715388534) | maintained AppImage/appimagetool, 2026-11-06 continuous release | e8c1169c4af66c3184d7ee110713d4be04befe671fa358e2c1591ee840553b03 |
+| type2 runtime | [657374641](https://api.github.com/repos/AppImage/type2-runtime/releases/assets/657374641) | runtime-x86_64, 2026-10-19 continuous release | 617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46 |
 | linuxdeploy | [699514588](https://api.github.com/repos/linuxdeploy/linuxdeploy/releases/assets/699514588) | commit 07333c6, build 373 | df908b19f1ed1cdafa79508d415aa12d6c56ce4d56d4149aa8c09286718706e5 |
 | linuxdeploy-plugin-qt | [525032210](https://api.github.com/repos/linuxdeploy/linuxdeploy-plugin-qt/releases/assets/525032210) | commit 9b9fca1, build 256; unchanged binary | cfc1055b2b9dbc08412b579f20990b7b41a17b61beaa5847dc9477c96c9e9617 |
 
-The linuxdeploy and Qt plugin hashes also match the GitHub API `digest` fields. The older
-appimagetool asset has no API digest; its downloaded bytes still match the independently
-checked-in 2026-10-01 hash. Asset IDs avoid following replacement uploads, but upstream can
+All four hashes also match the official GitHub API `digest` fields. The obsolete
+AppImageKit appimagetool has been replaced with its maintained successor. The new tool
+would download a moving runtime by default, so packaging supplies the separately verified
+runtime with `--runtime-file`; no unverified runtime download is permitted. Asset IDs avoid following replacement uploads, but upstream can
 delete an asset: a 404 or changed bytes must fail, not silently select another build.
 
 ## 2026-11-06 checksum failure investigation
