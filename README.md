@@ -33,6 +33,8 @@ IDなし・コメント取得失敗・キャッシュ不正でも、有効なロ
 Linux はディストリビューションの開発依存を使い、Windows は MSYS2 UCRT64 を使用します。
 Linux CIはDebian 13上でQt 6.12.0と公式セキュリティ修正をソースからbuildし、Windowsは最新のMSYS2 UCRT64 Qtを使用します。Qtの最低対応版6.8とは区別します。再現手順と対応ソースは[build-and-validation](docs/build-and-validation.md)を参照してください。
 
+Linux CIのメディアSDKはFFmpeg 9.0.2、libass 0.17.5、LittleCMS 2.20もソースから構築し、対応ソースと実際の配布ライブラリを検証します。FFmpegの旧Sonic/ppなど上流で削除された機能は[更新時の互換性注意](docs/build-and-validation.md#latest-linux-media-sdk)を参照してください。
+
 libmpv は補間テーブル初期化修正を含む公式 0.42.0 を使用します。Linuxではlibplaceboも公式7.387.0へ更新します。Meson はこれら外部依存の build に使い、アプリ本体は CMake で build します。
 
 ```sh

@@ -80,8 +80,74 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-  linux:
+  linux-media-sdk:
     needs: linux-sdk
+    name: linux-media-sdk
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 90
+    steps:
+      - name: Install the matching Debian media build dependencies
+        run: |
+          sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources
+          apt-get update
+          apt-get build-dep -y --no-install-recommends ffmpeg
+          apt-get install -y --no-install-recommends \
+            ca-certificates git build-essential pkgconf python3 curl patch xz-utils unzip \
+            ffmpeg glslc libmpv-dev python3-glad python3-jinja2 libfast-float-dev \
+            libvulkan-dev libshaderc-dev liblcms2-dev autoconf automake libtool nasm \
+            libfreetype-dev libfontconfig1-dev libfribidi-dev libharfbuzz-dev libunibreak-dev
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: linux-qt-sdk
+          path: build/sdk
+      - name: Select verified current build tools
+        run: |
+          tar -xzf build/sdk/niconeon-linux-sdk.tar.gz -C /opt
+          echo /opt/niconeon-sdk/tools/bin >> "$GITHUB_PATH"
+          echo "PKG_CONFIG_PATH=/opt/niconeon-media/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/niconeon-media/lib" >> "$GITHUB_ENV"
+      - name: Restore matching media SDK
+        id: media-cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: /opt/niconeon-media
+          key: linux-trixie-x86_64-media-v1-${{ hashFiles('scripts/deps/build_media_support.sh', 'scripts/deps/media-support-sources.sha256', 'scripts/deps/build_libplacebo.sh', 'scripts/deps/build_ffmpeg.sh', 'scripts/deps/ffmpeg-sources.sha256', 'scripts/deps/build_mpv.sh', 'scripts/deps/mpv-static-libplacebo.patch', 'scripts/deps/install_build_tools.sh') }}
+      - name: Build the current media stack with audited feature changes
+        if: steps.media-cache.outputs.cache-hit != 'true'
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: '2'
+        run: |
+          scripts/deps/build_media_support.sh /opt/niconeon-media
+          scripts/deps/build_libplacebo.sh /opt/niconeon-media
+          scripts/deps/build_ffmpeg.sh /opt/niconeon-media
+          scripts/deps/build_mpv.sh /opt/niconeon-media
+      - name: Verify retained media sources and runtimes
+        env:
+          NICONEON_MPV_SOURCE_DIR: /opt/niconeon-media/share/niconeon/libmpv-source
+        run: |
+          scripts/release/verify_mpv_runtime.sh /opt/niconeon-media/lib/libmpv.so.2
+          scripts/release/copy_mpv_source.sh /tmp/media-source-verification
+          scripts/release/copy_libplacebo_source.sh /tmp/media-source-verification /opt/niconeon-media/lib/libplacebo.a
+          scripts/release/copy_ffmpeg_source.sh /tmp/media-source-verification /opt/niconeon-media
+          scripts/release/copy_media_support_source.sh /tmp/media-source-verification /opt/niconeon-media
+          rm -rf /tmp/media-source-verification
+      - name: Archive verified media SDK
+        run: |
+          tar -I 'gzip -1' -cf build/niconeon-linux-media.tar.gz -C /opt niconeon-media
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: linux-media-sdk
+          path: build/niconeon-linux-media.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  linux:
+    needs: [linux-sdk, linux-media-sdk]
     name: linux-${{ matrix.preset }}
     runs-on: ubuntu-latest
     container: debian:trixie
@@ -96,7 +162,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             ca-certificates git g++ cmake ninja-build pkgconf python3 meson curl patch \
             python3-glad python3-jinja2 libfast-float-dev libvulkan-dev libshaderc-dev liblcms2-dev \
-            libmpv-dev libgl-dev libegl-dev libopengl-dev libxkbcommon-dev libxcb-cursor0 libxkbcommon-x11-0 libx11-xcb1 libxcb-icccm4 \
+            ffmpeg libmpv-dev libgl-dev libegl-dev libopengl-dev libxkbcommon-dev libxcb-cursor0 libxkbcommon-x11-0 libx11-xcb1 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 \
             fonts-dejavu-core fonts-noto-cjk xvfb xauth dbus-daemon libgl1-mesa-dri libegl-mesa0 libglx-mesa0 \
             zip unzip curl file patchelf desktop-file-utils \
@@ -120,9 +186,22 @@ jobs:
           echo "QMAKE=/opt/niconeon-sdk/qt/bin/qmake" >> "$GITHUB_ENV"
           echo "NICONEON_QT_SOURCE_DIR=/opt/niconeon-sdk/qt/share/niconeon/qt-source" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=/usr/local/lib:/opt/niconeon-sdk/qt/lib" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: linux-media-sdk
+          path: build/media-sdk
+      - name: Select verified media SDK
+        run: |
+          tar -xzf build/media-sdk/niconeon-linux-media.tar.gz -C /opt
+          echo "PKG_CONFIG_PATH=/opt/niconeon-media/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/niconeon-media/lib:/opt/niconeon-sdk/qt/lib" >> "$GITHUB_ENV"
+          echo "NICONEON_MPV_SOURCE_DIR=/opt/niconeon-media/share/niconeon/libmpv-source" >> "$GITHUB_ENV"
+          echo "NICONEON_LIBPLACEBO_SOURCE_DIR=/opt/niconeon-media/share/niconeon/libplacebo-source" >> "$GITHUB_ENV"
+          echo "NICONEON_MEDIA_PREFIX=/opt/niconeon-media" >> "$GITHUB_ENV"
       - name: Check SDK runtime dependencies
         run: |
-          ldd /opt/niconeon-sdk/qt/lib/libQt6Core.so.6 \
+          ldd /opt/niconeon-media/lib/*.so* /opt/niconeon-media/bin/ffmpeg \
+            /opt/niconeon-sdk/qt/lib/libQt6Core.so.6 \
             /opt/niconeon-sdk/qt/lib/libQt6Quick.so.6 \
             /opt/niconeon-sdk/qt/libexec/moc \
             /opt/niconeon-sdk/qt/libexec/qmlimportscanner > /tmp/qt-runtime-dependencies.txt
@@ -133,16 +212,6 @@ jobs:
           scripts/release/generate_third_party_notices.sh
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git diff --exit-code -- THIRD_PARTY_NOTICES.txt
-      - name: Build libplacebo 7.387.0 and libmpv 0.42.0
-        run: |
-          scripts/deps/build_libplacebo.sh /usr/local
-          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
-          scripts/deps/build_mpv.sh /usr/local
-          echo "NICONEON_LIBPLACEBO_SOURCE_DIR=/usr/local/share/niconeon/libplacebo-source" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/usr/local/lib:/opt/niconeon-sdk/qt/lib" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "NICONEON_MPV_SOURCE_DIR=/usr/local/share/niconeon/libmpv-source" >> "$GITHUB_ENV"
       - name: Configure
         run: cmake --preset ${{ matrix.preset }} -DNICONEON_BUILD_UI_E2E=ON
       - name: Build
@@ -168,9 +237,16 @@ jobs:
           scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-linux-x86_64-binaries.zip
           scripts/release/package_linux_appimage.sh ci
           scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-linux-x86_64.AppImage
-          timeout 30s xvfb-run -a -s '-screen 0 1280x1024x24 -ac' env \
-            APPIMAGE_EXTRACT_AND_RUN=1 NICONEON_AUTO_EXIT_MS=1500 LIBGL_ALWAYS_SOFTWARE=1 \
-            dist/niconeon-linux-x86_64.AppImage
+          # A source SDK left on disk must not hide a missing bundled dependency.
+          (
+            mv /opt/niconeon-sdk /opt/niconeon-sdk-hidden
+            trap 'mv /opt/niconeon-sdk-hidden /opt/niconeon-sdk; if [ -d /opt/niconeon-media-hidden ]; then mv /opt/niconeon-media-hidden /opt/niconeon-media; fi' EXIT
+            mv /opt/niconeon-media /opt/niconeon-media-hidden
+            env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH \
+              timeout 30s xvfb-run -a -s '-screen 0 1280x1024x24 -ac' env \
+              APPIMAGE_EXTRACT_AND_RUN=1 NICONEON_AUTO_EXIT_MS=1500 LIBGL_ALWAYS_SOFTWARE=1 \
+              dist/niconeon-linux-x86_64.AppImage
+          )
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
@@ -198,7 +274,7 @@ jobs:
           retention-days: 14
 
   static-analysis:
-    needs: linux-sdk
+    needs: [linux-sdk, linux-media-sdk]
     runs-on: ubuntu-latest
     container: debian:trixie
     steps:
@@ -206,7 +282,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git g++ cmake ninja-build pkgconf \
-            libmpv-dev libgl-dev libegl-dev libopengl-dev \
+            ffmpeg libmpv-dev libgl-dev libegl-dev libopengl-dev \
             libb2-1 libicu76 libpcre2-16-0 libglib2.0-0t64 libdbus-1-3 libfontconfig1 \
             libharfbuzz0b libfreetype6 libpng16-16t64 libjpeg62-turbo libzstd1 \
             libssl3t64 libsqlite3-0 libwayland-client0 libwayland-cursor0 libwayland-egl1
@@ -227,9 +303,22 @@ jobs:
           echo "QMAKE=/opt/niconeon-sdk/qt/bin/qmake" >> "$GITHUB_ENV"
           echo "NICONEON_QT_SOURCE_DIR=/opt/niconeon-sdk/qt/share/niconeon/qt-source" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=/usr/local/lib:/opt/niconeon-sdk/qt/lib" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: linux-media-sdk
+          path: build/media-sdk
+      - name: Select verified media SDK
+        run: |
+          tar -xzf build/media-sdk/niconeon-linux-media.tar.gz -C /opt
+          echo "PKG_CONFIG_PATH=/opt/niconeon-media/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/niconeon-media/lib:/opt/niconeon-sdk/qt/lib" >> "$GITHUB_ENV"
+          echo "NICONEON_MPV_SOURCE_DIR=/opt/niconeon-media/share/niconeon/libmpv-source" >> "$GITHUB_ENV"
+          echo "NICONEON_LIBPLACEBO_SOURCE_DIR=/opt/niconeon-media/share/niconeon/libplacebo-source" >> "$GITHUB_ENV"
+          echo "NICONEON_MEDIA_PREFIX=/opt/niconeon-media" >> "$GITHUB_ENV"
       - name: Check SDK runtime dependencies
         run: |
-          ldd /opt/niconeon-sdk/qt/lib/libQt6Core.so.6 \
+          ldd /opt/niconeon-media/lib/*.so* /opt/niconeon-media/bin/ffmpeg \
+            /opt/niconeon-sdk/qt/lib/libQt6Core.so.6 \
             /opt/niconeon-sdk/qt/lib/libQt6Quick.so.6 \
             /opt/niconeon-sdk/qt/libexec/moc \
             /opt/niconeon-sdk/qt/libexec/qmlimportscanner > /tmp/qt-runtime-dependencies.txt
@@ -264,7 +353,65 @@ jobs:
             mingw-w64-ucrt-x86_64-mpv
             mingw-w64-ucrt-x86_64-mesa
             mingw-w64-ucrt-x86_64-meson
-            python zip unzip patch curl
+            mingw-w64-ucrt-x86_64-cppwinrt
+            mingw-w64-ucrt-x86_64-dbus
+            mingw-w64-ucrt-x86_64-double-conversion
+            mingw-w64-ucrt-x86_64-freetype
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-harfbuzz
+            mingw-w64-ucrt-x86_64-icu
+            mingw-w64-ucrt-x86_64-libb2
+            mingw-w64-ucrt-x86_64-libjpeg-turbo
+            mingw-w64-ucrt-x86_64-libpng
+            mingw-w64-ucrt-x86_64-md4c
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-pcre2
+            mingw-w64-ucrt-x86_64-sqlite
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-zstd
+            mingw-w64-ucrt-x86_64-xmlstarlet
+            mingw-w64-ucrt-x86_64-vulkan-loader
+            mingw-w64-ucrt-x86_64-vulkan-headers
+            mingw-w64-ucrt-x86_64-firebird
+            mingw-w64-ucrt-x86_64-libmariadbclient
+            mingw-w64-ucrt-x86_64-postgresql
+            base-devel rsync python zip unzip patch curl
+      - name: Test Windows Qt source verification in MSYS
+        shell: msys2 {0}
+        run: /usr/bin/python3 tests/packaging/windows_qt_source_test.py
+      - name: Fingerprint the Qt build environment
+        id: qt-build-env
+        shell: msys2 {0}
+        run: |
+          inventory=$(pacman -Q | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
+          echo "inventory=$inventory" >> "$GITHUB_OUTPUT"
+      - name: Restore verified Windows Qt build inputs
+        id: windows-qt-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            C:/nqt/packages
+            C:/nqt/source
+            C:/nqt/packages.sha256
+            C:/nqt/complete
+          key: windows-ucrt64-qt-v1-${{ steps.qt-build-env.outputs.inventory }}-${{ hashFiles('scripts/deps/build_windows_qt.sh', 'scripts/deps/windows-qt-recipe.sha256', 'scripts/deps/qt-sources.sha256') }}
+      - name: Build and install QtBase with official security fixes
+        shell: msys2 {0}
+        env:
+          NICONEON_WINDOWS_QT_WORK_DIR: /c/nqt
+          CMAKE_BUILD_PARALLEL_LEVEL: '2'
+          MAKEFLAGS: '-j2'
+        run: scripts/deps/build_windows_qt.sh
+      - name: Save verified Windows Qt package cache
+        if: steps.windows-qt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            C:/nqt/packages
+            C:/nqt/source
+            C:/nqt/packages.sha256
+            C:/nqt/complete
+          key: windows-ucrt64-qt-v1-${{ steps.qt-build-env.outputs.inventory }}-${{ hashFiles('scripts/deps/build_windows_qt.sh', 'scripts/deps/windows-qt-recipe.sha256', 'scripts/deps/qt-sources.sha256') }}
       - name: Build libmpv 0.42.0 (includes upstream scaler fix)
         shell: msys2 {0}
         run: scripts/deps/build_mpv.sh /ucrt64

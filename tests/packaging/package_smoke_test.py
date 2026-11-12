@@ -14,11 +14,14 @@ from unittest.mock import patch
 import zipfile
 from types import SimpleNamespace
 
+from ffmpeg_source_test import FFmpegSourceTests
+from windows_qt_source_test import WindowsQtSourceTests
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@unittest.skipIf(os.name == "nt", "Qt SDK source packaging uses Linux shell tools")
+@unittest.skipIf(sys.platform != "linux", "Qt SDK source packaging uses Linux shell tools")
 class QtSourcePackagingTests(unittest.TestCase):
     def fixture(self, root, source_override=False):
         """Exercise the real copier with tiny, explicitly synthetic pinned inputs."""
@@ -129,6 +132,162 @@ class QtSourcePackagingTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("invalid Qt runtime manifest", result.stderr)
                 self.assertFalse(output.exists())
+
+
+@unittest.skipIf(sys.platform != "linux" or not shutil.which("cc") or not shutil.which("readelf"),
+                 "Media support packaging requires a Linux C compiler and readelf")
+class MediaSupportSourcePackagingTests(unittest.TestCase):
+    @staticmethod
+    def hash_line(root, name):
+        return f"{hashlib.sha256((root / name).read_bytes()).hexdigest()}  {name}\n"
+
+    def fixture(self, root, source_override=False):
+        """Use the real copier, synthetic pins and real minimal ELF libraries."""
+        script = root / "scripts/release/copy_media_support_source.sh"
+        script.parent.mkdir(parents=True)
+        shutil.copy2(ROOT / "scripts/release/copy_media_support_source.sh", script)
+        prefix = root / "media SDK with spaces"
+        source = (root / "source override with spaces" if source_override
+                  else prefix / "share/niconeon/media-support-source")
+        source.mkdir(parents=True)
+        manifest = root / "scripts/deps/media-support-sources.sha256"
+        manifest.parent.mkdir(parents=True)
+        source_manifest = []
+        for line in (ROOT / "scripts/deps/media-support-sources.sha256").read_text().splitlines():
+            if not line.strip() or line.startswith("#"):
+                continue
+            _, name = line.split()
+            (source / name).write_text(f"Synthetic media support source fixture: {name}\n")
+            source_manifest.append(self.hash_line(source, name))
+        # Change only the isolated fixture's adjacent trusted pins. Production
+        # pins, checksum validation and ELF inspection stay untouched.
+        manifest.write_text("".join(source_manifest))
+        shutil.copy2(manifest, source / manifest.name)
+        evidence = ["build_media_support.sh", "README.txt", "notices/libass/COPYING",
+                    "notices/lcms2/LICENSE", "configuration/build.txt",
+                    "configuration/libass/config.log", "configuration/libass/config.status",
+                    "configuration/libass/config.h", "configuration/libass/Makefile",
+                    "configuration/lcms2/intro-buildoptions.json",
+                    "configuration/lcms2/intro-dependencies.json",
+                    "configuration/lcms2/compile_commands.json",
+                    "configuration/lcms2/meson-log.txt", "configuration/lcms2/testlog.txt"]
+        for name in evidence:
+            target = source / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"Synthetic attribution/configuration fixture: {name}\n")
+        (source / "evidence.sha256").write_text("".join(self.hash_line(source, name) for name in evidence))
+        (prefix / "lib").mkdir(parents=True)
+        stub = root / "fixture.c"
+        stub.write_text("int fixture(void) { return 0; }\n")
+        runtimes = ["lib/libass.so.9", "lib/liblcms2.so.2"]
+        for name in runtimes:
+            subprocess.run(["cc", "-shared", "-fPIC", f"-Wl,-soname,{Path(name).name}",
+                            str(stub), "-o", str(prefix / name)], check=True, capture_output=True)
+        (source / "runtime.sha256").write_text("".join(self.hash_line(prefix, name) for name in runtimes))
+        environment = os.environ.copy()
+        environment.pop("NICONEON_MEDIA_SUPPORT_SOURCE_DIR", None)
+        if source_override:
+            environment["NICONEON_MEDIA_SUPPORT_SOURCE_DIR"] = str(source)
+        output = root / "licenses with spaces"
+        return source, prefix, output, ["bash", str(script), str(output), str(prefix)], environment
+
+    def assert_rejected(self, output, command, environment):
+        result = subprocess.run(command, env=environment, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(output.exists(), "failed verification must not produce a source bundle")
+        return result
+
+    def test_verified_media_sources_notices_configuration_and_runtime_hashes_are_copied(self):
+        for override in [False, True]:
+            with self.subTest(source_override=override), tempfile.TemporaryDirectory() as directory:
+                source, _, output, command, environment = self.fixture(Path(directory), override)
+                result = subprocess.run(command, env=environment, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = {file.relative_to(source): file.read_bytes()
+                            for file in source.rglob("*") if file.is_file()}
+                copied = output / "media-support-source"
+                actual = {file.relative_to(copied): file.read_bytes()
+                          for file in copied.rglob("*") if file.is_file()}
+                self.assertEqual(actual, expected)
+                self.assertFalse(any(".so" in file.name for file in copied.rglob("*")))
+
+    def test_media_corruption_and_missing_manifest_entries_fail_before_copying(self):
+        cases = ["libass-source", "lcms-source", "source-manifest", "libass-runtime",
+                 "lcms-runtime", "license", "configuration", "missing-license",
+                 "missing-configuration", "missing-runtime-entry", "duplicate-runtime-entry",
+                 "missing-evidence-entry", "duplicate-evidence-entry"]
+        for corrupt in cases:
+            with self.subTest(corrupt=corrupt), tempfile.TemporaryDirectory() as directory:
+                source, prefix, output, command, environment = self.fixture(Path(directory))
+                if corrupt in ["libass-source", "lcms-source"]:
+                    pattern = "libass-*.tar.xz" if corrupt == "libass-source" else "lcms2-*.tar.gz"
+                    next(source.glob(pattern)).write_bytes(b"corrupt source")
+                elif corrupt == "source-manifest":
+                    with (source / "media-support-sources.sha256").open("a") as manifest:
+                        manifest.write("0" * 64 + "  unapproved-source.tar.xz\n")
+                elif corrupt in ["libass-runtime", "lcms-runtime"]:
+                    name = "libass.so.9" if corrupt == "libass-runtime" else "liblcms2.so.2"
+                    # Keep a readable ELF and valid SONAME, so the hash check
+                    # (not merely readelf) must detect modified runtime bytes.
+                    with (prefix / "lib" / name).open("ab") as runtime:
+                        runtime.write(b"corrupt runtime bytes")
+                elif corrupt in ["license", "configuration", "missing-license", "missing-configuration"]:
+                    name = ("notices/lcms2/LICENSE" if "license" in corrupt
+                            else "configuration/libass/config.log")
+                    if corrupt.startswith("missing-"):
+                        (source / name).unlink()
+                    else:
+                        (source / name).write_text("corrupt retained evidence")
+                else:
+                    manifest = source / ("runtime.sha256" if "runtime" in corrupt else "evidence.sha256")
+                    lines = manifest.read_text().splitlines(True)
+                    manifest.write_text("".join(lines[1:] if corrupt.startswith("missing-")
+                                                else lines + [lines[0]]))
+                self.assert_rejected(output, command, environment)
+
+    def test_media_manifest_path_traversal_is_rejected_with_matching_hashes(self):
+        cases = [("runtime.sha256", "lib/../../outside.so", "invalid media support runtime manifest"),
+                 ("runtime.sha256", "lib/../outside.so", "invalid media support runtime manifest"),
+                 ("evidence.sha256", "configuration/../../outside", "unsafe media support evidence path"),
+                 ("evidence.sha256", "../outside", "unsafe media support evidence path"),
+                 ("evidence.sha256", "absolute", "unsafe media support evidence path")]
+        for name, path, message in cases:
+            with self.subTest(manifest=name, path=path), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, prefix, output, command, environment = self.fixture(root)
+                if path == "absolute":
+                    path = str(root / "absolute outside")
+                base = prefix if name == "runtime.sha256" else source
+                (base / path).write_bytes(b"readable outside file with a matching hash")
+                # Retain every valid entry, so traversal is rejected on its own.
+                with (source / name).open("a") as manifest:
+                    manifest.write(self.hash_line(base, path))
+                result = self.assert_rejected(output, command, environment)
+                self.assertIn(message, result.stderr)
+
+    def test_media_wrong_abi_and_external_symlinks_are_rejected(self):
+        for corrupt in ["wrong-soname", "runtime-symlink", "evidence-symlink"]:
+            with self.subTest(corrupt=corrupt), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, prefix, output, command, environment = self.fixture(root)
+                if corrupt == "wrong-soname":
+                    subprocess.run(["cc", "-shared", "-fPIC", "-Wl,-soname,libass.so.10",
+                                    str(root / "fixture.c"), "-o", str(prefix / "lib/libass.so.9")],
+                                   check=True, capture_output=True)
+                    (source / "runtime.sha256").write_text("".join(self.hash_line(prefix, name)
+                        for name in ["lib/libass.so.9", "lib/liblcms2.so.2"]))
+                    message = "unexpected media support runtime ABI"
+                else:
+                    original = (prefix / "lib/libass.so.9" if corrupt == "runtime-symlink"
+                                else source / "notices/libass/COPYING")
+                    outside = root / "external file"
+                    outside.write_bytes(original.read_bytes())
+                    original.unlink()
+                    original.symlink_to(outside)
+                    message = ("resolves outside its prefix" if corrupt == "runtime-symlink"
+                               else "media support evidence escapes its bundle")
+                result = self.assert_rejected(output, command, environment)
+                self.assertIn(message, result.stderr)
 
 
 class WindowsDependencyCollectorTests(unittest.TestCase):

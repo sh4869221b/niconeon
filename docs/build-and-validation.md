@@ -270,8 +270,8 @@ The official patch URLs, checksums and reproduction steps are in
 Linux CI uses verified official CMake 4.4.5, Ninja 1.13.2, Meson 1.12.1 and
 LLVM clang-format/clang-tidy 23.1.5 from
 `scripts/deps/install_build_tools.sh`. Minimum developer versions remain separate
-from the versions selected for CI. System-managed FFmpeg, libass, shaderc, lcms,
-SQLite, OpenSSL, ICU, graphics drivers and toolchain packages remain Debian 13's
+from the versions selected for CI. System-managed shaderc, fast_float,
+SQLite, OpenSSL, ICU, graphics drivers and compiler packages remain Debian 13's
 maintained versions; this update does not claim to replace every transitive OS
 package with its latest upstream release. Windows uses the current consistent
 UCRT64 package set. Compiler/formatter compatibility policy is discussed above.
@@ -291,3 +291,59 @@ and license notices. Debian 13 headers expose Vulkan 1.4 but lack required newer
 KHR maintenance declarations, so checking only `VK_VERSION_1_4` is insufficient.
 The system Vulkan loader is retained; no GPU feature is disabled to bypass the
 compile gate.
+
+### Latest Linux media SDK
+
+CI builds libass 0.17.5, LittleCMS 2.20, libplacebo 7.387.0, FFmpeg 9.0.2 and
+libmpv 0.42.0 into `/opt/niconeon-media`. This is separate from system packages,
+not a replacement for Debian's libraries. The matching Debian `deb-src` suite and
+`apt-get build-dep ffmpeg` provide the original feature dependencies. The workflow
+also installs the `glslc` executable for FFmpeg's current Vulkan shader build path.
+
+Build in this order, with the prefix's `lib/pkgconfig` in `PKG_CONFIG_PATH` and
+`lib` in `LD_LIBRARY_PATH`: `build_media_support.sh`, `build_libplacebo.sh`,
+`build_ffmpeg.sh`, then `build_mpv.sh` (all under `scripts/deps/`). Each takes the
+same absolute prefix. The media SDK is shared by all Linux application jobs and
+static analysis. Source-keyed caches are verified before publishing artifacts.
+
+The FFmpeg builder records the distribution's GPL-enabled configure arguments,
+updates removed OMX/glslang configuration switches, and compares the advertised
+codec, container, filter, protocol and hardware-interface names. This is feature
+coverage verification, not a hardware-acceleration or audiovisual-quality claim.
+Private static libplacebo symbols remain hidden in both libmpv and FFmpeg to avoid
+accidental symbol interposition. AppImage packaging checks the libraries resolved
+for the application against the selected SDK and retains the corresponding source
+archives, build configuration, licenses and pristine runtime hashes.
+
+FFmpeg 9 has explicit upstream removals: experimental Sonic decoding/encoding and
+the legacy `pp` postprocessing filter are removed. The obsolete `hls` input
+protocol is removed, while normal HLS playback uses the retained HLS demuxer.
+`v308`/`v408`/`v410` codec names move to rawvideo with `vyu444`/`uyva`/`v30xle`
+pixel formats. The source-bundle audit records those exact expected changes and
+requires their replacement paths; any other missing baseline feature is an error.
+This is not full backward compatibility with removed Sonic or postproc features.
+
+NVIDIA codec headers are an explicit compatibility exception: Debian 13's
+`libffmpeg-nvenc-dev` 12.1.14.0 satisfies FFmpeg 9.0.2 and retains its Linux
+NVENC minimum driver 530.41.03. Latest headers 13.1.15.0 would raise the minimum
+to 610.0, so this update does not impose that driver change. The feature inventory
+still checks NVENC/NVDEC availability; no NVIDIA hardware execution is claimed.
+See [FFmpeg's version checks](https://github.com/FFmpeg/FFmpeg/blob/n9.0.2/configure)
+and the [new header requirements](https://github.com/FFmpeg/nv-codec-headers/blob/n13.1.15.0/README).
+
+### Windows Qt security rebuild
+
+The MSYS2 QtBase 6.12.0-1 binary was built on 2026-10-20 and predates the
+applicable official Qt security patches published on 2026-10-26 and 2026-11-09.
+A passing application test does not establish that these fixes are present.
+`scripts/deps/build_windows_qt.sh` therefore rebuilds the pinned official UCRT64
+recipe with its platform patches and the same three official Qt security patches
+used on Linux. Same-version Declarative/Tools remain ABI-compatible and are
+validated by the full Windows application, packaging and clean-startup gates.
+
+The build cache contains verified binary packages and corresponding source, and
+is keyed by the recipe/scripts and complete installed package inventory. Cached
+packages are reinstalled and DLL hashes verified rather than blindly accepted.
+A later Qt package version requires a deliberate recipe/security review; the
+script refuses to downgrade it. App packaging verifies pristine QtBase DLLs and
+retains its source bundle before `windeployqt` can adjust deployment paths.

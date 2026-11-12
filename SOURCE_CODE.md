@@ -40,3 +40,23 @@ retains the exact archives, patches, verified checksums, build script, module
 license texts, configuration and SDK runtime hashes. Packaging checks that the
 application uses that SDK before deployment tools rewrite library paths.
 See `scripts/deps/build_qt.sh` and `scripts/deps/qt-sources.sha256`.
+
+## Linux FFmpeg and subtitle/color libraries
+
+Linux AppImages include FFmpeg 9.0.2, libass 0.17.5 and LittleCMS 2.20 built in a
+separate prefix on Debian 13. `ffmpeg-source` and `media-support-source` retain the
+original release archives, license texts, build instructions/configuration and
+runtime hashes. FFmpeg's baseline and resulting feature inventories are retained;
+packaging refuses an unverified or mismatched runtime. FFmpeg also links the same
+private static libplacebo, whose source bundle is retained separately.
+Other system libraries retain their own distributor license/source obligations.
+
+## Windows QtBase security rebuild
+
+Windows bundles retain `windows-qt-source`: the exact official MSYS2 QtBase
+6.12.0-1 recipe and platform patches, upstream QtBase archive, the three official
+CVE-2026-105924/CVE-2026-116337 patches, original/modified recipes, license texts,
+build configuration/log, package inventory and pristine installed DLL hashes.
+This is a local UCRT64 security rebuild, not a binary published by MSYS2. The
+matching QtDeclarative/Tools packages remain unchanged; the fixes affect QtCore
+and private QtNetwork internals without changing their public ABI.

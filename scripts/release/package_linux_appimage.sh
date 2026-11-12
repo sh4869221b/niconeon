@@ -99,6 +99,18 @@ qt_prefix="${QT_ROOT_DIR:-$(dirname "$(dirname "$qt_runtime")")}"
 "${repo_root}/scripts/release/copy_qt_source.sh" "${app_dir}/usr/share/licenses/niconeon" "$qt_prefix"
 export QMAKE="${QMAKE:-$qt_prefix/bin/qmake}"
 
+# The source bundles must describe the libraries selected for this application,
+# not merely a valid SDK that happens to be installed alongside older libraries.
+media_prefix="${NICONEON_MEDIA_PREFIX:-$(pkg-config --variable=prefix libavutil)}"
+for library in libavcodec libavformat libavutil libavfilter libswscale libswresample libass liblcms2; do
+  runtime="$(ldd "$app_bin" | awk -v name="$library" '$1 ~ ("^" name "[.]so") { sub(/^.* => /, ""); sub(/ \(0x[^)]*\).*$/, ""); print; exit }')"
+  [[ -f "$runtime" && "$(readlink -f "$runtime")" == "$(readlink -f "$media_prefix/lib/$(basename "$runtime")")" ]] || {
+    echo "application $library runtime does not match the selected media SDK" >&2; exit 1;
+  }
+done
+"${repo_root}/scripts/release/copy_ffmpeg_source.sh" "${app_dir}/usr/share/licenses/niconeon" "$media_prefix"
+"${repo_root}/scripts/release/copy_media_support_source.sh" "${app_dir}/usr/share/licenses/niconeon" "$media_prefix"
+
 placebo_archive="$(pkg-config --variable=libdir libplacebo)/libplacebo.a"
 "${repo_root}/scripts/release/copy_libplacebo_source.sh" "${app_dir}/usr/share/licenses/niconeon" "$placebo_archive"
 cp "${repo_root}/packaging/appimage/AppRun" "${app_dir}/AppRun"
