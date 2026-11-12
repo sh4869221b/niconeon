@@ -262,3 +262,10 @@ runner 2.327.1+ (checkout authenticated Git in containers: 2.329.0+); the hosted
 `*-latest` runners supply this. Keep the artifact archive defaults and the new
 download digest-mismatch failure behavior. Release publication is not exercised by
 a PR build. AppImage tool/runtime pin provenance is in [TOOLS.md](../packaging/appimage/TOOLS.md).
+
+The libplacebo build uses the exact upstream Vulkan-Headers submodule commit
+`74d8a6cb930c68ef617b202c3ff3c59d919e086b`, with a separately checked source archive
+and license notices. Debian 13 headers expose Vulkan 1.4 but lack required newer
+KHR maintenance declarations, so checking only `VK_VERSION_1_4` is insufficient.
+The system Vulkan loader is retained; no GPU feature is disabled to bypass the
+compile gate.

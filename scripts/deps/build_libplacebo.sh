@@ -19,10 +19,25 @@ if [[ ! -f "$archive" ]]; then
   mv "$archive.download" "$archive"
 fi
 printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status
+# Match the exact Vulkan-Headers gitlink in upstream v7.387.0. Debian 13's
+# headers are too old even though they expose VK_VERSION_1_4.
+vulkan_commit=74d8a6cb930c68ef617b202c3ff3c59d919e086b
+vulkan_archive="$work/Vulkan-Headers-$vulkan_commit.tar.gz"
+vulkan_checksum=75967a8288ff16044a86d1af462b96d2e75c435937efb75f2bb4102ab0382f29
+vulkan_url="https://github.com/KhronosGroup/Vulkan-Headers/archive/$vulkan_commit.tar.gz"
+if [[ ! -f "$vulkan_archive" ]]; then
+  curl --fail --location --retry 2 --connect-timeout 30 --max-time 180 "$vulkan_url" -o "$vulkan_archive.download"
+  printf '%s  %s\n' "$vulkan_checksum" "$vulkan_archive.download" | sha256sum --check --status
+  mv "$vulkan_archive.download" "$vulkan_archive"
+fi
+printf '%s  %s\n' "$vulkan_checksum" "$vulkan_archive" | sha256sum --check --status
 # Extract afresh so a modified previous build cannot be labelled pristine source.
 run_dir="$(mktemp -d "$work/build-7.387.0.XXXXXX")"
 tar -xzf "$archive" -C "$run_dir"
 source_dir="$run_dir/libplacebo-7.387.0"
+# Upstream Meson selects both these headers and their matching vk.xml together.
+mkdir -p "$source_dir/3rdparty/Vulkan-Headers"
+tar -xzf "$vulkan_archive" --strip-components=1 -C "$source_dir/3rdparty/Vulkan-Headers"
 meson="${NICONEON_MESON:-meson}"
 "$meson" setup "$run_dir/build" "$source_dir" --prefix "$prefix" --libdir lib \
   --buildtype release --wrap-mode nodownload -Ddefault_library=static -Db_staticpic=true \
@@ -34,7 +49,10 @@ static_library="$prefix/lib/libplacebo.a"
 [[ -f "$static_library" ]] || { echo "installed libplacebo static archive was not found" >&2; exit 1; }
 source_bundle="$prefix/share/niconeon/libplacebo-source"
 mkdir -p "$source_bundle/notices"
-cp "$archive" "$script_dir/build_libplacebo.sh" "$source_dir/LICENSE" "$source_bundle/"
+cp "$archive" "$vulkan_archive" "$script_dir/build_libplacebo.sh" "$source_dir/LICENSE" "$source_bundle/"
+mkdir -p "$source_bundle/notices/Vulkan-Headers/LICENSES"
+cp "$source_dir/3rdparty/Vulkan-Headers/LICENSE.md" "$source_bundle/notices/Vulkan-Headers/"
+cp "$source_dir/3rdparty/Vulkan-Headers/LICENSES/"*.txt "$source_bundle/notices/Vulkan-Headers/LICENSES/"
 # Preserve whole files with embedded third-party notices, not truncated headers.
 # The verified archive also retains every upstream notice in its original location.
 cp "$source_dir/3rdparty/json.h" "$source_bundle/notices/"
@@ -57,13 +75,18 @@ cat > "$source_bundle/README.txt" <<MANIFEST
 libplacebo 7.387.0, unmodified upstream source (LGPL-2.1-or-later)
 Source: $url
 Source SHA-256: $checksum
+Vulkan-Headers upstream gitlink: $vulkan_commit
+Vulkan-Headers source: $vulkan_url
+Vulkan-Headers source SHA-256: $vulkan_checksum
 Build on Debian 13: bash build_libplacebo.sh /absolute/prefix
 Required: C/C++ compiler, Meson >=1.3, Ninja, pkgconf, curl, tar, sha256sum,
 python3-glad >=2.0, python3-jinja2, libfast-float-dev, libvulkan-dev
-(Vulkan 1.4 headers and matching vk.xml), libshaderc-dev >=2019.1,
+(loader library), libshaderc-dev >=2019.1,
 liblcms2-dev >=2.9. Use distribution development packages and their sources
-for these separately distributed dependencies; upstream submodules are not
-included in this release archive. Meson downloads are disabled.
+for these separately distributed dependencies. Vulkan headers and vk.xml
+come from the included, hash-verified upstream gitlink archive; the script
+extracts it into 3rdparty/Vulkan-Headers before configuring. Other upstream
+submodules are supplied by distribution packages. Meson downloads are disabled.
 Vulkan, OpenGL, their loaders, shaderc and LittleCMS are explicitly required.
 Demos are disabled; other upstream feature defaults are retained.
 The archive and build script reproduce this unmodified upstream library.

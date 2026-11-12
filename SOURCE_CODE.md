@@ -26,6 +26,7 @@ See `scripts/deps/build_mpv.sh` and `docs/build-and-validation.md` in this repos
 Linux AppImages include libplacebo 7.387.0 statically linked inside libmpv from its checksum-verified upstream
 source because Debian 13 ships an older version than mpv 0.42.0 requires. The
 `libplacebo-source` license directory retains its exact source archive, build script,
-license notices and static-library hash. Packaging verifies the static library
+license notices, the matching upstream Vulkan-Headers source archive and licenses,
+and static-library hash. Packaging verifies the static library
 and the separately recorded libmpv runtime hash before deployment. Linux symbols
 are hidden inside libmpv to avoid interposing on an older libplacebo used by FFmpeg. See `scripts/deps/build_libplacebo.sh`.

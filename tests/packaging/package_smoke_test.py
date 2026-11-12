@@ -342,6 +342,59 @@ if args[0] == "install":
             environment["NICONEON_MPV_SOURCE_DIR"] = str(bundle)
             subprocess.run(["bash", str(copy_script), str(root / "licenses")], env=environment, check=True)
             self.assertEqual((root / "licenses/libmpv-source" / archive.name).read_bytes(), archive.read_bytes())
+            (root / "nm").write_text("#!/bin/sh\necho '                 U pl_version'\n")
+            result = subprocess.run(["bash", str(script), str(prefix)], env=environment,
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("libplacebo symbols are not isolated", result.stderr)
+
+    def test_static_libplacebo_source_and_link_input_checksums(self):
+        for corrupt in [None, "source", "headers", "library", "manifest"]:
+            with self.subTest(corrupt=corrupt), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "source with spaces"
+                source.mkdir()
+                source_payload = b"verified upstream source fixture"
+                digest = hashlib.sha256(source_payload).hexdigest()
+                archive = source / "libplacebo-v7.387.0.tar.gz"
+                archive.write_bytes(source_payload)
+                headers = source / "Vulkan-Headers-74d8a6cb930c68ef617b202c3ff3c59d919e086b.tar.gz"
+                headers.write_bytes(b"verified matching Vulkan headers")
+                headers_digest = hashlib.sha256(headers.read_bytes()).hexdigest()
+                library = root / "libplacebo.a"
+                library.write_bytes(b"verified PIC static library fixture")
+                library_digest = hashlib.sha256(library.read_bytes()).hexdigest()
+                (source / "library.sha256").write_text(f"{library_digest}  libplacebo.a\n")
+                for name in ["build_libplacebo.sh", "LICENSE", "README.txt", "notices/json.h",
+                             "notices/fast-float-copyright", "notices/glad/gl.h",
+                             "notices/Vulkan-Headers/LICENSE.md", "notices/Vulkan-Headers/LICENSES/Apache-2.0.txt",
+                             "notices/Vulkan-Headers/LICENSES/MIT.txt"]:
+                    file = source / name
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    file.write_text("fixture attribution")
+                script = root / "copy.sh"
+                script.write_text((ROOT / "scripts/release/copy_libplacebo_source.sh").read_text().replace(
+                    "f9e62d3774a9c4cfd198ec3abaa88294aaade2e31c04d5ab02bcf4abc98b1df5", digest).replace(
+                    "75967a8288ff16044a86d1af462b96d2e75c435937efb75f2bb4102ab0382f29", headers_digest))
+                if corrupt == "source":
+                    archive.write_bytes(b"corrupt source")
+                elif corrupt == "headers":
+                    headers.write_bytes(b"corrupt headers")
+                elif corrupt == "library":
+                    library.write_bytes(b"wrong library")
+                elif corrupt == "manifest":
+                    (source / "library.sha256").write_text(f"{library_digest}  libplacebo.so.387\n")
+                output = root / "licenses"
+                result = subprocess.run(["bash", str(script), str(output), str(library)],
+                                        env=dict(os.environ, NICONEON_LIBPLACEBO_SOURCE_DIR=str(source)),
+                                        capture_output=True, text=True)
+                if corrupt:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(output.exists())
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual((output / "libplacebo-source" / archive.name).read_bytes(), source_payload)
+                    self.assertTrue((output / "libplacebo-source/notices/glad/gl.h").is_file())
 
     def test_library_source_rejects_corrupt_archive(self):
         with tempfile.TemporaryDirectory(prefix="niconeon-source-test-") as directory:
