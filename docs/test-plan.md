@@ -34,8 +34,10 @@ G1 manual steps on a formally built `niconeon` and final AppImage/Windows artifa
 
 ## Separate qualification
 
-The migration does not certify all #78 runtime contracts: GUI sprite raster and inherited
-renderer caches/queues remain explicit #65/#78 work. 60fps is a target, not inferred from
+The raster worker tests cover cancellation, byte/count pressure, deduplication, Unicode pixel equality,
+font/DPR replacement, stalled uploads, NG rollback, seek reuse and shutdown. See [raster-worker.md](raster-worker.md).
+The migration does not certify all #78 runtime contracts: inherited CPU cache and update-worker
+queues remain explicit #64/#78 work. 60fps is a target, not inferred from
 CTest. Real Windows GPUs, native Wayland (not XWayland), high-refresh/HDR, 8h/24h soak,
 10k random seeks and clean end-user distribution licensing belong to #81–#85/#75.
 

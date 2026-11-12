@@ -1,0 +1,220 @@
+
+=== 0001-cps400-unique-p01-candidate ===
+errors ['Equal-work/complete-text prerequisites failed']
+summary {'accepted': 11216, 'diagnostics_overflow': 0, 'dropped': 0, 'expected': 12000, 'expired': 7781, 'failed': 0, 'feed_accepted': 6528, 'feed_offered': 11506, 'feed_submitted_unique': 3275, 'frame_count': 697, 'heartbeat_count': 697, 'last_submission_elapsed_ns': 32515268021, 'missing_image_observations': 0, 'missing_sprites': 0, 'offered': 12000, 'pending': 240, 'raster_backpressured': 671, 'raster_cancelled': 0, 'raster_coalesced': 1389, 'raster_completed': 25, 'raster_completion_bytes': 1435224, 'raster_completion_bytes_high_water': 1821120, 'raster_completion_high_water': 32, 'raster_completion_latency_max_ns': 1249536968, 'raster_completion_latency_total_ns': 5338118787587, 'raster_counters_available': True, 'raster_high_water': 128, 'raster_max_ns': 2872640, 'raster_queued': 94, 'raster_request_bytes': 5160, 'raster_shutdown_ns': 0, 'raster_stale': 0, 'raster_total_ns': 2915387974, 'rasterized': 11121, 'sample_overflow': 0, 'snapshot_unique': -1, 'source_pending': 784, 'submitted_unique': 3280, 'unexpected_ids': 0, 'unresident_observations': 0}
+frame_samples feed n 404 p95/p99/max ms [150.133, 156.737, 160.498]
+frame_samples full n 697 p95/p99/max ms [137.909, 155.747, 160.498]
+heartbeat_samples feed n 404 p95/p99/max ms [149.73, 157.106, 160.528]
+heartbeat_samples full n 697 p95/p99/max ms [138.379, 156.302, 160.528]
+set_frame_ns sum sec 0.111 p99 ms 2.455
+repack_ns sum sec 0.01 p99 ms 0.0
+gl_upload_ns sum sec 0.425 p99 ms 1.849
+render_cpu_ns sum sec 0.644 p99 ms 3.876
+mpv render n 709 sum sec 17.529 p50/p95/p99/max ms [22.474, 29.652, 31.539, 385.382]
+mpv time-pos n 440 sum sec 0.048 p50/p95/p99/max ms [0.008, 0.907, 2.027, 3.689]
+mpv duration n 440 sum sec 0.002 p50/p95/p99/max ms [0.001, 0.019, 0.08, 0.503]
+mpv pause n 440 sum sec 0.007 p50/p95/p99/max ms [0.013, 0.03, 0.034, 0.113]
+mpv volume n 440 sum sec 0.006 p50/p95/p99/max ms [0.008, 0.026, 0.043, 1.036]
+mpv speed n 440 sum sec 0.007 p50/p95/p99/max ms [0.005, 0.022, 0.028, 1.914]
+mpv estimated-vf-fps n 440 sum sec 0.009 p50/p95/p99/max ms [0.004, 0.021, 0.104, 2.736]
+mpv container-fps n 1 sum sec 0.0 p50/p95/p99/max ms [0.001, 0.001, 0.001, 0.001]
+mpv poll n 440 sum sec 0.262 p50/p95/p99/max ms [0.238, 2.068, 3.119, 4.294]
+phase gui_sync_wait n 710 sum sec 0.009 p50/p95/p99/max ms [0.012, 0.02, 0.023, 0.049]
+phase sync n 710 sum sec 0.141 p50/p95/p99/max ms [0.075, 0.561, 2.52, 4.018]
+phase render n 710 sum sec 34.794 p50/p95/p99/max ms [46.747, 54.403, 64.825, 412.909]
+phase swap n 710 sum sec 11.276 p50/p95/p99/max ms [4.06, 86.911, 105.159, 107.052]
+phase whole n 710 sum sec 46.228 p50/p95/p99/max ms [54.032, 139.402, 156.246, 416.766]
+comment outcomes {('activated', 'none'): 3315, ('expired', 'raster_wait'): 347, ('expired', 'source_motion'): 6859, ('expired', 'source_lag'): 575, ('cancelled', 'none'): 120}
+comment latency admitted_elapsed_ns -> raster_completed_elapsed_ns p50/p95/p99/max ms [304.837, 744.609, 915.719, 941.536]
+comment latency admitted_elapsed_ns -> gui_ready_elapsed_ns p50/p95/p99/max ms [410.072, 1028.38, 1228.086, 1249.538]
+comment latency gui_ready_elapsed_ns -> resolved_elapsed_ns p50/p95/p99/max ms [0.056, 0.113, 1.037, 2.692]
+admission -> first draw n 3280 p50/p95/p99/max ms [732.967, 1392.612, 1452.411, 1455.979]
+
+=== 0002-cps400-unique-p01-baseline ===
+errors ['Equal-work/complete-text prerequisites failed']
+summary {'accepted': 12000, 'diagnostics_overflow': 0, 'dropped': 0, 'expected': 12000, 'expired': 0, 'failed': 0, 'feed_accepted': 11973, 'feed_offered': 11973, 'feed_submitted_unique': 2725, 'frame_count': 684, 'heartbeat_count': 686, 'last_submission_elapsed_ns': 26842646161, 'missing_image_observations': 1767379, 'missing_sprites': 1767379, 'offered': 12000, 'pending': 0, 'raster_counters_available': False, 'sample_overflow': 0, 'snapshot_unique': -1, 'source_pending': 0, 'submitted_unique': 2725, 'unexpected_ids': 0, 'unresident_observations': 0}
+frame_samples feed n 391 p95/p99/max ms [146.249, 157.15, 159.206]
+frame_samples full n 684 p95/p99/max ms [135.818, 153.602, 159.206]
+heartbeat_samples feed n 393 p95/p99/max ms [146.07, 155.978, 159.3]
+heartbeat_samples full n 686 p95/p99/max ms [133.893, 153.585, 159.3]
+set_frame_ns sum sec 1.341 p99 ms 20.927
+repack_ns sum sec 1.129 p99 ms 20.394
+gl_upload_ns sum sec 0.31 p99 ms 1.781
+render_cpu_ns sum sec 0.513 p99 ms 3.811
+mpv render n 696 sum sec 17.396 p50/p95/p99/max ms [22.433, 30.681, 31.668, 392.829]
+mpv time-pos n 443 sum sec 0.009 p50/p95/p99/max ms [0.009, 0.027, 0.416, 1.131]
+mpv duration n 443 sum sec 0.001 p50/p95/p99/max ms [0.001, 0.007, 0.019, 0.02]
+mpv pause n 443 sum sec 0.007 p50/p95/p99/max ms [0.012, 0.019, 0.031, 0.82]
+mpv volume n 443 sum sec 0.005 p50/p95/p99/max ms [0.009, 0.015, 0.027, 0.072]
+mpv speed n 443 sum sec 0.003 p50/p95/p99/max ms [0.005, 0.011, 0.022, 0.025]
+mpv estimated-vf-fps n 443 sum sec 0.002 p50/p95/p99/max ms [0.003, 0.008, 0.02, 0.044]
+mpv container-fps n 1 sum sec 0.0 p50/p95/p99/max ms [0.001, 0.001, 0.001, 0.001]
+mpv poll n 443 sum sec 0.105 p50/p95/p99/max ms [0.18, 0.508, 1.289, 1.858]
+phase gui_sync_wait n 697 sum sec 0.01 p50/p95/p99/max ms [0.013, 0.02, 0.022, 0.049]
+phase sync n 697 sum sec 1.46 p50/p95/p99/max ms [0.43, 12.258, 21.14, 25.37]
+phase render n 697 sum sec 34.353 p50/p95/p99/max ms [46.882, 57.033, 64.785, 416.637]
+phase swap n 697 sum sec 10.365 p50/p95/p99/max ms [3.951, 82.448, 99.628, 101.554]
+phase whole n 697 sum sec 46.198 p50/p95/p99/max ms [54.905, 137.944, 155.839, 420.469]
+
+=== 0003-cps400-unique-p02-baseline ===
+errors ['Equal-work/complete-text prerequisites failed']
+summary {'accepted': 12000, 'diagnostics_overflow': 0, 'dropped': 0, 'expected': 12000, 'expired': 0, 'failed': 0, 'feed_accepted': 11986, 'feed_offered': 12000, 'feed_submitted_unique': 2743, 'frame_count': 687, 'heartbeat_count': 688, 'last_submission_elapsed_ns': 26941854618, 'missing_image_observations': 1768091, 'missing_sprites': 1768091, 'offered': 12000, 'pending': 0, 'raster_counters_available': False, 'sample_overflow': 0, 'snapshot_unique': -1, 'source_pending': 0, 'submitted_unique': 2743, 'unexpected_ids': 0, 'unresident_observations': 0}
+frame_samples feed n 393 p95/p99/max ms [148.826, 156.367, 158.172]
+frame_samples full n 687 p95/p99/max ms [134.917, 152.985, 158.172]
+heartbeat_samples feed n 394 p95/p99/max ms [148.889, 155.138, 160.244]
+heartbeat_samples full n 688 p95/p99/max ms [135.183, 153.062, 160.244]
+set_frame_ns sum sec 1.278 p99 ms 18.692
+repack_ns sum sec 1.08 p99 ms 18.229
+gl_upload_ns sum sec 0.306 p99 ms 1.818
+render_cpu_ns sum sec 0.506 p99 ms 3.851
+mpv render n 700 sum sec 17.448 p50/p95/p99/max ms [22.384, 30.444, 31.271, 381.897]
+mpv time-pos n 444 sum sec 0.396 p50/p95/p99/max ms [0.009, 0.027, 0.973, 195.317]
+mpv duration n 444 sum sec 0.001 p50/p95/p99/max ms [0.001, 0.012, 0.02, 0.128]
+mpv pause n 444 sum sec 0.006 p50/p95/p99/max ms [0.012, 0.02, 0.03, 0.13]
+mpv volume n 444 sum sec 0.005 p50/p95/p99/max ms [0.009, 0.017, 0.027, 0.034]
+mpv speed n 444 sum sec 0.003 p50/p95/p99/max ms [0.005, 0.012, 0.023, 0.027]
+mpv estimated-vf-fps n 444 sum sec 0.002 p50/p95/p99/max ms [0.003, 0.008, 0.021, 0.066]
+mpv container-fps n 1 sum sec 0.0 p50/p95/p99/max ms [0.003, 0.003, 0.003, 0.003]
+mpv poll n 444 sum sec 0.513 p50/p95/p99/max ms [0.18, 1.051, 1.48, 195.48]
+phase gui_sync_wait n 701 sum sec 0.009 p50/p95/p99/max ms [0.012, 0.021, 0.04, 0.053]
+phase sync n 701 sum sec 1.395 p50/p95/p99/max ms [0.384, 11.583, 18.825, 24.733]
+phase render n 701 sum sec 34.375 p50/p95/p99/max ms [46.8, 55.306, 63.076, 409.458]
+phase swap n 701 sum sec 10.483 p50/p95/p99/max ms [3.876, 82.769, 101.575, 103.531]
+phase whole n 701 sum sec 46.272 p50/p95/p99/max ms [54.582, 135.581, 153.349, 413.406]
+
+=== 0004-cps400-unique-p02-candidate ===
+errors ['Equal-work/complete-text prerequisites failed']
+summary {'accepted': 11280, 'diagnostics_overflow': 0, 'dropped': 0, 'expected': 12000, 'expired': 7890, 'failed': 0, 'feed_accepted': 6528, 'feed_offered': 11026, 'feed_submitted_unique': 3208, 'frame_count': 702, 'heartbeat_count': 702, 'last_submission_elapsed_ns': 32414623744, 'missing_image_observations': 0, 'missing_sprites': 0, 'offered': 12000, 'pending': 240, 'raster_backpressured': 676, 'raster_cancelled': 0, 'raster_coalesced': 1397, 'raster_completed': 25, 'raster_completion_bytes': 1435224, 'raster_completion_bytes_high_water': 1821120, 'raster_completion_high_water': 32, 'raster_completion_latency_max_ns': 1258214954, 'raster_completion_latency_total_ns': 5333777965822, 'raster_counters_available': True, 'raster_high_water': 128, 'raster_max_ns': 3761562, 'raster_queued': 94, 'raster_request_bytes': 5160, 'raster_shutdown_ns': 0, 'raster_stale': 0, 'raster_total_ns': 2951058444, 'rasterized': 11185, 'sample_overflow': 0, 'snapshot_unique': -1, 'source_pending': 720, 'submitted_unique': 3214, 'unexpected_ids': 0, 'unresident_observations': 0}
+frame_samples feed n 405 p95/p99/max ms [149.432, 157.252, 162.899]
+frame_samples full n 702 p95/p99/max ms [137.626, 155.114, 162.899]
+heartbeat_samples feed n 405 p95/p99/max ms [149.641, 157.424, 161.291]
+heartbeat_samples full n 702 p95/p99/max ms [137.601, 155.759, 161.291]
+set_frame_ns sum sec 0.11 p99 ms 2.367
+repack_ns sum sec 0.01 p99 ms 0.0
+gl_upload_ns sum sec 0.429 p99 ms 1.835
+render_cpu_ns sum sec 0.647 p99 ms 4.191
+mpv render n 714 sum sec 17.624 p50/p95/p99/max ms [22.444, 29.734, 31.41, 381.459]
+mpv time-pos n 438 sum sec 0.252 p50/p95/p99/max ms [0.009, 1.067, 2.11, 194.952]
+mpv duration n 438 sum sec 0.003 p50/p95/p99/max ms [0.001, 0.019, 0.021, 1.204]
+mpv pause n 438 sum sec 0.008 p50/p95/p99/max ms [0.013, 0.03, 0.05, 1.193]
+mpv volume n 438 sum sec 0.009 p50/p95/p99/max ms [0.009, 0.026, 0.05, 2.757]
+mpv speed n 438 sum sec 0.003 p50/p95/p99/max ms [0.005, 0.022, 0.025, 0.065]
+mpv estimated-vf-fps n 438 sum sec 0.003 p50/p95/p99/max ms [0.004, 0.021, 0.023, 0.067]
+mpv container-fps n 1 sum sec 0.0 p50/p95/p99/max ms [0.001, 0.001, 0.001, 0.001]
+mpv poll n 438 sum sec 0.435 p50/p95/p99/max ms [0.241, 1.965, 2.964, 195.25]
+phase gui_sync_wait n 715 sum sec 0.009 p50/p95/p99/max ms [0.012, 0.021, 0.023, 0.047]
+phase sync n 715 sum sec 0.14 p50/p95/p99/max ms [0.074, 0.549, 2.425, 3.012]
+phase render n 715 sum sec 34.968 p50/p95/p99/max ms [46.657, 54.646, 61.117, 409.456]
+phase swap n 715 sum sec 11.106 p50/p95/p99/max ms [3.975, 86.674, 104.93, 107.986]
+phase whole n 715 sum sec 46.232 p50/p95/p99/max ms [53.578, 139.232, 156.439, 413.354]
+comment outcomes {('activated', 'none'): 3270, ('expired', 'raster_wait'): 344, ('expired', 'source_motion'): 7511, ('expired', 'source_lag'): 35, ('cancelled', 'none'): 120}
+comment latency admitted_elapsed_ns -> raster_completed_elapsed_ns p50/p95/p99/max ms [302.76, 740.25, 907.149, 945.863]
+comment latency admitted_elapsed_ns -> gui_ready_elapsed_ns p50/p95/p99/max ms [406.108, 1033.537, 1224.875, 1258.215]
+comment latency gui_ready_elapsed_ns -> resolved_elapsed_ns p50/p95/p99/max ms [0.057, 0.114, 1.046, 2.502]
+admission -> first draw n 3214 p50/p95/p99/max ms [735.2, 1381.764, 1462.154, 1468.02]
+
+=== baseline-1 ===
+errors ['Some admitted comments never reached a GL draw before shutdown']
+summary {'admitted': 11420, 'diagnostics_enabled': True, 'diagnostics_overflow': 0, 'discarded_at_shutdown': 0, 'final_cap': 16, 'final_profile': 'balanced', 'media_position_ms': 47900, 'offered': 12000, 'pending_comments_at_shutdown': 0, 'pending_raster_at_shutdown': 0, 'raster_cancelled_before_shutdown': 0, 'raster_counters_available': False, 'raster_expired': 0, 'raster_failed': 0, 'sample_overflow': 0, 'source_coalesced': 0, 'source_emitted': 11420, 'source_position_ms': 47800, 'source_qos_dropped': 580, 'source_queue_dropped': 0, 'submitted_unique': 2255}
+frame_samples full n 773 p95/p99/max ms [136.886, 162.791, 412.889]
+heartbeat_samples full n 772 p95/p99/max ms [136.627, 162.836, 408.871]
+set_frame_ns sum sec 1.274 p99 ms 19.177
+repack_ns sum sec 1.074 p99 ms 18.698
+gl_upload_ns sum sec 0.296 p99 ms 1.352
+render_cpu_ns sum sec 0.491 p99 ms 3.191
+mpv render n 772 sum sec 18.253 p50/p95/p99/max ms [21.312, 29.153, 30.068, 386.111]
+mpv time-pos n 455 sum sec 0.032 p50/p95/p99/max ms [0.009, 0.53, 1.145, 1.986]
+mpv duration n 455 sum sec 0.007 p50/p95/p99/max ms [0.006, 0.045, 0.292, 1.039]
+mpv pause n 455 sum sec 0.009 p50/p95/p99/max ms [0.012, 0.03, 0.05, 1.512]
+mpv volume n 455 sum sec 0.005 p50/p95/p99/max ms [0.009, 0.026, 0.036, 0.284]
+mpv speed n 455 sum sec 0.003 p50/p95/p99/max ms [0.005, 0.022, 0.023, 0.03]
+mpv estimated-vf-fps n 455 sum sec 0.003 p50/p95/p99/max ms [0.003, 0.02, 0.033, 0.502]
+mpv container-fps n 1 sum sec 0.0 p50/p95/p99/max ms [0.001, 0.001, 0.001, 0.001]
+mpv poll n 455 sum sec 0.234 p50/p95/p99/max ms [0.311, 1.371, 1.879, 2.456]
+phase gui_sync_wait n 775 sum sec 0.01 p50/p95/p99/max ms [0.011, 0.021, 0.026, 0.044]
+phase sync n 775 sum sec 1.455 p50/p95/p99/max ms [0.463, 10.855, 19.476, 30.454]
+phase render n 774 sum sec 36.261 p50/p95/p99/max ms [44.633, 52.9, 59.005, 408.892]
+phase swap n 774 sum sec 10.7 p50/p95/p99/max ms [3.827, 85.576, 111.755, 116.505]
+phase whole n 774 sum sec 48.435 p50/p95/p99/max ms [51.51, 137.079, 162.933, 412.882]
+
+=== baseline-2 ===
+errors ['Some admitted comments never reached a GL draw before shutdown']
+summary {'admitted': 11389, 'diagnostics_enabled': True, 'diagnostics_overflow': 0, 'discarded_at_shutdown': 0, 'final_cap': 16, 'final_profile': 'balanced', 'media_position_ms': 47833, 'offered': 12000, 'pending_comments_at_shutdown': 0, 'pending_raster_at_shutdown': 0, 'raster_cancelled_before_shutdown': 0, 'raster_counters_available': False, 'raster_expired': 0, 'raster_failed': 0, 'sample_overflow': 0, 'source_coalesced': 0, 'source_emitted': 11389, 'source_position_ms': 47766, 'source_qos_dropped': 611, 'source_queue_dropped': 0, 'submitted_unique': 2262}
+frame_samples full n 771 p95/p99/max ms [136.25, 162.958, 422.394]
+heartbeat_samples full n 769 p95/p99/max ms [138.065, 163.159, 431.261]
+set_frame_ns sum sec 1.291 p99 ms 18.351
+repack_ns sum sec 1.096 p99 ms 17.853
+gl_upload_ns sum sec 0.297 p99 ms 1.8
+render_cpu_ns sum sec 0.49 p99 ms 3.819
+mpv render n 770 sum sec 18.234 p50/p95/p99/max ms [21.349, 28.953, 30.048, 389.72]
+mpv time-pos n 454 sum sec 0.036 p50/p95/p99/max ms [0.009, 0.536, 1.223, 1.971]
+mpv duration n 454 sum sec 0.013 p50/p95/p99/max ms [0.006, 0.033, 0.853, 2.446]
+mpv pause n 454 sum sec 0.008 p50/p95/p99/max ms [0.012, 0.03, 0.033, 1.832]
+mpv volume n 454 sum sec 0.005 p50/p95/p99/max ms [0.009, 0.026, 0.028, 0.04]
+mpv speed n 454 sum sec 0.003 p50/p95/p99/max ms [0.005, 0.022, 0.028, 0.041]
+mpv estimated-vf-fps n 454 sum sec 0.003 p50/p95/p99/max ms [0.003, 0.02, 0.022, 1.229]
+mpv container-fps n 1 sum sec 0.0 p50/p95/p99/max ms [0.001, 0.001, 0.001, 0.001]
+mpv poll n 454 sum sec 0.247 p50/p95/p99/max ms [0.327, 1.443, 2.585, 2.879]
+phase gui_sync_wait n 773 sum sec 0.01 p50/p95/p99/max ms [0.012, 0.02, 0.024, 0.062]
+phase sync n 773 sum sec 1.475 p50/p95/p99/max ms [0.466, 10.758, 18.666, 27.538]
+phase render n 772 sum sec 36.238 p50/p95/p99/max ms [44.549, 52.729, 60.379, 418.374]
+phase swap n 772 sum sec 10.701 p50/p95/p99/max ms [3.97, 84.654, 111.245, 114.393]
+phase whole n 772 sum sec 48.435 p50/p95/p99/max ms [51.95, 138.441, 163.473, 422.388]
+
+=== candidate-1 ===
+errors []
+summary {'admitted': 4105, 'diagnostics_enabled': True, 'diagnostics_overflow': 0, 'discarded_at_shutdown': 0, 'final_cap': 16, 'final_profile': 'balanced', 'media_position_ms': 47300, 'offered': 12000, 'pending_comments_at_shutdown': 0, 'pending_raster_at_shutdown': 0, 'raster_cancelled_before_shutdown': 0, 'raster_counters_available': True, 'raster_expired': 0, 'raster_failed': 0, 'sample_overflow': 0, 'source_coalesced': 0, 'source_emitted': 4105, 'source_position_ms': 47200, 'source_qos_dropped': 7895, 'source_queue_dropped': 0, 'submitted_unique': 4105}
+frame_samples full n 463 p95/p99/max ms [168.364, 183.613, 470.707]
+heartbeat_samples full n 462 p95/p99/max ms [167.406, 183.372, 467.924]
+set_frame_ns sum sec 0.187 p99 ms 3.002
+repack_ns sum sec 0.048 p99 ms 2.474
+gl_upload_ns sum sec 0.289 p99 ms 2.266
+render_cpu_ns sum sec 0.645 p99 ms 4.299
+mpv render n 460 sum sec 10.822 p50/p95/p99/max ms [21.622, 28.449, 30.145, 387.939]
+mpv time-pos n 370 sum sec 0.07 p50/p95/p99/max ms [0.009, 1.27, 2.252, 3.086]
+mpv duration n 370 sum sec 0.028 p50/p95/p99/max ms [0.006, 0.428, 1.527, 2.855]
+mpv pause n 370 sum sec 0.006 p50/p95/p99/max ms [0.011, 0.029, 0.049, 1.017]
+mpv volume n 370 sum sec 0.004 p50/p95/p99/max ms [0.008, 0.026, 0.036, 0.123]
+mpv speed n 370 sum sec 0.004 p50/p95/p99/max ms [0.005, 0.023, 0.042, 1.02]
+mpv estimated-vf-fps n 370 sum sec 0.002 p50/p95/p99/max ms [0.003, 0.021, 0.021, 0.154]
+mpv container-fps n 1 sum sec 0.0 p50/p95/p99/max ms [0.001, 0.001, 0.001, 0.001]
+mpv poll n 370 sum sec 0.271 p50/p95/p99/max ms [0.356, 2.349, 3.306, 4.142]
+phase gui_sync_wait n 465 sum sec 0.008 p50/p95/p99/max ms [0.018, 0.022, 0.027, 0.048]
+phase sync n 465 sum sec 0.262 p50/p95/p99/max ms [0.374, 2.434, 3.192, 8.43]
+phase render n 465 sum sec 22.015 p50/p95/p99/max ms [46.335, 53.435, 57.734, 464.176]
+phase swap n 465 sum sec 25.56 p50/p95/p99/max ms [50.706, 117.555, 131.668, 134.132]
+phase whole n 465 sum sec 47.852 p50/p95/p99/max ms [98.704, 168.896, 183.839, 470.698]
+comment outcomes {('activated', 'none'): 4105}
+comment latency admitted_elapsed_ns -> raster_completed_elapsed_ns p50/p95/p99/max ms [730.521, 925.834, 1241.187, 1685.215]
+comment latency admitted_elapsed_ns -> gui_ready_elapsed_ns p50/p95/p99/max ms [986.517, 1248.857, 1846.53, 2269.639]
+comment latency gui_ready_elapsed_ns -> resolved_elapsed_ns p50/p95/p99/max ms [0.049, 0.099, 0.443, 1.283]
+admission -> first draw n 4105 p50/p95/p99/max ms [1178.918, 1468.347, 2039.736, 2464.227]
+
+=== candidate-2 ===
+errors []
+summary {'admitted': 4029, 'diagnostics_enabled': True, 'diagnostics_overflow': 0, 'discarded_at_shutdown': 0, 'final_cap': 16, 'final_profile': 'balanced', 'media_position_ms': 47900, 'offered': 12000, 'pending_comments_at_shutdown': 0, 'pending_raster_at_shutdown': 0, 'raster_cancelled_before_shutdown': 0, 'raster_counters_available': True, 'raster_expired': 0, 'raster_failed': 0, 'sample_overflow': 0, 'source_coalesced': 0, 'source_emitted': 4029, 'source_position_ms': 47766, 'source_qos_dropped': 7971, 'source_queue_dropped': 0, 'submitted_unique': 4029}
+frame_samples full n 478 p95/p99/max ms [166.879, 180.606, 475.298]
+heartbeat_samples full n 477 p95/p99/max ms [166.86, 180.756, 468.875]
+set_frame_ns sum sec 0.185 p99 ms 3.22
+repack_ns sum sec 0.051 p99 ms 2.638
+gl_upload_ns sum sec 0.29 p99 ms 2.281
+render_cpu_ns sum sec 0.647 p99 ms 4.515
+mpv render n 477 sum sec 11.3 p50/p95/p99/max ms [21.686, 28.797, 29.822, 390.914]
+mpv time-pos n 381 sum sec 0.071 p50/p95/p99/max ms [0.009, 1.216, 2.672, 3.22]
+mpv duration n 381 sum sec 0.015 p50/p95/p99/max ms [0.006, 0.102, 0.822, 3.263]
+mpv pause n 381 sum sec 0.006 p50/p95/p99/max ms [0.011, 0.03, 0.05, 1.216]
+mpv volume n 381 sum sec 0.004 p50/p95/p99/max ms [0.008, 0.026, 0.035, 0.056]
+mpv speed n 381 sum sec 0.003 p50/p95/p99/max ms [0.005, 0.023, 0.027, 0.045]
+mpv estimated-vf-fps n 381 sum sec 0.006 p50/p95/p99/max ms [0.003, 0.021, 0.077, 2.53]
+mpv container-fps n 1 sum sec 0.0 p50/p95/p99/max ms [0.001, 0.001, 0.001, 0.001]
+mpv poll n 381 sum sec 0.274 p50/p95/p99/max ms [0.354, 2.169, 3.479, 5.119]
+phase gui_sync_wait n 480 sum sec 0.008 p50/p95/p99/max ms [0.019, 0.022, 0.029, 0.048]
+phase sync n 480 sum sec 0.261 p50/p95/p99/max ms [0.349, 2.51, 3.437, 8.165]
+phase render n 480 sum sec 22.918 p50/p95/p99/max ms [46.582, 53.715, 58.394, 469.132]
+phase swap n 480 sum sec 25.272 p50/p95/p99/max ms [40.584, 116.038, 131.405, 132.53]
+phase whole n 480 sum sec 48.466 p50/p95/p99/max ms [88.067, 166.862, 184.751, 475.29]
+comment outcomes {('activated', 'none'): 4029}
+comment latency admitted_elapsed_ns -> raster_completed_elapsed_ns p50/p95/p99/max ms [733.51, 922.558, 1236.036, 1676.794]
+comment latency admitted_elapsed_ns -> gui_ready_elapsed_ns p50/p95/p99/max ms [998.562, 1257.03, 1833.552, 2256.366]
+comment latency gui_ready_elapsed_ns -> resolved_elapsed_ns p50/p95/p99/max ms [0.045, 0.104, 0.521, 2.626]
+admission -> first draw n 4029 p50/p95/p99/max ms [1196.079, 1484.562, 2025.277, 2445.718]

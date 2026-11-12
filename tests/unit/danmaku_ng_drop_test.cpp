@@ -69,7 +69,7 @@ void DanmakuNgDropTest::pendingNgFadeRollbackRestoresDraggedComment() {
     comments.push_back(makeComment(QStringLiteral("other-user"), QStringLiteral("u2"), QStringLiteral("other")));
 
     controller.appendComments(comments, 0);
-    QCoreApplication::processEvents();
+    QTRY_COMPARE(controller.renderSnapshot()->instances.size(), 3);
 
     const auto initial = controller.renderSnapshot();
     QVERIFY(initial);

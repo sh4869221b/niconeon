@@ -25,6 +25,24 @@ class ApplicationController : public QObject {
     Q_PROPERTY(QVariantList regexFilters READ regexFilters NOTIFY changed)
     Q_PROPERTY(DanmakuController *danmaku READ danmaku CONSTANT)
   public:
+    struct PerformanceTotals {
+        quint64 sourceEmitted = 0;
+        quint64 sourceQosDropped = 0;
+        quint64 sourceQueueDropped = 0;
+        quint64 sourceCoalesced = 0;
+        quint64 admitted = 0;
+        quint64 discardedAtShutdown = 0;
+        qint64 sourcePositionMs = 0;
+        bool rasterCountersAvailable = false;
+        quint64 pendingRasterAtShutdown = 0;
+        quint64 pendingCommentsAtShutdown = 0;
+        quint64 rasterFailed = 0;
+        quint64 rasterExpired = 0;
+        quint64 rasterCancelledBeforeShutdown = 0;
+    };
+    PerformanceTotals performanceTotals() const {
+        return m_performanceTotals;
+    }
     explicit ApplicationController(ServiceOptions options = {}, QObject *parent = nullptr);
     ~ApplicationController() override;
     QString selectedVideoPath() const {
@@ -102,6 +120,8 @@ class ApplicationController : public QObject {
         CommentList comments;
         qsizetype offset = 0;
         qint64 positionMs = 0;
+        qreal motionTime = 0;
+        QSet<QString> excludedUsers;
     };
     void toast(const QString &text, const QString &action = {});
     void applyProfile(RuntimeProfileConfig profile, bool persist);
@@ -109,12 +129,14 @@ class ApplicationController : public QObject {
     void reconcileSeek();
     void playbackTick();
     void drainRenderBatch();
+    void maybeFinishShutdown();
     void performanceWindow();
     bool degradeQos();
     bool recoverQos();
     double nearestPreset(double value) const;
     void persistPresets();
     void queueFailure(bool accepted);
+    PerformanceTotals m_performanceTotals;
     QSettings m_settings;
     CommentService m_service;
     DanmakuController m_danmaku;
@@ -134,6 +156,7 @@ class ApplicationController : public QObject {
     bool m_commentsVisible = true;
     bool m_perfLog = false;
     bool m_closing = false;
+    bool m_readyToQuitEmitted = false;
     bool m_waitingSeek = false;
     quint64 m_seekRequest = 0;
     qint64 m_seekTarget = 0;

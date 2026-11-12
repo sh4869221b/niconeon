@@ -45,6 +45,10 @@ ApplicationController::ApplicationController(ServiceOptions options, QObject *pa
     });
     connect(&m_service, &CommentService::commentsReady, this, [this](const PlaybackBatchResult &result) {
         m_results += static_cast<int>(result.processedTicks);
+        m_performanceTotals.sourceEmitted += result.emitComments.size();
+        m_performanceTotals.sourceQosDropped += result.droppedComments;
+        m_performanceTotals.sourceCoalesced += result.coalescedComments;
+        m_performanceTotals.sourcePositionMs = result.lastPositionMs;
         m_dropped += result.droppedComments;
         m_coalesced += result.coalescedComments;
         if (result.emitOverBudget)
@@ -52,11 +56,12 @@ ApplicationController::ApplicationController(ServiceOptions options, QObject *pa
         if (!m_commentsVisible || result.emitComments.isEmpty())
             return;
         if (m_renderQueue.size() >= 2) {
+            m_performanceTotals.sourceQueueDropped += result.emitComments.size();
             m_dropped += result.emitComments.size();
             ++m_overBudget;
             return;
         }
-        m_renderQueue.enqueue({result.emitComments, 0, result.lastPositionMs});
+        m_renderQueue.enqueue({result.emitComments, 0, result.lastPositionMs, m_danmaku.motionTime(), {}});
         drainRenderBatch();
     });
     connect(&m_service, &CommentService::filtersChanged, this, [this](const FilterSnapshot &snapshot) {
@@ -74,6 +79,10 @@ ApplicationController::ApplicationController(ServiceOptions options, QObject *pa
     });
     connect(&m_service, &CommentService::ngAdded, this, [this](const AddNgUserResult &result) {
         m_danmaku.applyNgUserFade(result.hiddenUserId);
+        // Remember exclusions without scanning/detaching a potentially large
+        // source batch on the GUI. The normal 64-row drain applies them.
+        for (auto &batch : m_renderQueue)
+            batch.excludedUsers.insert(result.hiddenUserId);
         if (result.applied) {
             m_undoToken = result.undoToken;
             toast(QStringLiteral("NGユーザーを登録しました"), QStringLiteral("Undo"));
@@ -102,7 +111,8 @@ ApplicationController::ApplicationController(ServiceOptions options, QObject *pa
         qWarning().noquote() << message;
         toast(message);
     });
-    connect(&m_service, &CommentService::stopped, this, &ApplicationController::readyToQuit);
+    connect(&m_danmaku, &DanmakuController::rasterFailed, this, [this](const QString &message) { toast(message); });
+    connect(&m_service, &CommentService::stopped, this, &ApplicationController::maybeFinishShutdown);
     m_seekTimer.setParent(this);
     m_seekTimer.setObjectName(QStringLiteral("seekReconciliationTimer"));
     m_seekTimer.setSingleShot(true);
@@ -384,17 +394,29 @@ void ApplicationController::playbackTick() {
         m_waitingSeek = false;
         m_seekTimer.stop();
     }
+    // Do not advance the source cursor while its last batch is waiting on
+    // raster admission. The next tick catches up at the current media time.
+    if (!m_renderQueue.isEmpty())
+        return;
     m_service.requestTick(m_player->positionMs(), m_player->paused(), false);
     ++m_sent;
 }
 void ApplicationController::drainRenderBatch() {
+    if (m_closing) {
+        maybeFinishShutdown();
+        return;
+    }
     if (!m_commentsVisible || m_renderQueue.isEmpty())
         return;
     auto &batch = m_renderQueue.head();
     QVariantList comments;
+    QVector<qsizetype> sourceOffsets;
     const qsizetype end = std::min(batch.offset + 64, batch.comments.size());
-    for (; batch.offset < end; ++batch.offset) {
-        const auto &comment = batch.comments.at(batch.offset);
+    for (qsizetype index = batch.offset; index < end; ++index) {
+        const auto &comment = batch.comments.at(index);
+        if (batch.excludedUsers.contains(comment.userId))
+            continue;
+        sourceOffsets.push_back(index);
         comments.push_back(QVariantMap{{"comment_id", comment.commentId},
                                        {"user_id", comment.userId},
                                        {"at_ms", comment.atMs},
@@ -403,7 +425,9 @@ void ApplicationController::drainRenderBatch() {
     // The worker batch is stamped with its own media position. During a seek
     // it can arrive before mpv publishes the new clock; using the old player
     // position would spawn every restored comment outside the viewport.
-    m_danmaku.appendComments(comments, batch.positionMs);
+    const int accepted = m_danmaku.appendComments(comments, batch.positionMs, batch.motionTime);
+    m_performanceTotals.admitted += accepted;
+    batch.offset = accepted == comments.size() ? end : sourceOffsets[accepted];
     if (batch.offset == batch.comments.size())
         m_renderQueue.dequeue();
 }
@@ -492,11 +516,26 @@ void ApplicationController::shutdown() {
     m_waitingSeek = false;
     m_seekTimer.stop();
     m_tickTimer.stop();
-    m_renderTimer.stop();
     m_perfTimer.stop();
+    for (const auto &batch : std::as_const(m_renderQueue))
+        m_performanceTotals.discardedAtShutdown += batch.comments.size() - batch.offset;
     m_renderQueue.clear();
+    const auto raster = m_danmaku.rasterMetrics();
+    m_performanceTotals.rasterCountersAvailable = true;
+    m_performanceTotals.pendingRasterAtShutdown = raster.pending;
+    m_performanceTotals.pendingCommentsAtShutdown = m_danmaku.pendingCommentCountForTesting();
+    m_performanceTotals.rasterFailed = raster.failed;
+    m_performanceTotals.rasterExpired = m_danmaku.expiredRasterComments();
+    m_performanceTotals.rasterCancelledBeforeShutdown = raster.cancelled;
+    m_danmaku.shutdownRaster();
     m_service.shutdown();
-    if (m_service.isStopped())
-        emit readyToQuit();
+    maybeFinishShutdown();
+}
+void ApplicationController::maybeFinishShutdown() {
+    if (!m_closing || m_readyToQuitEmitted || !m_service.isStopped() || !m_danmaku.rasterStopped())
+        return;
+    m_readyToQuitEmitted = true;
+    m_renderTimer.stop();
+    emit readyToQuit();
 }
 } // namespace niconeon

@@ -77,7 +77,8 @@ NICONEON_AUTO_EXIT_MS=60000 ./build/release/niconeon
 
 この変更は [#59](https://github.com/sh4869221b/niconeon/issues/59) の移行です。
 新規network/JSON/SQLite/filter処理は専有workerで実行し、queue上限・generation cancellation・停止処理を実装しています。
-既存rendererのGUI raster・cache/queue上限を含む全runtime qualificationは [#65](https://github.com/sh4869221b/niconeon/issues/65) / [#78](https://github.com/sh4869221b/niconeon/issues/78) のblocking follow-upです。
+text rasterはbounded workerへ移し、GUI/renderから分離しています（[契約](docs/raster-worker.md)）。
+既存rendererのCPU cache・update queueを含む全runtime qualificationは [#65](https://github.com/sh4869221b/niconeon/issues/65) / [#78](https://github.com/sh4869221b/niconeon/issues/78) のblocking follow-upです。
 media clock/cursor、production video/text方式、60fps性能、Windows実GPU、Wayland、HDR、長時間安定性の正式gateは [#75](https://github.com/sh4869221b/niconeon/issues/75) に従います。
 
 [Architecture / ownership](docs/architecture.md) と [test plan](docs/test-plan.md) に検証範囲と残件を記載しています。
