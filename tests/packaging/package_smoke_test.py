@@ -3,7 +3,6 @@
 from pathlib import Path
 import hashlib
 import importlib.util
-import hashlib
 import os
 import shutil
 import subprocess
@@ -17,6 +16,119 @@ from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@unittest.skipIf(os.name == "nt", "Qt SDK source packaging uses Linux shell tools")
+class QtSourcePackagingTests(unittest.TestCase):
+    def fixture(self, root, source_override=False):
+        """Exercise the real copier with tiny, explicitly synthetic pinned inputs."""
+        script = root / "scripts/release/copy_qt_source.sh"
+        script.parent.mkdir(parents=True)
+        shutil.copy2(ROOT / "scripts/release/copy_qt_source.sh", script)
+        prefix = root / "SDK with spaces"
+        source = (root / "source override with spaces" if source_override
+                  else prefix / "share/niconeon/qt-source")
+        source.mkdir(parents=True)
+        # Only the fixture's adjacent trusted manifest changes; do not replace
+        # checksum tools, disable checks, download Qt, or edit production pins.
+        source_manifest = []
+        for entry in (ROOT / "scripts/deps/qt-sources.sha256").read_text().splitlines():
+            _, name = entry.split()
+            payload = f"Synthetic source/patch fixture for {name}\n".encode()
+            (source / name).write_bytes(payload)
+            source_manifest.append(f"{hashlib.sha256(payload).hexdigest()}  {name}\n")
+        manifest = root / "scripts/deps/qt-sources.sha256"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("".join(source_manifest))
+        shutil.copy2(manifest, source / manifest.name)
+        for name in ["build_qt.sh", "README.txt"]:
+            (source / name).write_text("Synthetic packaging fixture, not a Qt build.\n")
+        for module in ["qtbase", "qtshadertools", "qtsvg", "qtdeclarative"]:
+            for name in [f"notices/{module}/LICENSES/GPL-3.0-only.txt",
+                         f"configuration/{module}-CMakeCache.txt"]:
+                file = source / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text(f"Synthetic attribution/configuration for {module}\n")
+        runtime_paths = [f"lib/libQt6{module}.so.6.12.0"
+                         for module in ["Core", "Gui", "Network", "Quick", "Qml", "Sql"]]
+        runtime_paths += ["plugins/platforms/libqxcb.so", "plugins/sqldrivers/libqsqlite.so",
+                          "qml/QtQuick/Controls/libqtquickcontrols2plugin.so"]
+        runtime_manifest = []
+        for name in runtime_paths:
+            file = prefix / name
+            file.parent.mkdir(parents=True, exist_ok=True)
+            payload = f"Synthetic runtime fixture for {name}\n".encode()
+            file.write_bytes(payload)
+            runtime_manifest.append(f"{hashlib.sha256(payload).hexdigest()}  {name}\n")
+        (source / "runtime.sha256").write_text("".join(runtime_manifest))
+        environment = os.environ.copy()
+        environment.pop("NICONEON_QT_SOURCE_DIR", None)
+        if source_override:
+            environment["NICONEON_QT_SOURCE_DIR"] = str(source)
+        output = root / "licenses with spaces"
+        command = ["bash", str(script), str(output), str(prefix)]
+        return source, prefix, output, command, environment
+
+    def test_verified_qt_sources_patches_notices_and_runtime_manifest_are_copied(self):
+        for override in [False, True]:
+            with self.subTest(source_override=override), tempfile.TemporaryDirectory() as directory:
+                source, _, output, command, environment = self.fixture(Path(directory), override)
+                result = subprocess.run(command, env=environment, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = {file.relative_to(source): file.read_bytes()
+                            for file in source.rglob("*") if file.is_file()}
+                copied = output / "qt-source"
+                actual = {file.relative_to(copied): file.read_bytes()
+                          for file in copied.rglob("*") if file.is_file()}
+                self.assertEqual(actual, expected)
+                self.assertFalse(any(file.suffix == ".so" for file in copied.rglob("*")))
+
+    def test_qt_source_or_runtime_corruption_is_rejected_before_copying(self):
+        cases = ["source", "patch", "source-manifest", "core-runtime", "network-runtime",
+                 "qml-plugin", "missing-license", "missing-configuration", "missing-runtime-entry"]
+        for corrupt in cases:
+            with self.subTest(corrupt=corrupt), tempfile.TemporaryDirectory() as directory:
+                source, prefix, output, command, environment = self.fixture(Path(directory))
+                if corrupt == "source":
+                    next(source.glob("qtbase-*.tar.xz")).write_bytes(b"corrupt source")
+                elif corrupt == "patch":
+                    next(source.glob("CVE-*.diff")).write_bytes(b"corrupt security patch")
+                elif corrupt == "source-manifest":
+                    with (source / "qt-sources.sha256").open("a") as manifest:
+                        manifest.write("0" * 64 + "  unapproved-source.tar.xz\n")
+                elif corrupt in ["core-runtime", "network-runtime"]:
+                    module = "Core" if corrupt == "core-runtime" else "Network"
+                    (prefix / f"lib/libQt6{module}.so.6.12.0").write_bytes(b"wrong runtime")
+                elif corrupt == "qml-plugin":
+                    (prefix / "qml/QtQuick/Controls/libqtquickcontrols2plugin.so").write_bytes(b"wrong plugin")
+                elif corrupt == "missing-license":
+                    (source / "notices/qtdeclarative/LICENSES/GPL-3.0-only.txt").unlink()
+                elif corrupt == "missing-configuration":
+                    (source / "configuration/qtbase-CMakeCache.txt").unlink()
+                else:
+                    manifest = source / "runtime.sha256"
+                    manifest.write_text("".join(line for line in manifest.read_text().splitlines(True)
+                                                if "libQt6Core.so" not in line))
+                result = subprocess.run(command, env=environment, text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertFalse(output.exists(), "failed verification must not produce a source bundle")
+
+    def test_qt_runtime_manifest_traversal_is_rejected_even_with_a_matching_hash(self):
+        for path in ["lib/../../outside.so", "plugins/../outside.so", "qml/../outside.so"]:
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, prefix, output, command, environment = self.fixture(root)
+                outside = prefix / path
+                outside.write_bytes(b"readable file outside the declared runtime subdirectory")
+                digest = hashlib.sha256(outside.read_bytes()).hexdigest()
+                # Append to a complete valid manifest, so required-entry checks
+                # cannot accidentally be the reason traversal is rejected.
+                with (source / "runtime.sha256").open("a") as manifest:
+                    manifest.write(f"{digest}  {path}\n")
+                result = subprocess.run(command, env=environment, text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid Qt runtime manifest", result.stderr)
+                self.assertFalse(output.exists())
 
 
 class WindowsDependencyCollectorTests(unittest.TestCase):
@@ -358,7 +470,7 @@ if args[0] == "install":
                 digest = hashlib.sha256(source_payload).hexdigest()
                 archive = source / "libplacebo-v7.387.0.tar.gz"
                 archive.write_bytes(source_payload)
-                headers = source / "Vulkan-Headers-74d8a6cb930c68ef617b202c3ff3c59d919e086b.tar.gz"
+                headers = source / "Vulkan-Headers-v1.4.368.tar.gz"
                 headers.write_bytes(b"verified matching Vulkan headers")
                 headers_digest = hashlib.sha256(headers.read_bytes()).hexdigest()
                 library = root / "libplacebo.a"
@@ -375,7 +487,7 @@ if args[0] == "install":
                 script = root / "copy.sh"
                 script.write_text((ROOT / "scripts/release/copy_libplacebo_source.sh").read_text().replace(
                     "f9e62d3774a9c4cfd198ec3abaa88294aaade2e31c04d5ab02bcf4abc98b1df5", digest).replace(
-                    "75967a8288ff16044a86d1af462b96d2e75c435937efb75f2bb4102ab0382f29", headers_digest))
+                    "5c5c6f64fcce28a24cc934143a048707af036a858e4ed11d7f71fe016006ecda", headers_digest))
                 if corrupt == "source":
                     archive.write_bytes(b"corrupt source")
                 elif corrupt == "headers":

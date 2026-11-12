@@ -30,3 +30,13 @@ license notices, the matching upstream Vulkan-Headers source archive and license
 and static-library hash. Packaging verifies the static library
 and the separately recorded libmpv runtime hash before deployment. Linux symbols
 are hidden inside libmpv to avoid interposing on an older libplacebo used by FFmpeg. See `scripts/deps/build_libplacebo.sh`.
+
+## Linux Qt corresponding source
+
+Linux AppImages include a shared Qt 6.12.0 SDK built from the official QtBase,
+QtShaderTools, QtSVG and QtDeclarative archives, with the applicable official
+CVE-2026-105924 and CVE-2026-116337 patches. The `qt-source` license directory
+retains the exact archives, patches, verified checksums, build script, module
+license texts, configuration and SDK runtime hashes. Packaging checks that the
+application uses that SDK before deployment tools rewrite library paths.
+See `scripts/deps/build_qt.sh` and `scripts/deps/qt-sources.sha256`.

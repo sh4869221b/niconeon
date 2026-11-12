@@ -31,6 +31,8 @@ IDなし・コメント取得失敗・キャッシュ不正でも、有効なロ
 
 採用環境は C++23 対応 compiler、CMake 3.25+、Ninja、Qt 6.8+、同一 Qt build の GuiPrivate 開発ヘッダー（Debian: `qt6-base-private-dev`）、libmpv、pkg-config、Qt SQL SQLite driver です。GuiPrivate は renderer の render-target pixel size 取得だけに使い、Qt minor 更新時には rebuild と OpenGL 回帰テストが必要です。Windows UCRT64 は `qt6-base` package に同ヘッダーを含みます。
 Linux はディストリビューションの開発依存を使い、Windows は MSYS2 UCRT64 を使用します。
+Linux CIはDebian 13上でQt 6.12.0と公式セキュリティ修正をソースからbuildし、Windowsは最新のMSYS2 UCRT64 Qtを使用します。Qtの最低対応版6.8とは区別します。再現手順と対応ソースは[build-and-validation](docs/build-and-validation.md)を参照してください。
+
 libmpv は補間テーブル初期化修正を含む公式 0.42.0 を使用します。Linuxではlibplaceboも公式7.387.0へ更新します。Meson はこれら外部依存の build に使い、アプリ本体は CMake で build します。
 
 ```sh

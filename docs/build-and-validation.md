@@ -123,7 +123,7 @@ cmake --build --preset tidy --parallel
 cmake --build build/tidy --target format-check
 ```
 
-clang-format 19 and clang-tidy 19 are the reference tools. Format checks cover maintained C++
+clang-format 23.1.5 and clang-tidy 23.1.5 are the reference tools. Format checks cover maintained C++
 source/tests, not generated CMake/Qt output. Compiler warnings are enabled on all project libraries.
 
 ## Packaging
@@ -244,27 +244,49 @@ source archive, build script, LGPL license and static-library hash. The libmpv b
 `pl_*` symbols on Linux, and packaging checks its separate runtime hash. Versioned source and build
 directories keep an existing 0.41.0 workspace from being reused accidentally.
 
-Qt 6.8 is a minimum supported API, not a vendored version pin. Linux keeps the
-Debian 13 maintained Qt packages and available security updates; Windows installs the
-current UCRT64 packages with a full system update. Do not mix Qt runtimes and private
-headers from different SDKs or raise the minimum merely to match a new release.
-As of this update, upstream/MSYS2 Qt is 6.12.0 while Debian 13 supplies 6.8.2
-with distribution patches. This is not a claim that Linux uses the latest upstream
-Qt or that all known Qt vulnerabilities are fixed. Check the
-[Debian Qt security tracker](https://security-tracker.debian.org/tracker/source-package/qt6-base)
-before distributing a release.
+Qt 6.8 remains the minimum supported API. CI now builds Qt 6.12.0 from the
+verified official Base, ShaderTools, SVG and Declarative source archives on Debian
+13, with the applicable official CVE-2026-105924 and CVE-2026-116337 patches.
+Qt 6.12.1 was not available in the official stable source index on 2026-11-12.
+Windows installs current UCRT64 packages with a full system update (Qt 6.12.0).
+Do not mix runtime and GuiPrivate headers from different SDKs or raise the minimum
+merely to match a new release. The new Linux SDK is built once per workflow and
+shared by Debug, Release, ASan/UBSan and static-analysis jobs. A source-keyed cache
+avoids unnecessary rebuilds; source and runtime hashes are rechecked before reuse.
+This retains Debian 13's runtime baseline instead of moving to a rolling distro.
+
+`scripts/deps/build_qt.sh /opt/niconeon-sdk/qt` reproduces the shared SDK; the
+workflow's `linux-sdk` job lists its system development prerequisites. Set
+`CMAKE_PREFIX_PATH` and `QT_ROOT_DIR` to that prefix, put its `bin` on `PATH`,
+and include its `lib` in `LD_LIBRARY_PATH`. The SDK retains Test/QuickTest,
+GuiPrivate, desktop OpenGL/EGL/XCB, QtBase Wayland client, TLS and SQLite.
+Only upstream Qt's example/test executables are disabled, not Niconeon's tests.
+AppImages verify the linked Qt SDK, then retain all original module archives,
+patches, build configuration, license texts and pre-deployment runtime hashes in
+`qt-source`. This is a dated security review, not a guarantee against future flaws.
+The official patch URLs, checksums and reproduction steps are in
+`scripts/deps/qt-sources.sha256` and the retained source bundle.
+
+Linux CI uses verified official CMake 4.4.5, Ninja 1.13.2, Meson 1.12.1 and
+LLVM clang-format/clang-tidy 23.1.5 from
+`scripts/deps/install_build_tools.sh`. Minimum developer versions remain separate
+from the versions selected for CI. System-managed FFmpeg, libass, shaderc, lcms,
+SQLite, OpenSSL, ICU, graphics drivers and toolchain packages remain Debian 13's
+maintained versions; this update does not claim to replace every transitive OS
+package with its latest upstream release. Windows uses the current consistent
+UCRT64 package set. Compiler/formatter compatibility policy is discussed above.
 Every dependency update must pass the existing unit, QML, strict default/bilinear
 OpenGL and packaging gates; it does not establish real-GPU/HDR qualification.
 
 GitHub Actions use checkout 7.0.1, upload-artifact 7.0.2, download-artifact 8.0.2,
-setup-msys2 2.33.0 and action-gh-release 3.0.4. The Node.js 24 actions require
+cache 6.1.0, setup-msys2 2.33.0 and action-gh-release 3.0.4. The Node.js 24 actions require
 runner 2.327.1+ (checkout authenticated Git in containers: 2.329.0+); the hosted
 `*-latest` runners supply this. Keep the artifact archive defaults and the new
 download digest-mismatch failure behavior. Release publication is not exercised by
 a PR build. AppImage tool/runtime pin provenance is in [TOOLS.md](../packaging/appimage/TOOLS.md).
 
-The libplacebo build uses the exact upstream Vulkan-Headers submodule commit
-`74d8a6cb930c68ef617b202c3ff3c59d919e086b`, with a separately checked source archive
+The libplacebo build uses current Vulkan-Headers 1.4.368 and its matching vk.xml,
+with a separately checked source archive
 and license notices. Debian 13 headers expose Vulkan 1.4 but lack required newer
 KHR maintenance declarations, so checking only `VK_VERSION_1_4` is insufficient.
 The system Vulkan loader is retained; no GPU feature is disabled to bypass the

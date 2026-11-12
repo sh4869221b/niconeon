@@ -90,6 +90,15 @@ cp "${gpl_file}" "${app_dir}/usr/share/licenses/niconeon/COPYING"
 cp "${source_code_file}" "${app_dir}/usr/share/licenses/niconeon/SOURCE_CODE.md"
 cp "${notices_file}" "${app_dir}/usr/share/licenses/niconeon/THIRD_PARTY_NOTICES.txt"
 "${repo_root}/scripts/release/copy_mpv_source.sh" "${app_dir}/usr/share/licenses/niconeon"
+qt_runtime="$(ldd "$app_bin" | awk '$1 ~ /^libQt6Core[.]so/ { sub(/^.* => /, ""); sub(/ \(0x[^)]*\).*$/, ""); print; exit }')"
+[[ -f "$qt_runtime" ]] || { echo "Qt Core runtime was not found" >&2; exit 1; }
+qt_prefix="${QT_ROOT_DIR:-$(dirname "$(dirname "$qt_runtime")")}"
+[[ "$(readlink -f "$qt_runtime")" == "$(readlink -f "$qt_prefix/lib/libQt6Core.so.6")" ]] || {
+  echo "application Qt runtime does not match the selected SDK" >&2; exit 1;
+}
+"${repo_root}/scripts/release/copy_qt_source.sh" "${app_dir}/usr/share/licenses/niconeon" "$qt_prefix"
+export QMAKE="${QMAKE:-$qt_prefix/bin/qmake}"
+
 placebo_archive="$(pkg-config --variable=libdir libplacebo)/libplacebo.a"
 "${repo_root}/scripts/release/copy_libplacebo_source.sh" "${app_dir}/usr/share/licenses/niconeon" "$placebo_archive"
 cp "${repo_root}/packaging/appimage/AppRun" "${app_dir}/AppRun"

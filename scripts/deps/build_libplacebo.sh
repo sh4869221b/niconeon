@@ -19,12 +19,12 @@ if [[ ! -f "$archive" ]]; then
   mv "$archive.download" "$archive"
 fi
 printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status
-# Match the exact Vulkan-Headers gitlink in upstream v7.387.0. Debian 13's
-# headers are too old even though they expose VK_VERSION_1_4.
-vulkan_commit=74d8a6cb930c68ef617b202c3ff3c59d919e086b
-vulkan_archive="$work/Vulkan-Headers-$vulkan_commit.tar.gz"
-vulkan_checksum=75967a8288ff16044a86d1af462b96d2e75c435937efb75f2bb4102ab0382f29
-vulkan_url="https://github.com/KhronosGroup/Vulkan-Headers/archive/$vulkan_commit.tar.gz"
+# Pin the latest stable Vulkan-Headers and its matching registry together.
+# Debian 13 headers are too old even though they expose VK_VERSION_1_4.
+vulkan_version=1.4.368
+vulkan_archive="$work/Vulkan-Headers-v$vulkan_version.tar.gz"
+vulkan_checksum=5c5c6f64fcce28a24cc934143a048707af036a858e4ed11d7f71fe016006ecda
+vulkan_url="https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v$vulkan_version.tar.gz"
 if [[ ! -f "$vulkan_archive" ]]; then
   curl --fail --location --retry 2 --connect-timeout 30 --max-time 180 "$vulkan_url" -o "$vulkan_archive.download"
   printf '%s  %s\n' "$vulkan_checksum" "$vulkan_archive.download" | sha256sum --check --status
@@ -75,7 +75,7 @@ cat > "$source_bundle/README.txt" <<MANIFEST
 libplacebo 7.387.0, unmodified upstream source (LGPL-2.1-or-later)
 Source: $url
 Source SHA-256: $checksum
-Vulkan-Headers upstream gitlink: $vulkan_commit
+Vulkan-Headers stable release: v$vulkan_version
 Vulkan-Headers source: $vulkan_url
 Vulkan-Headers source SHA-256: $vulkan_checksum
 Build on Debian 13: bash build_libplacebo.sh /absolute/prefix
