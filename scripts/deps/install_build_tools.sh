@@ -68,6 +68,16 @@ for required in ("bin/clang-format", "bin/clang-tidy", "lib/clang/23/include/std
     if not (pathlib.Path(destination) / required).is_file():
         raise SystemExit(f"LLVM archive lacks required file: {required}")
 PYTHON
+# The binary archive's support-library notice refers to the full LLVM license.
+# Retain the exact release's complete LLVM and Clang license documents as well.
+fetch llvm-23.1.5-LICENSE.TXT \
+  https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-23.1.5/llvm/LICENSE.TXT \
+  8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee
+fetch clang-23.1.5-LICENSE.TXT \
+  https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-23.1.5/clang/LICENSE.TXT \
+  ebcd9bbf783a73d05c53ba4d586b8d5813dcdf3bbec50265860ccc885e606f47
+mkdir -p "$prefix/llvm/licenses"
+cp "$prefix/downloads/llvm-23.1.5-LICENSE.TXT" "$prefix/downloads/clang-23.1.5-LICENSE.TXT" "$prefix/llvm/licenses/"
 for tool in clang-format clang-tidy; do
   ln -sfn "../llvm/bin/$tool" "$prefix/bin/$tool"
   ln -sfn "$tool" "$prefix/bin/$tool-23"
@@ -77,7 +87,7 @@ done
 # A real C++ parse catches missing resource headers that --version cannot find.
 probe="$(mktemp --suffix=.cpp)"
 printf '#include <stddef.h>\n#include <vector>\nint main() { std::vector<int> v; return static_cast<int>(v.size()); }\n' > "$probe"
-"$prefix/bin/clang-tidy" --config='{}' "$probe" -- -std=c++23
+"$prefix/bin/clang-tidy" --config='{Checks: "clang-analyzer-*"}' "$probe" -- -std=c++23
 rm -f "$probe"
 # This 2 GB archive is a build-tool input, not application corresponding source.
 # Exclude it from the published SDK artifact after successful extraction/checks.
