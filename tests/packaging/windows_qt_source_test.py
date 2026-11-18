@@ -65,17 +65,18 @@ class WindowsQtSourceTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse((self.destination / "windows-qt-source").exists())
 
-    def test_builder_crlf_manifests_keep_checksums_enforced(self):
-        # Exercise the real builder up to its checksum gate, without network or
-        # Windows tools. The intentionally wrong Qt source must still fail.
+    def run_builder_fixture(self, base_version="6.12.0-2", declarative_version="6.12.0-1"):
         builder = self.deps / "build_windows_qt.sh"
         shutil.copyfile(ROOT / "scripts/deps/build_windows_qt.sh", builder)
         mock = self.root / "mock-bin"
         mock.mkdir()
         (mock / "pacman").write_text(
             '#!/usr/bin/env bash\n'
-            'if [[ $# == 2 ]]; then printf "%s 6.12.0-1\\n" "$2"; '
-            'else echo "fixture 1"; fi\n')
+            'case "${2:-}" in\n'
+            '  mingw-w64-ucrt-x86_64-qt6-base) printf "%s %s\\n" "$2" "$QTBASE_VERSION" ;;\n'
+            '  mingw-w64-ucrt-x86_64-qt6-declarative) printf "%s %s\\n" "$2" "$QTDECL_VERSION" ;;\n'
+            '  "") echo "fixture 1" ;;\n'
+            '  *) exit 91 ;;\nesac\n')
         payload = b"synthetic upstream recipe\n"
         digest = hashlib.sha256(payload).hexdigest()
         (self.deps / "windows-qt-recipe.sha256").write_bytes(
@@ -92,10 +93,17 @@ class WindowsQtSourceTests(unittest.TestCase):
         for executable in mock.iterdir():
             executable.chmod(0o755)
         environment = dict(os.environ, MSYSTEM="UCRT64", MINGW_PREFIX="/ucrt64",
+                           QTBASE_VERSION=base_version, QTDECL_VERSION=declarative_version,
                            NICONEON_WINDOWS_QT_WORK_DIR=str(self.root / "build-cache"),
                            CURL_TEST_LOG=str(log), PATH=str(mock) + os.pathsep + os.environ["PATH"])
         result = subprocess.run(["bash", str(builder)], env=environment,
                                 capture_output=True, text=True)
+        return result, log
+
+    def test_builder_crlf_manifests_keep_checksums_enforced(self):
+        # Exercise the real builder with the audited package pair, without
+        # network or Windows tools. The intentionally wrong Qt source must fail.
+        result, log = self.run_builder_fixture()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("PKGBUILD: OK", result.stdout)
         self.assertIn("qtbase-everywhere-src-6.12.0.tar.xz: FAILED", result.stdout)
@@ -105,7 +113,20 @@ class WindowsQtSourceTests(unittest.TestCase):
         self.assertTrue(urls[0].endswith(b"/PKGBUILD"))
         self.assertTrue(urls[1].endswith(b"/qtbase-everywhere-src-6.12.0.tar.xz"))
 
-    def run_postinstall_fixture(self, include_core=True):
+    def test_builder_rejects_newer_qtbase_before_download(self):
+        result, log = self.run_builder_fixture(base_version="6.12.0-3")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("qt6-base (expected 6.12.0-2;", result.stderr)
+        self.assertFalse(log.exists())
+
+    def test_builder_rejects_unreviewed_qtdeclarative_before_download(self):
+        result, log = self.run_builder_fixture(declarative_version="6.12.0-2")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("qt6-declarative (expected 6.12.0-1;", result.stderr)
+        self.assertFalse(log.exists())
+
+    def run_postinstall_fixture(self, include_core=True, archive_version="6.12.0-2",
+                                installed_version="6.12.0-2"):
         builder = (ROOT / "scripts/deps/build_windows_qt.sh").read_text()
         # Execute the real postinstall block, redirecting its fixed MSYS prefix
         # into this isolated fixture. Package installation alone is mocked.
@@ -116,7 +137,7 @@ class WindowsQtSourceTests(unittest.TestCase):
             (runtime / "bin" / name).write_bytes(b"binary DLL fixture\r\n\x00")
         work = self.root / "postinstall-work"
         (work / "packages").mkdir(parents=True)
-        package = work / "packages/mingw-w64-ucrt-x86_64-qt6-base-6.12.0-1-any.pkg.tar.zst"
+        package = work / "packages" / f"mingw-w64-ucrt-x86_64-qt6-base-{archive_version}-any.pkg.tar.zst"
         package.write_bytes(b"fake package")
         (work / "packages.sha256").write_text(
             self.manifest(work, ["packages/" + package.name]))
@@ -125,7 +146,7 @@ class WindowsQtSourceTests(unittest.TestCase):
         (mock / "pacman").write_text(
             '#!/usr/bin/env bash\n'
             'case "$1" in\n'
-            '  -Q) echo "mingw-w64-ucrt-x86_64-qt6-base 6.12.0-1" ;;\n'
+            '  -Q) printf "mingw-w64-ucrt-x86_64-qt6-base %s\\n" "$INSTALLED_VERSION" ;;\n'
             '  -Qlq) printf "%s\\n" ' + " ".join(str(runtime / "bin" / n) for n in names)
             + ' ;;\n  --noconfirm) exit 0 ;;\n  *) exit 91 ;;\nesac\n')
         (mock / "pacman").chmod(0o755)
@@ -135,6 +156,7 @@ class WindowsQtSourceTests(unittest.TestCase):
         script.write_text(header + '\nwork="$TEST_WORK"\nsource_dir="$TEST_SOURCE"\n'
                           'identity=fixture\ninventory=fixture\ncommit=fixture\n' + body)
         environment = dict(os.environ, TEST_WORK=str(work), TEST_SOURCE=str(self.source),
+                           INSTALLED_VERSION=installed_version,
                            PATH=str(mock) + os.pathsep + os.environ['PATH'])
         return subprocess.run(['bash', str(script)], env=environment,
                               capture_output=True, text=True), work
@@ -152,6 +174,18 @@ class WindowsQtSourceTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Missing required runtime manifest entry: bin/Qt6Core.dll', result.stderr)
         self.assertFalse((work / 'complete').exists())
+
+    def test_postinstall_rejects_old_package_archive(self):
+        result, work = self.run_postinstall_fixture(archive_version="6.12.0-1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("expected exactly one QtBase binary package", result.stderr)
+        self.assertFalse((work / "complete").exists())
+
+    def test_postinstall_rejects_wrong_installed_version(self):
+        result, work = self.run_postinstall_fixture(installed_version="6.12.0-1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unexpected installed QtBase package after reinstall:", result.stderr)
+        self.assertFalse((work / "complete").exists())
 
     def test_valid_binary_marker_bundle(self):
         runtime = self.source / 'runtime.sha256'

@@ -336,13 +336,15 @@ and the [new header requirements](https://github.com/FFmpeg/nv-codec-headers/blo
 
 ### Windows Qt security rebuild
 
-The MSYS2 QtBase 6.12.0-1 binary was built on 2026-10-20 and predates the
-applicable official Qt security patches published on 2026-10-26 and 2026-11-09.
-A passing application test does not establish that these fixes are present.
-`scripts/deps/build_windows_qt.sh` therefore rebuilds the pinned official UCRT64
-recipe with its platform patches and the same three official Qt security patches
-used on Linux. Same-version Declarative/Tools remain ABI-compatible and are
-validated by the full Windows application, packaging and clean-startup gates.
+MSYS2's [QtBase 6.12.0-2 recipe](https://github.com/msys2/MINGW-packages/commit/e5b096b17adaae570fe4ea69894a86866b0717e0)
+bumps the package revision for the OpenSSL 4.1.0 rebuild. It still uses the
+Qt 6.12.0 source archive and does not include the official Qt security fixes.
+`scripts/deps/build_windows_qt.sh` rebuilds that pinned UCRT64 recipe with all its
+platform patches and the same three official Qt security patches used on Linux.
+The script checks the exact package versions independently: QtBase 6.12.0-2 and
+QtDeclarative 6.12.0-1. QtDeclarative and QtTools stay on the same Qt 6.12.0
+release; the Windows application, packaging and clean-startup gates validate
+the resulting SDK.
 
 The build cache contains verified binary packages and corresponding source, and
 is keyed by the recipe/scripts and complete installed package inventory. Cached
