@@ -50,6 +50,14 @@ if(NICONEON_BUILD_APP)
   set_tests_properties(qml_views_test PROPERTIES TIMEOUT 60 LABELS qml
     ENVIRONMENT_MODIFICATION "${niconeon_test_environment}"
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+  foreach(scale IN ITEMS 1.5 2)
+    set(test_name "qml_ng_toast_scale_${scale}")
+    add_test(NAME "${test_name}" COMMAND qml_views_test -input "${PROJECT_SOURCE_DIR}/tests/qml"
+      Views::test_ngToastAppearsAbovePlayerAndUndoWorks)
+    set_tests_properties("${test_name}" PROPERTIES TIMEOUT 60 LABELS qml
+      ENVIRONMENT_MODIFICATION "${niconeon_test_environment}"
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=${scale}")
+  endforeach()
 
 endif()
 
