@@ -32,8 +32,9 @@ class Store {
     Result<std::optional<CommentList>> loadCommentCache(const QString &videoId);
     Result<void> saveCommentCache(const QString &videoId, const CommentList &comments);
     Result<void> upsertVideoMap(const QString &videoPath, const QString &videoId);
-    Result<bool> addNgUser(const QString &userId);
-    Result<bool> removeNgUser(const QString &userId);
+    // A duplicate returns no registration ID.
+    Result<std::optional<QString>> addNgUser(const QString &userId);
+    Result<bool> removeNgUser(const QString &userId, const std::optional<QString> &registrationId = std::nullopt);
     Result<QStringList> listNgUsers();
     Result<RegexFilter> insertRegexFilter(const QString &pattern);
     Result<bool> removeRegexFilter(qint64 filterId);
@@ -43,6 +44,7 @@ class Store {
     Store();
     Result<void> open(const QString &dataPath, const QString &cachePath, bool memory, CachePolicy cachePolicy);
     Result<void> initializeDataSchema();
+    Result<void> migrateNgRegistrationIds();
     Result<void> initializeCache(const QString &cachePath, bool memory);
     Result<void> migrateLegacyCache();
     Result<void> checkThread() const;

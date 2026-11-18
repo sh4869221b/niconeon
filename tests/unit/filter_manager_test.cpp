@@ -139,6 +139,41 @@ class FilterManagerTest : public QObject {
         QVERIFY(ownerUndo && ownerUndo->restored);
     }
 
+    void staleUndoCannotRemoveAnotherInstancesReplacement() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(second.initialize());
+
+        const auto user = QStringLiteral("shared");
+        auto original = first.addNgUser(user);
+        QVERIFY(original && original->applied && !original->undoToken.isEmpty());
+        auto duplicate = second.addNgUser(user);
+        QVERIFY(duplicate && !duplicate->applied && duplicate->undoToken.isEmpty());
+        QVERIFY(second.engine().containsNgUser(user));
+        auto removed = second.removeNgUser(user);
+        QVERIFY(removed && removed->removed);
+        auto replacement = second.addNgUser(user);
+        QVERIFY(replacement && replacement->applied && !replacement->undoToken.isEmpty());
+        QVERIFY(replacement->undoToken != original->undoToken);
+
+        auto staleUndo = first.undoLastNg(original->undoToken);
+        QVERIFY(staleUndo);
+        QCOMPARE((*secondStore)->listNgUsers().value(), QStringList{user});
+        QVERIFY(!staleUndo->restored);
+        QVERIFY(first.engine().containsNgUser(user));
+        QVERIFY(!first.undoLastNg(original->undoToken)->restored);
+        auto undoReplacement = second.undoLastNg(replacement->undoToken);
+        QVERIFY(undoReplacement && undoReplacement->restored);
+        QVERIFY(!second.engine().containsNgUser(user));
+        QVERIFY((*secondStore)->listNgUsers()->isEmpty());
+    }
+
     void sharedDatabaseNewInsertionGetsUndoWithStaleLocalFilter() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());

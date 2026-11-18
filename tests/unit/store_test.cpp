@@ -6,7 +6,10 @@
 #include <QTemporaryDir>
 #include <QUuid>
 #include <QtTest>
+#include <array>
+#include <barrier>
 #include <limits>
+#include <thread>
 
 using namespace niconeon;
 
@@ -113,6 +116,58 @@ class StoreTest : public QObject {
         QVERIFY(!query.next());
         // Opening again is idempotent.
         QVERIFY(Store::openWithPaths(dataPath, cachePath));
+    }
+
+    void concurrentOpensMigrateNgRegistrationIdsAndPreserveLegacyRows() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto dataPath = directory.filePath(QStringLiteral("data.db"));
+        {
+            Database legacy(dataPath);
+            QVERIFY(legacy.opened);
+            QVERIFY(legacy.exec(QStringLiteral("PRAGMA journal_mode=WAL")));
+            QVERIFY(legacy.exec(
+                QStringLiteral("CREATE TABLE ng_users(user_id TEXT PRIMARY KEY,created_at TEXT NOT NULL)")));
+            QVERIFY(legacy.exec(QStringLiteral("INSERT INTO ng_users VALUES('legacy','2024-01-01T00:00:00Z')")));
+        }
+
+        const std::array cachePaths{directory.filePath(QStringLiteral("first-cache.db")),
+                                    directory.filePath(QStringLiteral("second-cache.db"))};
+        std::array<Result<std::optional<QString>>, 2> registrations;
+        std::barrier start(2);
+        auto registerUser = [&](std::size_t index) {
+            start.arrive_and_wait();
+            auto store = Store::openWithPaths(dataPath, cachePaths[index]);
+            registrations[index] =
+                store ? (*store)->addNgUser(QStringLiteral("shared")) : std::unexpected(store.error());
+        };
+        {
+            std::jthread first(registerUser, 0);
+            std::jthread second(registerUser, 1);
+        }
+        for (const auto &registration : registrations)
+            QVERIFY2(registration, registration ? "" : qPrintable(registration.error().message));
+        QVERIFY(registrations[0]->has_value() != registrations[1]->has_value());
+        const auto token = registrations[0]->has_value() ? **registrations[0] : **registrations[1];
+        QVERIFY(!token.isEmpty());
+
+        Database check(dataPath);
+        QVERIFY(check.exec(
+            QStringLiteral("INSERT INTO ng_users(user_id,created_at) VALUES('older-client','2024-01-02T00:00:00Z')")));
+        QSqlQuery query(check.db);
+        QVERIFY(
+            query.exec(QStringLiteral("SELECT user_id,created_at,registration_id FROM ng_users ORDER BY created_at")));
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("legacy"));
+        QCOMPARE(query.value(1).toString(), QStringLiteral("2024-01-01T00:00:00Z"));
+        QVERIFY(query.value(2).isNull());
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("older-client"));
+        QVERIFY(query.value(2).isNull());
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("shared"));
+        QCOMPARE(query.value(2).toString(), token);
+        QVERIFY(!query.next());
     }
 
     void oversizedLegacyPayloadIsRejectedWithoutDroppingSource() {
@@ -249,7 +304,8 @@ class StoreTest : public QObject {
         QVERIFY((*opened)->cacheError());
         QVERIFY(!(*opened)->loadCommentCache(QStringLiteral("sm9")));
         QVERIFY(!(*opened)->saveCommentCache(QStringLiteral("sm9"), {}));
-        QVERIFY((*opened)->addNgUser(QStringLiteral("u1")).value_or(false));
+        const auto added = (*opened)->addNgUser(QStringLiteral("u1"));
+        QVERIFY(added && added->has_value());
     }
 
     void capacityBoundIsExplicitAndDuplicateRemainsNoop() {
@@ -259,7 +315,8 @@ class StoreTest : public QObject {
         QVERIFY(store);
         Database data(path);
         QVERIFY(data.exec(QStringLiteral("WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<9999) "
-                                         "INSERT INTO ng_users SELECT 'u'||x,'2024-01-01T00:00:00Z' FROM n")));
+                                         "INSERT INTO ng_users(user_id,created_at) "
+                                         "SELECT 'u'||x,'2024-01-01T00:00:00Z' FROM n")));
         QCOMPARE((*store)->listNgUsers()->size(), MaxFilterEntries);
         auto duplicate = (*store)->addNgUser(QStringLiteral("u0"));
         QVERIFY(duplicate && !*duplicate);

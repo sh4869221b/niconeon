@@ -259,7 +259,8 @@ class ServiceRegressionTest : public QObject {
         {
             auto store = Store::openWithPaths(dataPath, healthyCache);
             QVERIFY(store);
-            QVERIFY((*store)->addNgUser(QStringLiteral("u1")).value_or(false));
+            const auto added = (*store)->addNgUser(QStringLiteral("u1"));
+            QVERIFY(added && added->has_value());
         }
         auto cachePath = directory.filePath(QStringLiteral("broken-cache.db"));
         if (failure == QStringLiteral("migration")) {

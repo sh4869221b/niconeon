@@ -235,7 +235,8 @@ Result<void> Store::open(const QString &dataPath, const QString &cachePath, bool
 
 Result<void> Store::initializeDataSchema() {
     const QStringList dataStatements{
-        QStringLiteral("CREATE TABLE IF NOT EXISTS ng_users (user_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)"),
+        QStringLiteral("CREATE TABLE IF NOT EXISTS ng_users (user_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, "
+                       "registration_id TEXT)"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS regex_filters (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT "
                        "NOT NULL, created_at TEXT NOT NULL)"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS video_map (video_path TEXT PRIMARY KEY, video_id TEXT NOT NULL, "
@@ -244,7 +245,40 @@ Result<void> Store::initializeDataSchema() {
         if (auto result = execute(m_data, statement, QStringLiteral("initialize data schema")); !result)
             return result;
     }
-    return {};
+    // Lock out other writers before checking the schema so concurrent opens cannot both try to add the column.
+    if (auto result = execute(m_data, QStringLiteral("BEGIN IMMEDIATE"), QStringLiteral("begin NG schema migration"));
+        !result)
+        return result;
+    auto migrated = migrateNgRegistrationIds();
+    if (migrated && !m_data.commit())
+        migrated =
+            std::unexpected(AppError{QStringLiteral("commit NG schema migration: %1").arg(m_data.lastError().text())});
+    if (!migrated)
+        m_data.rollback();
+    return migrated;
+}
+
+Result<void> Store::migrateNgRegistrationIds() {
+    bool hasRegistrationId;
+    {
+        QSqlQuery column(m_data);
+        if (!column.exec(QStringLiteral("SELECT 1 FROM pragma_table_info('ng_users') WHERE name='registration_id'")))
+            return std::unexpected(sqlError(QStringLiteral("inspect NG user schema"), column));
+        hasRegistrationId = column.next();
+        if (column.lastError().isValid())
+            return std::unexpected(sqlError(QStringLiteral("read NG user schema"), column));
+    }
+    if (!hasRegistrationId) {
+        // Old rows have no live Undo token. Keep them and allow older clients' named-column inserts.
+        if (auto result = execute(m_data, QStringLiteral("ALTER TABLE ng_users ADD COLUMN registration_id TEXT"),
+                                  QStringLiteral("add NG registration ID"));
+            !result)
+            return result;
+    }
+    return execute(m_data,
+                   QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS ng_users_registration_id ON "
+                                  "ng_users(registration_id) WHERE registration_id IS NOT NULL"),
+                   QStringLiteral("index NG registration IDs"));
 }
 
 Result<void> Store::initializeCache(const QString &cachePath, bool memory) {
@@ -406,7 +440,7 @@ Result<void> Store::checkFilterCapacity() {
     return {};
 }
 
-Result<bool> Store::addNgUser(const QString &userId) {
+Result<std::optional<QString>> Store::addNgUser(const QString &userId) {
     if (auto valid = checkThread(); !valid)
         return std::unexpected(valid.error());
     if (auto valid = validateUserId(userId); !valid)
@@ -418,27 +452,35 @@ Result<bool> Store::addNgUser(const QString &userId) {
         if (!exists.exec())
             return std::unexpected(sqlError(QStringLiteral("find ng user"), exists));
         if (exists.next())
-            return false;
+            return std::nullopt;
     }
     if (auto capacity = checkFilterCapacity(); !capacity)
         return std::unexpected(capacity.error());
+    const auto registrationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QSqlQuery query(m_data);
-    query.prepare(QStringLiteral("INSERT OR IGNORE INTO ng_users(user_id,created_at) VALUES(?,?)"));
+    query.prepare(QStringLiteral("INSERT INTO ng_users(user_id,created_at,registration_id) VALUES(?,?,?) "
+                                 "ON CONFLICT(user_id) DO NOTHING"));
     query.addBindValue(nonNull(userId));
     query.addBindValue(timestamp());
+    query.addBindValue(registrationId);
     if (!query.exec())
         return std::unexpected(sqlError(QStringLiteral("save ng user"), query));
-    return query.numRowsAffected() > 0;
+    if (query.numRowsAffected() == 1)
+        return registrationId;
+    return std::nullopt;
 }
 
-Result<bool> Store::removeNgUser(const QString &userId) {
+Result<bool> Store::removeNgUser(const QString &userId, const std::optional<QString> &registrationId) {
     if (auto valid = checkThread(); !valid)
         return std::unexpected(valid.error());
     if (auto valid = validateUserId(userId); !valid)
         return std::unexpected(valid.error());
     QSqlQuery query(m_data);
-    query.prepare(QStringLiteral("DELETE FROM ng_users WHERE user_id=?"));
+    query.prepare(registrationId ? QStringLiteral("DELETE FROM ng_users WHERE user_id=? AND registration_id=?")
+                                 : QStringLiteral("DELETE FROM ng_users WHERE user_id=?"));
     query.addBindValue(nonNull(userId));
+    if (registrationId)
+        query.addBindValue(*registrationId);
     if (!query.exec())
         return std::unexpected(sqlError(QStringLiteral("delete ng user"), query));
     return query.numRowsAffected() > 0;

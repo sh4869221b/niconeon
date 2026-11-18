@@ -1,7 +1,5 @@
 #include "filters/FilterManager.hpp"
 
-#include <QUuid>
-
 namespace niconeon {
 
 FilterManager::FilterManager(Store &store) : m_store(store) {}
@@ -30,10 +28,10 @@ Result<AddNgUserResult> FilterManager::addNgUser(const QString &userId) {
     m_engine.addNgUser(userId);
     QString token;
     if (*persisted) {
-        token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        token = **persisted;
         m_lastUndo = UndoState{token, userId};
     }
-    return AddNgUserResult{*persisted, token, userId};
+    return AddNgUserResult{persisted->has_value(), token, userId};
 }
 
 Result<RemoveNgUserResult> FilterManager::removeNgUser(const QString &userId) {
@@ -53,13 +51,14 @@ Result<UndoNgResult> FilterManager::undoLastNg(const QString &undoToken) {
     if (!m_lastUndo || m_lastUndo->token != undoToken)
         return UndoNgResult{};
     const QString userId = m_lastUndo->userId;
-    auto removed = m_store.removeNgUser(userId);
+    auto removed = m_store.removeNgUser(userId, undoToken);
     if (!removed)
         return std::unexpected(AppError{QStringLiteral("remove ng user: %1").arg(removed.error().message)});
+    // A missing or replaced row invalidates this token. Keep filtering a user whose row may have been replaced.
+    m_lastUndo.reset();
     if (!*removed)
         return UndoNgResult{};
     m_engine.removeNgUser(userId);
-    m_lastUndo.reset();
     return UndoNgResult{true, userId};
 }
 

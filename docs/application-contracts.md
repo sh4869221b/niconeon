@@ -26,6 +26,11 @@ Corrupt cache never stops a local video. SQL errors carry operation context.
 Only the latest NG registration actually inserted into SQLite by this instance gets a
 single-use Undo token. A duplicate synchronizes the local NG filter and preserves any
 existing token. Removing an NG user in the same instance invalidates its Undo.
+Each new row stores its own registration ID, which is also its Undo token. Undo deletes
+only a row matching both the user ID and the registration ID. If another instance
+deleted or replaced the row, the old token expires and the local filter stays active.
+The additive SQLite migration preserves older rows with a NULL registration ID.
+The Undo guard applies to instances running the updated application.
 Invalid regex is checked before database write. Qt uses PCRE2 semantics and Unicode properties.
 If the data DB cannot be opened or a persisted filter is invalid, comment emission fails
 closed with one explicit warning at initialization. Local video playback continues.

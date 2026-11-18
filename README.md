@@ -62,7 +62,8 @@ Windows、Sanitizer、clang-format / clang-tidy、パッケージングの詳細
 
 ## 設定・データ互換性
 
-既存のNG/regex DBと分離済みコメントcache DBのパス・schemaを維持します。
+既存のNG/regex DBと分離済みコメントcache DBのパスを維持します。
+NG登録ごとのUndoを識別するため、既存の `ng_users` には登録ID列を追加します。既存の登録は引き続き適用されます。
 旧データDB内 `comment_cache` は、cache DBへのtransaction commit後に移行元tableを削除します。移行失敗時は元データを保持します。
 
 - Linux: `$XDG_DATA_HOME/niconeon/niconeon.db` / `$XDG_CACHE_HOME/niconeon/comment-cache.db`（未設定時は標準HOME配下）
