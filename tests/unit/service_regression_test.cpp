@@ -1,6 +1,8 @@
 #include "../support/MockHttpServer.hpp"
 #include "app/CommentService.hpp"
 
+#include <QDir>
+#include <QFile>
 #include <QSignalSpy>
 #include <QSqlQuery>
 #include <QTemporaryDir>
@@ -22,7 +24,7 @@ QByteArray seekComments() {
     return R"({"meta":{"status":200},"data":{"threads":[{"comments":[{"id":"old","vposMs":100,"body":"in flight","userId":"u1"},{"id":"exact","vposMs":600,"body":"exact","userId":"u2"}]}]}})";
 }
 
-bool corruptCache(const QString &path) {
+bool executeSql(const QString &path, const QString &statement) {
     const auto name = QUuid::createUuid().toString();
     bool succeeded = false;
     {
@@ -30,8 +32,7 @@ bool corruptCache(const QString &path) {
         database.setDatabaseName(path);
         if (database.open()) {
             QSqlQuery query(database);
-            succeeded =
-                query.exec(QStringLiteral("UPDATE comment_cache SET payload_json='{not-json}' WHERE video_id='sm9'"));
+            succeeded = query.exec(statement);
         }
     }
     QSqlDatabase::removeDatabase(name);
@@ -215,7 +216,8 @@ class ServiceRegressionTest : public QObject {
             QVERIFY((*store)->saveCommentCache(
                 QStringLiteral("sm9"), {{QStringLiteral("c"), 0, QStringLiteral("u"), QStringLiteral("cached")}}));
         }
-        QVERIFY(corruptCache(options.storePaths->cachePath));
+        QVERIFY(executeSql(options.storePaths->cachePath,
+                           QStringLiteral("UPDATE comment_cache SET payload_json='{not-json}' WHERE video_id='sm9'")));
         CommentService service(options);
         QSignalSpy ready(&service, &CommentService::ready), opened(&service, &CommentService::opened),
             warnings(&service, &CommentService::warning), comments(&service, &CommentService::commentsReady);
@@ -230,6 +232,125 @@ class ServiceRegressionTest : public QObject {
         service.requestTick(900, false, false);
         QTRY_COMPARE(comments.size(), 1);
         QCOMPARE(qvariant_cast<PlaybackBatchResult>(comments.first()[0]).lastPositionMs, 900);
+        service.shutdown();
+        QTRY_VERIFY(service.isStopped());
+    }
+
+    void cacheInitializationFailureKeepsPersistentFilters_data() {
+        QTest::addColumn<QString>("failure");
+        QTest::newRow("cache-parent-is-file") << QStringLiteral("directory");
+        QTest::newRow("cache-is-not-a-database") << QStringLiteral("sqlite");
+        QTest::newRow("legacy-migration-fails") << QStringLiteral("migration");
+    }
+
+    void cacheInitializationFailureKeepsPersistentFilters() {
+        QFETCH(QString, failure);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        MockHttpServer server;
+        QVERIFY(server.start());
+        server.handler = [&server](const QByteArray &request) {
+            return MockHttpServer::Reply{request.startsWith("GET") ? server.watch() : seekComments()};
+        };
+        auto options = serviceOptions(server);
+        options.memoryStore = false;
+        const auto dataPath = directory.filePath(QStringLiteral("data.db"));
+        const auto healthyCache = directory.filePath(QStringLiteral("healthy-cache.db"));
+        {
+            auto store = Store::openWithPaths(dataPath, healthyCache);
+            QVERIFY(store);
+            QVERIFY((*store)->addNgUser(QStringLiteral("u1")).value_or(false));
+        }
+        auto cachePath = directory.filePath(QStringLiteral("broken-cache.db"));
+        if (failure == QStringLiteral("migration")) {
+            // A legacy table that cannot be copied must remain available for recovery.
+            QVERIFY(executeSql(dataPath, QStringLiteral("CREATE TABLE comment_cache (legacy_column TEXT)")));
+        } else {
+            QFile blocked(cachePath);
+            QVERIFY(blocked.open(QIODevice::WriteOnly));
+            QCOMPARE(blocked.write("not a database"), 14);
+            blocked.close();
+            if (failure == QStringLiteral("directory"))
+                cachePath += QStringLiteral("/cache.db");
+        }
+        options.storePaths = StorePaths{dataPath, cachePath};
+
+        CommentService service(options);
+        QSignalSpy ready(&service, &CommentService::ready), warnings(&service, &CommentService::warning),
+            opened(&service, &CommentService::opened), comments(&service, &CommentService::commentsReady),
+            filters(&service, &CommentService::filtersChanged), added(&service, &CommentService::ngAdded);
+        QTRY_COMPARE(ready.size(), 1);
+        QTRY_COMPARE(filters.size(), 1);
+        QCOMPARE(qvariant_cast<FilterSnapshot>(filters.first()[0]).ngUsers, QStringList{QStringLiteral("u1")});
+        QCOMPARE(warnings.size(), 1);
+        QVERIFY(warnings.first()[0].toString().contains(QStringLiteral("コメントキャッシュを利用できません")));
+
+        service.openVideo(QStringLiteral("sm9.mp4"), QStringLiteral("sm9"));
+        QTRY_COMPARE(opened.size(), 1);
+        QCOMPARE(qvariant_cast<CommentSource>(opened.first()[1]), CommentSource::Network);
+        service.requestTick(700, false, false);
+        QTRY_COMPARE(comments.size(), 1);
+        const auto batch = qvariant_cast<PlaybackBatchResult>(comments.first()[0]);
+        QCOMPARE(batch.emitComments.size(), 1);
+        QCOMPARE(batch.emitComments.first().userId, QStringLiteral("u2"));
+        QCOMPARE(warnings.size(), 1);
+
+        server.handler = [](const QByteArray &) { return MockHttpServer::Reply{"{}", 503}; };
+        service.openVideo(QStringLiteral("sm9.mp4"), QStringLiteral("sm9"));
+        QTRY_COMPARE(opened.size(), 2);
+        QCOMPARE(qvariant_cast<CommentSource>(opened.last()[1]), CommentSource::None);
+        QCOMPARE(warnings.size(), 2);
+
+        QVERIFY(service.addNgUser(QStringLiteral("persisted")));
+        QTRY_COMPARE(added.size(), 1);
+        service.shutdown();
+        QTRY_VERIFY(service.isStopped());
+        if (failure == QStringLiteral("migration")) {
+            QVERIFY(executeSql(dataPath, QStringLiteral("SELECT legacy_column FROM comment_cache")));
+            QVERIFY(executeSql(dataPath, QStringLiteral("DROP TABLE comment_cache")));
+        }
+        auto store = Store::openWithPaths(dataPath, healthyCache);
+        QVERIFY(store);
+        const auto users = (*store)->listNgUsers();
+        QVERIFY(users);
+        QVERIFY(users->contains(QStringLiteral("u1")));
+        QVERIFY(users->contains(QStringLiteral("persisted")));
+    }
+
+    void unavailableDataDatabaseDisablesEmissionAndFilterWrites() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto dataPath = directory.filePath(QStringLiteral("data.db"));
+        QVERIFY(QDir().mkpath(dataPath));
+        MockHttpServer server;
+        QVERIFY(server.start());
+        server.handler = [&server](const QByteArray &request) {
+            return MockHttpServer::Reply{request.startsWith("GET") ? server.watch() : seekComments()};
+        };
+        auto options = serviceOptions(server);
+        options.memoryStore = false;
+        options.storePaths = StorePaths{dataPath, directory.filePath(QStringLiteral("cache.db"))};
+        CommentService service(options);
+        QSignalSpy ready(&service, &CommentService::ready), warnings(&service, &CommentService::warning),
+            opened(&service, &CommentService::opened), comments(&service, &CommentService::commentsReady),
+            failed(&service, &CommentService::operationFailed), added(&service, &CommentService::ngAdded);
+        QTRY_COMPARE(ready.size(), 1);
+        QCOMPARE(warnings.size(), 1);
+        QVERIFY(warnings.first()[0].toString().contains(QStringLiteral("comment emission is disabled")));
+        service.openVideo(QStringLiteral("sm9.mp4"), QStringLiteral("sm9"));
+        QTRY_COMPARE(opened.size(), 1);
+        QCOMPARE(qvariant_cast<CommentSource>(opened.first()[1]), CommentSource::Network);
+        QCOMPARE(opened.first()[2].toLongLong(), 2);
+        service.requestTick(700, false, false);
+        QTRY_COMPARE(comments.size(), 1);
+        const auto batch = qvariant_cast<PlaybackBatchResult>(comments.first()[0]);
+        QVERIFY(batch.emitComments.isEmpty());
+        QCOMPARE(batch.processedTicks, 0);
+        QVERIFY(service.addNgUser(QStringLiteral("u1")));
+        QTRY_COMPARE(failed.size(), 1);
+        QCOMPARE(failed.first()[0].toString(), QStringLiteral("add_ng"));
+        QCOMPARE(added.size(), 0);
+        QCOMPARE(warnings.size(), 1);
         service.shutdown();
         QTRY_VERIFY(service.isStopped());
     }

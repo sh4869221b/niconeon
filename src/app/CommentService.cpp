@@ -12,16 +12,15 @@ class CommentWorker : public QObject {
     CommentWorker(ServiceOptions options, std::shared_ptr<SessionControl> control)
         : m_options(std::move(options)), m_control(std::move(control)) {}
     void initialize() {
-        auto store = m_options.memoryStore ? Store::openMemory()
-                     : m_options.storePaths
-                         ? Store::openWithPaths(m_options.storePaths->dataPath, m_options.storePaths->cachePath)
-                         : Store::openDefault();
-        if (!store) {
-            emit warning(QStringLiteral("永続化を開けません。一時メモリで継続します: ") + store.error().message);
-            store = Store::openMemory();
-        }
+        constexpr auto cachePolicy = Store::CachePolicy::Optional;
+        auto store = m_options.memoryStore  ? Store::openMemory()
+                     : m_options.storePaths ? Store::openWithPaths(m_options.storePaths->dataPath,
+                                                                   m_options.storePaths->cachePath, cachePolicy)
+                                            : Store::openDefault(cachePolicy);
         if (store) {
             m_store = std::move(*store);
+            if (const auto &cacheError = m_store->cacheError())
+                emit warning(QStringLiteral("コメントキャッシュを利用できません: %1").arg(cacheError->message));
             m_filters = std::make_unique<FilterManager>(*m_store);
             auto initialized = m_filters->initialize();
             if (!initialized) {
@@ -192,7 +191,7 @@ class CommentWorker : public QObject {
         if (!current(generation))
             return;
         if (error.isEmpty()) {
-            if (m_store) {
+            if (m_store && !m_store->cacheError()) {
                 auto saved = m_store->saveCommentCache(m_videoId, comments);
                 if (!saved)
                     emit warning(saved.error().message);
@@ -201,7 +200,7 @@ class CommentWorker : public QObject {
             return;
         }
         emit warning(QStringLiteral("コメント取得に失敗しました（動画再生は継続）: ") + error);
-        if (m_store) {
+        if (m_store && !m_store->cacheError()) {
             auto cached = m_store->loadCommentCache(m_videoId);
             if (cached && cached->has_value()) {
                 commit(std::move(**cached), CommentSource::Cache, generation);

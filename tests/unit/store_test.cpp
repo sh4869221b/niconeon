@@ -244,6 +244,12 @@ class StoreTest : public QObject {
         QTemporaryDir directory;
         const auto path = directory.filePath(QStringLiteral("same.db"));
         QVERIFY(!Store::openWithPaths(path, path));
+        auto opened = Store::openWithPaths(path, path, Store::CachePolicy::Optional);
+        QVERIFY(opened);
+        QVERIFY((*opened)->cacheError());
+        QVERIFY(!(*opened)->loadCommentCache(QStringLiteral("sm9")));
+        QVERIFY(!(*opened)->saveCommentCache(QStringLiteral("sm9"), {}));
+        QVERIFY((*opened)->addNgUser(QStringLiteral("u1")).value_or(false));
     }
 
     void capacityBoundIsExplicitAndDuplicateRemainsNoop() {

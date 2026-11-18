@@ -33,6 +33,22 @@ Result<void> execute(QSqlDatabase &database, const QString &statement, const QSt
     return {};
 }
 
+Result<void> openDatabase(QSqlDatabase &database, const QString &connectionName, const QString &path, bool memory,
+                          const QString &walContext) {
+    if (path.isEmpty())
+        return std::unexpected(AppError{QStringLiteral("SQLite database path is empty")});
+    if (!memory && !QDir().mkpath(QFileInfo(path).absolutePath()))
+        return std::unexpected(AppError{QStringLiteral("create directory for %1").arg(path)});
+    database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    database.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=2000"));
+    database.setDatabaseName(path);
+    if (!database.open())
+        return std::unexpected(AppError{QStringLiteral("open sqlite %1: %2").arg(path, database.lastError().text())});
+    if (memory)
+        return {};
+    return execute(database, QStringLiteral("PRAGMA journal_mode=WAL"), walContext);
+}
+
 QString timestamp() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
 }
@@ -128,23 +144,26 @@ Result<void> Store::checkThread() const {
     return {};
 }
 
-Result<StorePaths> Store::defaultPaths() {
+Result<StorePaths> Store::defaultPaths(CachePolicy cachePolicy) {
     QString dataRoot;
     QString cacheRoot;
 #ifdef Q_OS_WIN
     dataRoot = knownFolder(FOLDERID_RoamingAppData);
     cacheRoot = knownFolder(FOLDERID_LocalAppData);
-    if (dataRoot.isEmpty() || cacheRoot.isEmpty())
+    if (dataRoot.isEmpty() || (cacheRoot.isEmpty() && cachePolicy == CachePolicy::Required))
         return std::unexpected(AppError{QStringLiteral("failed to determine data/cache directory")});
     dataRoot += QStringLiteral("/sh4869221b/niconeon/data");
-    cacheRoot += QStringLiteral("/sh4869221b/niconeon/cache");
+    if (!cacheRoot.isEmpty())
+        cacheRoot += QStringLiteral("/sh4869221b/niconeon/cache");
 #elif defined(Q_OS_MACOS)
+    Q_UNUSED(cachePolicy);
     const auto home = QDir::homePath();
     if (home.isEmpty() || !QDir::isAbsolutePath(home))
         return std::unexpected(AppError{QStringLiteral("failed to determine data directory")});
     dataRoot = home + QStringLiteral("/Library/Application Support/com.sh4869221b.niconeon");
     cacheRoot = home + QStringLiteral("/Library/Caches/com.sh4869221b.niconeon");
 #else
+    Q_UNUSED(cachePolicy);
     const auto home = QDir::homePath();
     if (home.isEmpty() || !QDir::isAbsolutePath(home))
         return std::unexpected(AppError{QStringLiteral("failed to determine data directory")});
@@ -154,19 +173,20 @@ Result<StorePaths> Store::defaultPaths() {
         absoluteEnvironmentRoot("XDG_CACHE_HOME", home + QStringLiteral("/.cache")) + QStringLiteral("/niconeon");
 #endif
     return StorePaths{QDir::cleanPath(dataRoot + QStringLiteral("/niconeon.db")),
-                      QDir::cleanPath(cacheRoot + QStringLiteral("/comment-cache.db"))};
+                      cacheRoot.isEmpty() ? QString{}
+                                          : QDir::cleanPath(cacheRoot + QStringLiteral("/comment-cache.db"))};
 }
 
-Result<std::unique_ptr<Store>> Store::openDefault() {
-    auto paths = defaultPaths();
+Result<std::unique_ptr<Store>> Store::openDefault(CachePolicy cachePolicy) {
+    auto paths = defaultPaths(cachePolicy);
     if (!paths)
         return std::unexpected(paths.error());
-    return openWithPaths(paths->dataPath, paths->cachePath);
+    return openWithPaths(paths->dataPath, paths->cachePath, cachePolicy);
 }
 
 Result<std::unique_ptr<Store>> Store::openMemory() {
     auto store = std::unique_ptr<Store>(new Store);
-    auto opened = store->open(QStringLiteral(":memory:"), QStringLiteral(":memory:"), true);
+    auto opened = store->open(QStringLiteral(":memory:"), QStringLiteral(":memory:"), true, CachePolicy::Required);
     if (!opened)
         return std::unexpected(opened.error());
     return store;
@@ -176,52 +196,44 @@ Result<std::unique_ptr<Store>> Store::openWithPath(const QString &dataPath) {
     return openWithPaths(dataPath, QFileInfo(dataPath).dir().filePath(QStringLiteral("niconeon-cache.db")));
 }
 
-Result<std::unique_ptr<Store>> Store::openWithPaths(const QString &dataPath, const QString &cachePath) {
+Result<std::unique_ptr<Store>> Store::openWithPaths(const QString &dataPath, const QString &cachePath,
+                                                    CachePolicy cachePolicy) {
     auto store = std::unique_ptr<Store>(new Store);
-    auto opened = store->open(dataPath, cachePath, false);
+    auto opened = store->open(dataPath, cachePath, false, cachePolicy);
     if (!opened)
         return std::unexpected(opened.error());
     return store;
 }
 
-Result<void> Store::open(const QString &dataPath, const QString &cachePath, bool memory) {
+Result<void> Store::open(const QString &dataPath, const QString &cachePath, bool memory, CachePolicy cachePolicy) {
+    Result<void> cache;
     if (!memory) {
         const QFileInfo dataInfo(dataPath), cacheInfo(cachePath);
         if (dataInfo.absoluteFilePath() == cacheInfo.absoluteFilePath() ||
             (!dataInfo.canonicalFilePath().isEmpty() && dataInfo.canonicalFilePath() == cacheInfo.canonicalFilePath()))
-            return std::unexpected(AppError{QStringLiteral("data and cache databases must use distinct paths")});
-        for (const auto &path : {dataPath, cachePath}) {
-            if (path.isEmpty() || !QDir().mkpath(QFileInfo(path).absolutePath()))
-                return std::unexpected(AppError{QStringLiteral("create directory for %1").arg(path)});
-        }
+            cache = std::unexpected(AppError{QStringLiteral("data and cache databases must use distinct paths")});
     }
-    m_data = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_dataConnectionName);
-    m_cache = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_cacheConnectionName);
-    m_data.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=2000"));
-    m_cache.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=2000"));
-    m_data.setDatabaseName(dataPath);
-    m_cache.setDatabaseName(cachePath);
-    if (!m_data.open())
-        return std::unexpected(AppError{QStringLiteral("open sqlite %1: %2").arg(dataPath, m_data.lastError().text())});
-    if (!m_cache.open())
-        return std::unexpected(
-            AppError{QStringLiteral("open sqlite %1: %2").arg(cachePath, m_cache.lastError().text())});
-    if (!memory) {
-        if (auto result =
-                execute(m_data, QStringLiteral("PRAGMA journal_mode=WAL"), QStringLiteral("set WAL mode for data db"));
-            !result)
-            return result;
-        if (auto result = execute(m_cache, QStringLiteral("PRAGMA journal_mode=WAL"),
-                                  QStringLiteral("set WAL mode for cache db"));
-            !result)
-            return result;
-    }
-    if (auto result = initializeSchema(); !result)
+    if (!cache && cachePolicy == CachePolicy::Required)
+        return cache;
+    if (auto result =
+            openDatabase(m_data, m_dataConnectionName, dataPath, memory, QStringLiteral("set WAL mode for data db"));
+        !result)
         return result;
-    return migrateLegacyCache();
+    if (auto result = initializeDataSchema(); !result)
+        return result;
+
+    if (cache)
+        cache = initializeCache(cachePath, memory);
+    if (!cache) {
+        if (cachePolicy == CachePolicy::Required)
+            return cache;
+        m_cache.close();
+        m_cacheError = std::move(cache.error());
+    }
+    return {};
 }
 
-Result<void> Store::initializeSchema() {
+Result<void> Store::initializeDataSchema() {
     const QStringList dataStatements{
         QStringLiteral("CREATE TABLE IF NOT EXISTS ng_users (user_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS regex_filters (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT "
@@ -232,10 +244,21 @@ Result<void> Store::initializeSchema() {
         if (auto result = execute(m_data, statement, QStringLiteral("initialize data schema")); !result)
             return result;
     }
-    return execute(m_cache,
-                   QStringLiteral("CREATE TABLE IF NOT EXISTS comment_cache (video_id TEXT PRIMARY KEY, fetched_at "
-                                  "TEXT NOT NULL, payload_json TEXT NOT NULL)"),
-                   QStringLiteral("initialize cache schema"));
+    return {};
+}
+
+Result<void> Store::initializeCache(const QString &cachePath, bool memory) {
+    if (auto result = openDatabase(m_cache, m_cacheConnectionName, cachePath, memory,
+                                   QStringLiteral("set WAL mode for cache db"));
+        !result)
+        return result;
+    if (auto result = execute(m_cache,
+                              QStringLiteral("CREATE TABLE IF NOT EXISTS comment_cache (video_id TEXT PRIMARY KEY, "
+                                             "fetched_at TEXT NOT NULL, payload_json TEXT NOT NULL)"),
+                              QStringLiteral("initialize cache schema"));
+        !result)
+        return result;
+    return migrateLegacyCache();
 }
 
 Result<void> Store::migrateLegacyCache() {
@@ -300,6 +323,8 @@ Result<void> Store::migrateLegacyCache() {
 Result<std::optional<CommentList>> Store::loadCommentCache(const QString &videoId) {
     if (auto valid = checkThread(); !valid)
         return std::unexpected(valid.error());
+    if (m_cacheError)
+        return std::unexpected(*m_cacheError);
     QSqlQuery sizeQuery(m_cache);
     sizeQuery.prepare(QStringLiteral("SELECT length(CAST(payload_json AS BLOB)) FROM comment_cache WHERE video_id=?"));
     sizeQuery.addBindValue(nonNull(videoId));
@@ -330,6 +355,8 @@ Result<std::optional<CommentList>> Store::loadCommentCache(const QString &videoI
 Result<void> Store::saveCommentCache(const QString &videoId, const CommentList &comments) {
     if (auto valid = checkThread(); !valid)
         return valid;
+    if (m_cacheError)
+        return std::unexpected(*m_cacheError);
     if (auto valid = validateComments(comments); !valid)
         return valid;
     QJsonArray array;
