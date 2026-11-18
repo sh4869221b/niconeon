@@ -30,9 +30,14 @@ taking the SQLite writer lock.
 NG users and regex filters share a 10,000-row limit. Each insertion checks the limit
 and writes in one SQLite write transaction. A duplicate NG user remains a no-op at
 capacity. The concurrency guarantee requires every writer to use the updated application.
+Startup reads the NG and regex lists in one SQLite read transaction and applies that
+committed snapshot to the filter engine.
 Only the latest NG registration actually inserted into SQLite by this instance gets a
-single-use Undo token. A duplicate synchronizes the local NG filter and preserves any
-existing token. Removing an NG user in the same instance invalidates its Undo.
+single-use Undo token. A duplicate uses a read-only lookup of the committed row,
+synchronizes the local NG filter and preserves any existing token. If the row is absent,
+the worker rechecks after taking the writer lock. A deletion committed after the lookup
+may leave the local filter active until a local removal or a fresh snapshot load.
+Removing an NG user in the same instance invalidates its Undo.
 Each new row stores its own registration ID, which is also its Undo token. Undo deletes
 only a row matching both the user ID and the registration ID. If another instance
 deleted or replaced the row, the old token expires and the local filter stays active.

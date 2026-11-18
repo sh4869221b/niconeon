@@ -35,6 +35,7 @@ class Store {
     // A duplicate returns no registration ID.
     Result<std::optional<QString>> addNgUser(const QString &userId);
     Result<bool> removeNgUser(const QString &userId, const std::optional<QString> &registrationId = std::nullopt);
+    Result<FilterSnapshot> loadFilters();
     Result<QStringList> listNgUsers();
     Result<RegexFilter> insertRegexFilter(const QString &pattern);
     Result<bool> removeRegexFilter(qint64 filterId);
@@ -47,6 +48,7 @@ class Store {
     Result<void> initializeCache(const QString &cachePath, bool memory);
     Result<void> migrateLegacyCache();
     Result<void> checkThread() const;
+    Result<bool> ngUserExists(const QString &userId);
     Result<void> checkFilterCapacity();
     QString m_dataConnectionName;
     QString m_cacheConnectionName;

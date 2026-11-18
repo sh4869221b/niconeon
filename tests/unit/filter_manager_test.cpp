@@ -4,23 +4,36 @@
 #include <QTemporaryDir>
 #include <QUuid>
 #include <QtTest>
+#include <atomic>
+#include <thread>
 
 using namespace niconeon;
 
 namespace {
-bool executeExternal(const QString &path, const QString &statement) {
-    const auto name = QUuid::createUuid().toString();
-    bool success = false;
-    {
-        auto database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
-        database.setDatabaseName(path);
-        if (database.open()) {
-            QSqlQuery query(database);
-            success = query.exec(statement);
-        }
+class ExternalDatabase {
+  public:
+    explicit ExternalDatabase(const QString &path) {
+        db.setDatabaseName(path);
+        db.open();
     }
-    QSqlDatabase::removeDatabase(name);
-    return success;
+    ~ExternalDatabase() {
+        db.close();
+        db = QSqlDatabase();
+        QSqlDatabase::removeDatabase(name);
+    }
+    bool exec(const QString &statement) {
+        QSqlQuery query(db);
+        return query.exec(statement);
+    }
+
+  private:
+    const QString name = QUuid::createUuid().toString();
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+};
+
+bool executeExternal(const QString &path, const QString &statement) {
+    ExternalDatabase database(path);
+    return database.exec(statement);
 }
 } // namespace
 
@@ -172,6 +185,98 @@ class FilterManagerTest : public QObject {
         QVERIFY(undoReplacement && undoReplacement->restored);
         QVERIFY(!second.engine().containsNgUser(user));
         QVERIFY((*secondStore)->listNgUsers()->isEmpty());
+    }
+
+    void duplicateSynchronizesWhileAWriterHasTheLock_data() {
+        QTest::addColumn<bool>("deletePending");
+        QTest::newRow("writer holds lock") << false;
+        QTest::newRow("writer has uncommitted delete") << true;
+    }
+
+    void duplicateSynchronizesWhileAWriterHasTheLock() {
+        QFETCH(bool, deletePending);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(second.initialize());
+        const auto user = QStringLiteral("u1");
+        const CommentEvent comment{QStringLiteral("c1"), 0, user, QStringLiteral("text")};
+        QVERIFY(!first.engine().shouldHide(comment).value_or(true));
+        auto registration = second.addNgUser(user);
+        QVERIFY(registration && registration->applied);
+
+        ExternalDatabase writer(path);
+        QVERIFY(writer.exec(QStringLiteral("BEGIN IMMEDIATE")));
+        if (deletePending)
+            QVERIFY(writer.exec(QStringLiteral("DELETE FROM ng_users WHERE user_id='u1'")));
+        // Hold the lock until the duplicate operation returns. The reader still sees committed data.
+        auto duplicate = first.addNgUser(user);
+        QVERIFY2(duplicate, duplicate ? "" : qPrintable(duplicate.error().message));
+        QVERIFY(!duplicate->applied);
+        QVERIFY(duplicate->undoToken.isEmpty());
+        QVERIFY(first.engine().shouldHide(comment).value_or(false));
+        QVERIFY(writer.exec(QStringLiteral("COMMIT")));
+
+        if (deletePending) {
+            QVERIFY((*firstStore)->listNgUsers()->isEmpty());
+            auto replacement = first.addNgUser(user);
+            QVERIFY(replacement && replacement->applied && !replacement->undoToken.isEmpty());
+            QVERIFY(!second.undoLastNg(registration->undoToken)->restored);
+            QVERIFY(first.undoLastNg(replacement->undoToken)->restored);
+        } else {
+            QVERIFY(second.undoLastNg(registration->undoToken)->restored);
+        }
+    }
+
+    void initializationUsesOneSnapshotWhileAWriterReplacesFilters() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto store = Store::openWithPath(path);
+        QVERIFY(store);
+        QVERIFY((*store)->addNgUser(QStringLiteral("protected"))->has_value());
+        const CommentEvent comment{QStringLiteral("c1"), 0, QStringLiteral("protected"), QStringLiteral("hidden")};
+
+        std::atomic<int> swaps = 0;
+        std::atomic<bool> writeFailed = false;
+        std::jthread writer([&](std::stop_token stop) {
+            ExternalDatabase database(path);
+            bool useRegex = true;
+            while (!stop.stop_requested()) {
+                const auto insert = useRegex ? QStringLiteral("INSERT INTO regex_filters(pattern,created_at) "
+                                                              "VALUES('^hidden$','2024-01-01T00:00:00Z')")
+                                             : QStringLiteral("INSERT INTO ng_users(user_id,created_at) "
+                                                              "VALUES('protected','2024-01-01T00:00:00Z')");
+                const auto remove =
+                    useRegex ? QStringLiteral("DELETE FROM ng_users") : QStringLiteral("DELETE FROM regex_filters");
+                if (!database.exec(QStringLiteral("BEGIN IMMEDIATE")) || !database.exec(insert) ||
+                    !database.exec(remove) || !database.exec(QStringLiteral("COMMIT"))) {
+                    writeFailed = true;
+                    return;
+                }
+                useRegex = !useRegex;
+                ++swaps;
+            }
+        });
+        QTRY_VERIFY(swaps > 0 || writeFailed);
+        QVERIFY(!writeFailed);
+        const int initialSwaps = swaps.load();
+        FilterManager manager(**store);
+        for (int attempt = 0; attempt < 2000; ++attempt) {
+            QVERIFY(manager.initialize());
+            QVERIFY(manager.engine().shouldHide(comment).value_or(false));
+            const auto snapshot = manager.snapshot();
+            QCOMPARE(snapshot.ngUsers.size() + snapshot.regexFilters.size(), 1);
+        }
+        writer.request_stop();
+        writer.join();
+        QVERIFY(!writeFailed);
+        QVERIFY(swaps > initialSwaps);
     }
 
     void sharedDatabaseNewInsertionGetsUndoWithStaleLocalFilter() {

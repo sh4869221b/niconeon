@@ -5,13 +5,10 @@ namespace niconeon {
 FilterManager::FilterManager(Store &store) : m_store(store) {}
 
 Result<void> FilterManager::initialize() {
-    auto users = m_store.listNgUsers();
-    if (!users)
-        return std::unexpected(AppError{QStringLiteral("load ng users: %1").arg(users.error().message)});
-    auto regexes = m_store.listRegexFilters();
-    if (!regexes)
-        return std::unexpected(AppError{QStringLiteral("load regex filters: %1").arg(regexes.error().message)});
-    auto loaded = m_engine.replace(*users, *regexes);
+    auto snapshot = m_store.loadFilters();
+    if (!snapshot)
+        return std::unexpected(snapshot.error());
+    auto loaded = m_engine.replace(snapshot->ngUsers, snapshot->regexFilters);
     if (loaded)
         m_lastUndo.reset();
     return loaded;

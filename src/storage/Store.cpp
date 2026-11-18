@@ -37,11 +37,13 @@ Result<void> execute(QSqlDatabase &database, const QString &statement, const QSt
     return {};
 }
 
+enum class TransactionMode { Read, Write };
+
 template <typename Operation>
-auto inImmediateTransaction(QSqlDatabase &database, const QString &context, Operation operation)
+auto inTransaction(QSqlDatabase &database, TransactionMode mode, const QString &context, Operation operation)
     -> decltype(operation()) {
-    if (auto begun = execute(database, QStringLiteral("BEGIN IMMEDIATE"), QStringLiteral("begin %1").arg(context));
-        !begun)
+    const auto begin = mode == TransactionMode::Write ? QStringLiteral("BEGIN IMMEDIATE") : QStringLiteral("BEGIN");
+    if (auto begun = execute(database, begin, QStringLiteral("begin %1").arg(context)); !begun)
         return std::unexpected(begun.error());
     auto result = operation();
     if (result && !database.commit())
@@ -313,7 +315,7 @@ Result<void> Store::initializeDataSchema() {
     if (schema->ready)
         return {};
 
-    return inImmediateTransaction(m_data, QStringLiteral("data schema migration"), [this]() -> Result<void> {
+    const auto migrate = [this]() -> Result<void> {
         // A concurrent opener may have finished the migration while we waited for the writer lock.
         const auto currentSchema = readDataSchema(m_data);
         if (!currentSchema)
@@ -342,7 +344,8 @@ Result<void> Store::initializeDataSchema() {
                        QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS ng_users_registration_id ON "
                                       "ng_users(registration_id) WHERE registration_id IS NOT NULL"),
                        QStringLiteral("index NG registration IDs"));
-    });
+    };
+    return inTransaction(m_data, TransactionMode::Write, QStringLiteral("data schema migration"), migrate);
 }
 
 Result<void> Store::initializeCache(const QString &cachePath, bool memory) {
@@ -504,23 +507,37 @@ Result<void> Store::checkFilterCapacity() {
     return {};
 }
 
+Result<bool> Store::ngUserExists(const QString &userId) {
+    QSqlQuery query(m_data);
+    if (!query.prepare(QStringLiteral("SELECT 1 FROM ng_users WHERE user_id=?")))
+        return std::unexpected(sqlError(QStringLiteral("prepare NG user lookup"), query));
+    query.addBindValue(nonNull(userId));
+    if (!query.exec())
+        return std::unexpected(sqlError(QStringLiteral("find ng user"), query));
+    const bool found = query.next();
+    if (query.lastError().isValid())
+        return std::unexpected(sqlError(QStringLiteral("read NG user"), query));
+    return found;
+}
+
 Result<std::optional<QString>> Store::addNgUser(const QString &userId) {
     if (auto valid = checkThread(); !valid)
         return std::unexpected(valid.error());
     if (auto valid = validateUserId(userId); !valid)
         return std::unexpected(valid.error());
-    return inImmediateTransaction(m_data, QStringLiteral("add NG user"), [&]() -> Result<std::optional<QString>> {
-        {
-            QSqlQuery exists(m_data);
-            exists.prepare(QStringLiteral("SELECT 1 FROM ng_users WHERE user_id=?"));
-            exists.addBindValue(nonNull(userId));
-            if (!exists.exec())
-                return std::unexpected(sqlError(QStringLiteral("find ng user"), exists));
-            if (exists.next())
-                return std::nullopt;
-            if (exists.lastError().isValid())
-                return std::unexpected(sqlError(QStringLiteral("read NG user"), exists));
-        }
+    const auto exists = ngUserExists(userId);
+    if (!exists)
+        return std::unexpected(exists.error());
+    // A duplicate observes the committed row at this read, even if another instance is deleting it.
+    if (*exists)
+        return std::nullopt;
+    const auto insert = [&]() -> Result<std::optional<QString>> {
+        // Another writer may have registered this user while we waited for the lock.
+        const auto current = ngUserExists(userId);
+        if (!current)
+            return std::unexpected(current.error());
+        if (*current)
+            return std::nullopt;
         if (auto capacity = checkFilterCapacity(); !capacity)
             return std::unexpected(capacity.error());
         const auto registrationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -535,7 +552,8 @@ Result<std::optional<QString>> Store::addNgUser(const QString &userId) {
         if (query.numRowsAffected() == 1)
             return registrationId;
         return std::nullopt;
-    });
+    };
+    return inTransaction(m_data, TransactionMode::Write, QStringLiteral("add NG user"), insert);
 }
 
 Result<bool> Store::removeNgUser(const QString &userId, const std::optional<QString> &registrationId) {
@@ -552,6 +570,22 @@ Result<bool> Store::removeNgUser(const QString &userId, const std::optional<QStr
     if (!query.exec())
         return std::unexpected(sqlError(QStringLiteral("delete ng user"), query));
     return query.numRowsAffected() > 0;
+}
+
+Result<FilterSnapshot> Store::loadFilters() {
+    if (auto valid = checkThread(); !valid)
+        return std::unexpected(valid.error());
+    // Keep the first SELECT's SQLite snapshot until both lists have been read.
+    const auto read = [this]() -> Result<FilterSnapshot> {
+        auto users = listNgUsers();
+        if (!users)
+            return std::unexpected(AppError{QStringLiteral("load ng users: %1").arg(users.error().message)});
+        auto regexes = listRegexFilters();
+        if (!regexes)
+            return std::unexpected(AppError{QStringLiteral("load regex filters: %1").arg(regexes.error().message)});
+        return FilterSnapshot{std::move(*users), std::move(*regexes)};
+    };
+    return inTransaction(m_data, TransactionMode::Read, QStringLiteral("load filter snapshot"), read);
 }
 
 Result<QStringList> Store::listNgUsers() {
@@ -583,7 +617,7 @@ Result<RegexFilter> Store::insertRegexFilter(const QString &pattern) {
         return std::unexpected(valid.error());
     if (pattern.size() > MaxPatternBytes || pattern.toUtf8().size() > MaxPatternBytes)
         return std::unexpected(AppError{QStringLiteral("invalid regex: pattern exceeds the 4096-byte safety limit")});
-    return inImmediateTransaction(m_data, QStringLiteral("add regex filter"), [&]() -> Result<RegexFilter> {
+    const auto insert = [&]() -> Result<RegexFilter> {
         if (auto capacity = checkFilterCapacity(); !capacity)
             return std::unexpected(capacity.error());
         const auto createdAt = QDateTime::currentDateTimeUtc();
@@ -594,7 +628,8 @@ Result<RegexFilter> Store::insertRegexFilter(const QString &pattern) {
         if (!query.exec())
             return std::unexpected(sqlError(QStringLiteral("insert regex filter"), query));
         return RegexFilter{query.lastInsertId().toLongLong(), pattern, createdAt};
-    });
+    };
+    return inTransaction(m_data, TransactionMode::Write, QStringLiteral("add regex filter"), insert);
 }
 
 Result<bool> Store::removeRegexFilter(qint64 filterId) {
