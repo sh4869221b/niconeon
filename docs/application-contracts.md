@@ -20,16 +20,18 @@ presentation properties and commands on ApplicationController.
 
 Existing schema/path migration is described in README. Network success can still display
 comments if cache persistence fails. HTTP failure uses valid cache, then empty comments.
-Corrupt cache never stops a local video. SQL errors carry operation context; persistence
-failure cannot create a false successful NG/Undo result.
-Only the latest successful new NG registration has a single-use Undo token. Duplicate
-registration does not replace that token. Removing the same NG invalidates its Undo.
+If cache initialization or legacy cache migration fails, the worker warns once and runs
+without the cache. It continues loading and saving filters in the persistent data DB.
+Corrupt cache never stops a local video. SQL errors carry operation context.
+Only the latest NG registration actually inserted into SQLite by this instance gets a
+single-use Undo token. A duplicate synchronizes the local NG filter and preserves any
+existing token. Removing an NG user in the same instance invalidates its Undo.
 Invalid regex is checked before database write. Qt uses PCRE2 semantics and Unicode properties.
-If persisted filters cannot be initialized (for example, an invalid legacy regex),
-comment emission fails closed with one explicit warning at initialization; local video
-playback continues. Subsequent ticks acknowledge an empty, unprocessed batch without
-repeating the warning, including while paused, seeking or opening another video.
-An unavailable filter engine must never be replaced by an empty allow-all engine.
+If the data DB cannot be opened or a persisted filter is invalid, comment emission fails
+closed with one explicit warning at initialization. Local video playback continues.
+Subsequent ticks acknowledge an empty, unprocessed batch without repeating the warning,
+including while paused, seeking or opening another video.
+Filter mutations report failure while the persistent filter engine is unavailable.
 
 ## HTTP policy
 
@@ -45,3 +47,5 @@ No account credentials or live authenticated NicoNico calls are needed by tests.
 QML dialog open/close, visual drag gesture forwarding, viewport coordinates, toast timeout
 and display formatting are presentation responsibilities. C++ owns speed normalization,
 persistence, profile/QoS, filtering, timeline and all playback/comment state transitions.
+Main.qml places the toast above the player and comment overlay so it remains visible and
+its Undo button receives input in the playback area.
