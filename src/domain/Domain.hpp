@@ -78,7 +78,7 @@ Result<void> validateComments(const CommentList &comments);
 Result<void> validateUserId(const QString &userId);
 
 struct AddNgUserResult {
-    bool applied = false;
+    bool applied = false; // This operation inserted the row into SQLite.
     QString undoToken;
     QString hiddenUserId;
 };

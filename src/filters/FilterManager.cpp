@@ -26,13 +26,14 @@ Result<AddNgUserResult> FilterManager::addNgUser(const QString &userId) {
     auto persisted = m_store.addNgUser(userId);
     if (!persisted)
         return std::unexpected(AppError{QStringLiteral("save ng user: %1").arg(persisted.error().message)});
-    const bool applied = m_engine.addNgUser(userId);
+    // Another instance may have inserted this user since we loaded our filters.
+    m_engine.addNgUser(userId);
     QString token;
-    if (applied) {
+    if (*persisted) {
         token = QUuid::createUuid().toString(QUuid::WithoutBraces);
         m_lastUndo = UndoState{token, userId};
     }
-    return AddNgUserResult{applied, token, userId};
+    return AddNgUserResult{*persisted, token, userId};
 }
 
 Result<RemoveNgUserResult> FilterManager::removeNgUser(const QString &userId) {

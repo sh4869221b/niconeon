@@ -105,6 +105,63 @@ class FilterManagerTest : public QObject {
         QCOMPARE(store->listNgUsers().value(), QStringList{QStringLiteral("u1")});
     }
 
+    void sharedDatabaseDuplicateSynchronizesWithoutTakingUndoOwnership() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(second.initialize());
+
+        auto firstAdd = first.addNgUser(QStringLiteral("shared"));
+        QVERIFY(firstAdd && firstAdd->applied && !firstAdd->undoToken.isEmpty());
+        auto secondAdd = second.addNgUser(QStringLiteral("second"));
+        QVERIFY(secondAdd && secondAdd->applied && !secondAdd->undoToken.isEmpty());
+        QVERIFY(!second.engine().containsNgUser(QStringLiteral("shared")));
+
+        auto duplicate = second.addNgUser(QStringLiteral("shared"));
+        QVERIFY(duplicate);
+        auto duplicateUndo = second.undoLastNg(duplicate->undoToken);
+        QVERIFY(duplicateUndo);
+        auto usersAfterDuplicateUndo = (*firstStore)->listNgUsers();
+        QVERIFY(usersAfterDuplicateUndo && usersAfterDuplicateUndo->contains(QStringLiteral("shared")));
+        QVERIFY(!duplicateUndo->restored);
+        QVERIFY(!duplicate->applied);
+        QVERIFY(duplicate->undoToken.isEmpty());
+        QVERIFY(second.engine().containsNgUser(QStringLiteral("shared")));
+        auto previousUndo = second.undoLastNg(secondAdd->undoToken);
+        QVERIFY(previousUndo && previousUndo->restored);
+        QCOMPARE((*firstStore)->listNgUsers().value(), QStringList{QStringLiteral("shared")});
+        auto ownerUndo = first.undoLastNg(firstAdd->undoToken);
+        QVERIFY(ownerUndo && ownerUndo->restored);
+    }
+
+    void sharedDatabaseNewInsertionGetsUndoWithStaleLocalFilter() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(first.addNgUser(QStringLiteral("shared")));
+        QVERIFY(second.initialize());
+        auto removed = first.removeNgUser(QStringLiteral("shared"));
+        QVERIFY(removed && removed->removed);
+        QVERIFY(second.engine().containsNgUser(QStringLiteral("shared")));
+
+        auto reinserted = second.addNgUser(QStringLiteral("shared"));
+        QVERIFY(reinserted && reinserted->applied && !reinserted->undoToken.isEmpty());
+        auto undone = second.undoLastNg(reinserted->undoToken);
+        QVERIFY(undone && undone->restored);
+        QVERIFY(!second.engine().containsNgUser(QStringLiteral("shared")));
+        QVERIFY((*firstStore)->listNgUsers()->isEmpty());
+    }
+
     void removalClearsMatchingUndoAndListsAreSorted() {
         auto opened = Store::openMemory();
         QVERIFY(opened);
