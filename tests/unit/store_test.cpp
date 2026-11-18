@@ -467,6 +467,34 @@ class StoreTest : public QObject {
         QCOMPARE(snapshot.ngUsers.size() + snapshot.regexFilters.size(), MaxFilterEntries);
     }
 
+    void failedRegexSnapshotPreparationKeepsInsertionInvisibleToOtherConnections() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto writer = Store::openWithPath(path);
+        auto reader = Store::openWithPath(path);
+        QVERIFY(writer && reader);
+
+        std::optional<FilterSnapshot> staged;
+        Result<FilterSnapshot> visible;
+        const auto rejected =
+            (*writer)->insertRegexFilter(QStringLiteral("^new$"), [&](const FilterSnapshot &snapshot) {
+                staged = snapshot;
+                visible = (*reader)->loadFilters();
+                return Result<void>{std::unexpected(AppError{QStringLiteral("reject snapshot")})};
+            });
+        QVERIFY(!rejected);
+        QCOMPARE(rejected.error().message, QStringLiteral("reject snapshot"));
+        QVERIFY(staged);
+        QCOMPARE(staged->regexFilters.size(), 1);
+        QCOMPARE(staged->regexFilters.front().pattern, QStringLiteral("^new$"));
+        QVERIFY(visible);
+        QVERIFY(visible->regexFilters.isEmpty());
+        const auto after = (*reader)->loadFilters();
+        QVERIFY(after);
+        QVERIFY(after->regexFilters.isEmpty());
+    }
+
     void timestampsAcceptRustPrecisionButRejectMissingZone() {
         QTemporaryDir directory;
         const auto path = directory.filePath(QStringLiteral("data.db"));

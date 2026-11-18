@@ -62,9 +62,19 @@ Result<UndoNgResult> FilterManager::undoLastNg(const QString &undoToken) {
 Result<qint64> FilterManager::addRegexFilter(const QString &pattern) {
     if (auto valid = FilterEngine::compileRegex(pattern); !valid)
         return std::unexpected(valid.error());
-    auto inserted = m_store.insertRegexFilter(pattern);
+    const bool needsRefresh = m_engine.atCapacity();
+    FilterEngine replacement;
+    const auto prepare = [&replacement](const FilterSnapshot &snapshot) {
+        return replacement.replace(snapshot.ngUsers, snapshot.regexFilters);
+    };
+    auto inserted = needsRefresh ? m_store.insertRegexFilter(pattern, prepare) : m_store.insertRegexFilter(pattern);
     if (!inserted)
         return std::unexpected(AppError{QStringLiteral("insert regex filter: %1").arg(inserted.error().message)});
+    if (needsRefresh) {
+        // Publish the refreshed snapshot after commit. Undo still refers to the original registration ID.
+        m_engine = std::move(replacement);
+        return inserted->filterId;
+    }
     auto added = m_engine.addRegexFilter(*inserted);
     if (!added) {
         // Normally unreachable after validation; preserve DB/memory agreement on failure.

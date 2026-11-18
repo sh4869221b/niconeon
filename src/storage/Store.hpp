@@ -3,6 +3,7 @@
 #include "domain/Domain.hpp"
 #include <QSqlDatabase>
 #include <QThread>
+#include <functional>
 #include <memory>
 
 namespace niconeon {
@@ -37,7 +38,11 @@ class Store {
     Result<bool> removeNgUser(const QString &userId, const std::optional<QString> &registrationId = std::nullopt);
     Result<FilterSnapshot> loadFilters();
     Result<QStringList> listNgUsers();
-    Result<RegexFilter> insertRegexFilter(const QString &pattern);
+    // The optional callback stages a replacement from the snapshot including the new row.
+    // A callback error rolls back the insertion. Publish staged state only after this call succeeds.
+    Result<RegexFilter>
+    insertRegexFilter(const QString &pattern,
+                      const std::function<Result<void>(const FilterSnapshot &)> &prepareSnapshot = {});
     Result<bool> removeRegexFilter(qint64 filterId);
     Result<QVector<RegexFilter>> listRegexFilters();
 
@@ -50,6 +55,7 @@ class Store {
     Result<void> checkThread() const;
     Result<bool> ngUserExists(const QString &userId);
     Result<void> checkFilterCapacity();
+    Result<FilterSnapshot> readFilterSnapshot();
     QString m_dataConnectionName;
     QString m_cacheConnectionName;
     QSqlDatabase m_data;

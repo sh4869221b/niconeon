@@ -576,16 +576,18 @@ Result<FilterSnapshot> Store::loadFilters() {
     if (auto valid = checkThread(); !valid)
         return std::unexpected(valid.error());
     // Keep the first SELECT's SQLite snapshot until both lists have been read.
-    const auto read = [this]() -> Result<FilterSnapshot> {
-        auto users = listNgUsers();
-        if (!users)
-            return std::unexpected(AppError{QStringLiteral("load ng users: %1").arg(users.error().message)});
-        auto regexes = listRegexFilters();
-        if (!regexes)
-            return std::unexpected(AppError{QStringLiteral("load regex filters: %1").arg(regexes.error().message)});
-        return FilterSnapshot{std::move(*users), std::move(*regexes)};
-    };
-    return inTransaction(m_data, TransactionMode::Read, QStringLiteral("load filter snapshot"), read);
+    return inTransaction(m_data, TransactionMode::Read, QStringLiteral("load filter snapshot"),
+                         [this] { return readFilterSnapshot(); });
+}
+
+Result<FilterSnapshot> Store::readFilterSnapshot() {
+    auto users = listNgUsers();
+    if (!users)
+        return std::unexpected(AppError{QStringLiteral("load ng users: %1").arg(users.error().message)});
+    auto regexes = listRegexFilters();
+    if (!regexes)
+        return std::unexpected(AppError{QStringLiteral("load regex filters: %1").arg(regexes.error().message)});
+    return FilterSnapshot{std::move(*users), std::move(*regexes)};
 }
 
 Result<QStringList> Store::listNgUsers() {
@@ -612,7 +614,9 @@ Result<QStringList> Store::listNgUsers() {
     return users;
 }
 
-Result<RegexFilter> Store::insertRegexFilter(const QString &pattern) {
+Result<RegexFilter>
+Store::insertRegexFilter(const QString &pattern,
+                         const std::function<Result<void>(const FilterSnapshot &)> &prepareSnapshot) {
     if (auto valid = checkThread(); !valid)
         return std::unexpected(valid.error());
     if (pattern.size() > MaxPatternBytes || pattern.toUtf8().size() > MaxPatternBytes)
@@ -627,7 +631,16 @@ Result<RegexFilter> Store::insertRegexFilter(const QString &pattern) {
         query.addBindValue(createdAt.toString(Qt::ISODateWithMs));
         if (!query.exec())
             return std::unexpected(sqlError(QStringLiteral("insert regex filter"), query));
-        return RegexFilter{query.lastInsertId().toLongLong(), pattern, createdAt};
+        const auto filterId = query.lastInsertId().toLongLong();
+        if (prepareSnapshot) {
+            query.finish();
+            const auto snapshot = readFilterSnapshot();
+            if (!snapshot)
+                return std::unexpected(snapshot.error());
+            if (auto prepared = prepareSnapshot(*snapshot); !prepared)
+                return std::unexpected(prepared.error());
+        }
+        return RegexFilter{filterId, pattern, createdAt};
     };
     return inTransaction(m_data, TransactionMode::Write, QStringLiteral("add regex filter"), insert);
 }

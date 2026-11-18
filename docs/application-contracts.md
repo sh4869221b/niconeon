@@ -32,6 +32,10 @@ and writes in one SQLite write transaction. A duplicate NG user remains a no-op 
 capacity. The concurrency guarantee requires every writer to use the updated application.
 Startup reads the NG and regex lists in one SQLite read transaction and applies that
 committed snapshot to the filter engine.
+When the local filter engine is at or over capacity, regex insertion rebuilds it from
+the DB snapshot that includes the new row. Validation runs inside the same write
+transaction as the insertion. The active engine changes after commit and retains the
+latest NG Undo token. A failed refresh rolls back the insertion and keeps the active filters.
 Only the latest NG registration actually inserted into SQLite by this instance gets a
 single-use Undo token. A duplicate uses a read-only lookup of the committed row,
 synchronizes the local NG filter and preserves any existing token. If the row is absent,

@@ -338,6 +338,90 @@ class FilterManagerTest : public QObject {
         QCOMPARE(manager.snapshot().regexFilters.size(), 1);
     }
 
+    void regexAdditionReconcilesAFullStaleEngine_data() {
+        QTest::addColumn<bool>("corruptSnapshot");
+        QTest::newRow("valid snapshot") << false;
+        QTest::newRow("invalid snapshot rolls back before retry") << true;
+    }
+
+    void regexAdditionReconcilesAFullStaleEngine() {
+        QFETCH(bool, corruptSnapshot);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        QVERIFY(executeExternal(
+            path, QStringLiteral("WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<9996) "
+                                 "INSERT INTO ng_users(user_id,created_at) "
+                                 "SELECT 'seed-'||x,'2024-01-01T00:00:00Z' FROM n")));
+        auto oldRegex = (*firstStore)->insertRegexFilter(QStringLiteral("^old$"));
+        QVERIFY(oldRegex);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(second.initialize());
+        const auto ownNg = first.addNgUser(QStringLiteral("own"));
+        QVERIFY(ownNg && ownNg->applied && !ownNg->undoToken.isEmpty());
+
+        for (int index = 0; index < 2; ++index) {
+            const auto removed = second.removeNgUser(QStringLiteral("seed-%1").arg(index));
+            QVERIFY(removed && removed->removed);
+            const auto user = QStringLiteral("remote-%1").arg(index);
+            const auto added = second.addNgUser(user);
+            QVERIFY(added && added->applied);
+            const auto duplicate = first.addNgUser(user);
+            QVERIFY(duplicate && !duplicate->applied && duplicate->undoToken.isEmpty());
+        }
+        const auto removedRegex = second.removeRegexFilter(oldRegex->filterId);
+        QVERIFY(removedRegex && *removedRegex);
+        const auto remoteRegex = second.addRegexFilter(QStringLiteral("^remote$"));
+        QVERIFY(remoteRegex);
+        const auto stale = first.snapshot();
+        QCOMPARE(stale.ngUsers.size() + stale.regexFilters.size(), MaxFilterEntries + 1);
+        const auto before = (*firstStore)->loadFilters();
+        QVERIFY(before);
+        QCOMPARE(before->ngUsers.size() + before->regexFilters.size(), MaxFilterEntries - 1);
+
+        if (corruptSnapshot) {
+            QVERIFY(executeExternal(path, QStringLiteral("UPDATE regex_filters SET pattern='('")));
+            const auto invalid = first.addRegexFilter(QStringLiteral("^new$"));
+            QVERIFY(!invalid);
+            QVERIFY2(invalid.error().message.contains(QStringLiteral("invalid regex:")),
+                     qPrintable(invalid.error().message));
+            const auto persisted = (*firstStore)->listRegexFilters();
+            QVERIFY(persisted);
+            QCOMPARE(persisted->size(), 1);
+            QCOMPARE(persisted->front().filterId, *remoteRegex);
+            QCOMPARE(persisted->front().pattern, QStringLiteral("("));
+            const auto active = first.snapshot();
+            QCOMPARE(active.ngUsers, stale.ngUsers);
+            QCOMPARE(active.regexFilters, stale.regexFilters);
+            QVERIFY(executeExternal(path, QStringLiteral("UPDATE regex_filters SET pattern='^remote$'")));
+        }
+
+        const auto added = first.addRegexFilter(QStringLiteral("^new$"));
+        QVERIFY2(added, added ? "" : qPrintable(added.error().message));
+        const auto refreshed = first.snapshot();
+        QCOMPARE(refreshed.ngUsers.size() + refreshed.regexFilters.size(), MaxFilterEntries);
+        QVERIFY(!first.engine().containsNgUser(QStringLiteral("seed-0")));
+        QVERIFY(!first.engine().containsNgUser(QStringLiteral("seed-1")));
+        QVERIFY(first.engine().containsNgUser(QStringLiteral("remote-0")));
+        QVERIFY(first.engine().containsNgUser(QStringLiteral("remote-1")));
+        QCOMPARE(refreshed.regexFilters.size(), 2);
+        QCOMPARE(refreshed.regexFilters.front().filterId, *remoteRegex);
+        QCOMPARE(refreshed.regexFilters.back().filterId, *added);
+        QCOMPARE((*firstStore)->listRegexFilters().value(), refreshed.regexFilters);
+        const auto overflow = first.addRegexFilter(QStringLiteral("^overflow$"));
+        QVERIFY(!overflow);
+        QVERIFY(overflow.error().message.contains(QStringLiteral("10000-entry safety limit")));
+        QCOMPARE((*firstStore)->listRegexFilters().value(), refreshed.regexFilters);
+        const auto undo = first.undoLastNg(ownNg->undoToken);
+        QVERIFY(undo && undo->restored);
+        QVERIFY(!first.engine().containsNgUser(QStringLiteral("own")));
+        QVERIFY(!(*secondStore)->listNgUsers()->contains(QStringLiteral("own")));
+    }
+
     void failedWritesDoNotChangeMemoryOrUndo() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
