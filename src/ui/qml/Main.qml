@@ -91,6 +91,8 @@ ApplicationWindow {
     }
     Toast {
         id: toast
+        objectName: "toast"
+        z: 1
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 24

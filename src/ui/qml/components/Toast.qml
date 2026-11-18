@@ -28,6 +28,7 @@ Rectangle {
         }
 
         AppButton {
+            objectName: "toastActionButton"
             visible: root.actionText !== ""
             text: root.actionText
             onClicked: root.actionTriggered()
