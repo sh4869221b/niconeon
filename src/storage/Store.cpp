@@ -1,5 +1,6 @@
 #include "storage/Store.hpp"
 
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -11,6 +12,7 @@
 #include <QSqlQuery>
 #include <QUuid>
 #include <QVariant>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -22,6 +24,8 @@
 namespace niconeon {
 namespace {
 
+constexpr int SqliteBusyTimeoutMs = 2000;
+
 AppError sqlError(const QString &context, const QSqlQuery &query) {
     return {QStringLiteral("%1: %2").arg(context, query.lastError().text())};
 }
@@ -31,6 +35,93 @@ Result<void> execute(QSqlDatabase &database, const QString &statement, const QSt
     if (!query.exec(statement))
         return std::unexpected(sqlError(context, query));
     return {};
+}
+
+enum class TransactionMode { Read, Write };
+
+template <typename Operation>
+auto inTransaction(QSqlDatabase &database, TransactionMode mode, const QString &context, Operation operation)
+    -> decltype(operation()) {
+    const auto begin = mode == TransactionMode::Write ? QStringLiteral("BEGIN IMMEDIATE") : QStringLiteral("BEGIN");
+    if (auto begun = execute(database, begin, QStringLiteral("begin %1").arg(context)); !begun)
+        return std::unexpected(begun.error());
+    auto result = operation();
+    if (result && !database.commit())
+        result = std::unexpected(AppError{QStringLiteral("commit %1: %2").arg(context, database.lastError().text())});
+    if (!result)
+        database.rollback();
+    return result;
+}
+
+std::expected<QString, QSqlError> journalMode(QSqlDatabase &database, const QString &statement) {
+    QSqlQuery query(database);
+    if (!query.exec(statement) || !query.next())
+        return std::unexpected(query.lastError());
+    return query.value(0).toString();
+}
+
+bool isLockContention(const QSqlError &error) {
+    bool numeric;
+    const int code = error.nativeErrorCode().toInt(&numeric);
+    // Extended SQLite result codes keep SQLITE_BUSY (5) or SQLITE_LOCKED (6) in the low byte.
+    return numeric && ((code & 0xff) == 5 || (code & 0xff) == 6);
+}
+
+Result<void> enableWal(QSqlDatabase &database, const QString &context) {
+    // One deadline covers mode reads and write attempts, even if SQLite skips its busy handler.
+    if (auto result = execute(database, QStringLiteral("PRAGMA busy_timeout=0"), context); !result)
+        return result;
+    const QDeadlineTimer deadline(SqliteBusyTimeoutMs, Qt::PreciseTimer);
+    for (;;) {
+        auto mode = journalMode(database, QStringLiteral("PRAGMA journal_mode"));
+        if (mode && *mode != QStringLiteral("wal"))
+            mode = journalMode(database, QStringLiteral("PRAGMA journal_mode=WAL"));
+        if (mode && *mode == QStringLiteral("wal"))
+            return execute(database, QStringLiteral("PRAGMA busy_timeout=%1").arg(SqliteBusyTimeoutMs), context);
+        if ((!mode && !isLockContention(mode.error())) || deadline.hasExpired()) {
+            const auto detail =
+                mode ? QStringLiteral("SQLite returned journal mode %1").arg(*mode) : mode.error().text();
+            return std::unexpected(AppError{QStringLiteral("%1: %2").arg(context, detail)});
+        }
+        QThread::msleep(static_cast<unsigned long>(std::min<qint64>(25, deadline.remainingTime())));
+    }
+}
+
+Result<void> openDatabase(QSqlDatabase &database, const QString &connectionName, const QString &path, bool memory,
+                          const QString &walContext) {
+    if (path.isEmpty())
+        return std::unexpected(AppError{QStringLiteral("SQLite database path is empty")});
+    if (!memory && !QDir().mkpath(QFileInfo(path).absolutePath()))
+        return std::unexpected(AppError{QStringLiteral("create directory for %1").arg(path)});
+    database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    database.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=%1").arg(SqliteBusyTimeoutMs));
+    database.setDatabaseName(path);
+    if (!database.open())
+        return std::unexpected(AppError{QStringLiteral("open sqlite %1: %2").arg(path, database.lastError().text())});
+    if (memory)
+        return {};
+    return enableWal(database, walContext);
+}
+
+struct DataSchema {
+    bool ready;
+    bool needsRegistrationColumn;
+};
+
+Result<DataSchema> readDataSchema(QSqlDatabase &database) {
+    QSqlQuery query(database);
+    if (!query.exec(
+            QStringLiteral("SELECT EXISTS(SELECT 1 FROM pragma_table_info('ng_users') WHERE name='registration_id'), "
+                           "EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ng_users'), "
+                           "(SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND "
+                           "name IN ('ng_users','regex_filters','video_map'))=3 AND EXISTS("
+                           "SELECT 1 FROM sqlite_master WHERE type='index' AND name='ng_users_registration_id' "
+                           "AND tbl_name='ng_users')")) ||
+        !query.next())
+        return std::unexpected(sqlError(QStringLiteral("inspect data schema"), query));
+    const bool hasRegistrationColumn = query.value(0).toBool();
+    return DataSchema{hasRegistrationColumn && query.value(2).toBool(),
+                      !hasRegistrationColumn && query.value(1).toBool()};
 }
 
 QString timestamp() {
@@ -128,23 +219,26 @@ Result<void> Store::checkThread() const {
     return {};
 }
 
-Result<StorePaths> Store::defaultPaths() {
+Result<StorePaths> Store::defaultPaths(CachePolicy cachePolicy) {
     QString dataRoot;
     QString cacheRoot;
 #ifdef Q_OS_WIN
     dataRoot = knownFolder(FOLDERID_RoamingAppData);
     cacheRoot = knownFolder(FOLDERID_LocalAppData);
-    if (dataRoot.isEmpty() || cacheRoot.isEmpty())
+    if (dataRoot.isEmpty() || (cacheRoot.isEmpty() && cachePolicy == CachePolicy::Required))
         return std::unexpected(AppError{QStringLiteral("failed to determine data/cache directory")});
     dataRoot += QStringLiteral("/sh4869221b/niconeon/data");
-    cacheRoot += QStringLiteral("/sh4869221b/niconeon/cache");
+    if (!cacheRoot.isEmpty())
+        cacheRoot += QStringLiteral("/sh4869221b/niconeon/cache");
 #elif defined(Q_OS_MACOS)
+    Q_UNUSED(cachePolicy);
     const auto home = QDir::homePath();
     if (home.isEmpty() || !QDir::isAbsolutePath(home))
         return std::unexpected(AppError{QStringLiteral("failed to determine data directory")});
     dataRoot = home + QStringLiteral("/Library/Application Support/com.sh4869221b.niconeon");
     cacheRoot = home + QStringLiteral("/Library/Caches/com.sh4869221b.niconeon");
 #else
+    Q_UNUSED(cachePolicy);
     const auto home = QDir::homePath();
     if (home.isEmpty() || !QDir::isAbsolutePath(home))
         return std::unexpected(AppError{QStringLiteral("failed to determine data directory")});
@@ -154,19 +248,20 @@ Result<StorePaths> Store::defaultPaths() {
         absoluteEnvironmentRoot("XDG_CACHE_HOME", home + QStringLiteral("/.cache")) + QStringLiteral("/niconeon");
 #endif
     return StorePaths{QDir::cleanPath(dataRoot + QStringLiteral("/niconeon.db")),
-                      QDir::cleanPath(cacheRoot + QStringLiteral("/comment-cache.db"))};
+                      cacheRoot.isEmpty() ? QString{}
+                                          : QDir::cleanPath(cacheRoot + QStringLiteral("/comment-cache.db"))};
 }
 
-Result<std::unique_ptr<Store>> Store::openDefault() {
-    auto paths = defaultPaths();
+Result<std::unique_ptr<Store>> Store::openDefault(CachePolicy cachePolicy) {
+    auto paths = defaultPaths(cachePolicy);
     if (!paths)
         return std::unexpected(paths.error());
-    return openWithPaths(paths->dataPath, paths->cachePath);
+    return openWithPaths(paths->dataPath, paths->cachePath, cachePolicy);
 }
 
 Result<std::unique_ptr<Store>> Store::openMemory() {
     auto store = std::unique_ptr<Store>(new Store);
-    auto opened = store->open(QStringLiteral(":memory:"), QStringLiteral(":memory:"), true);
+    auto opened = store->open(QStringLiteral(":memory:"), QStringLiteral(":memory:"), true, CachePolicy::Required);
     if (!opened)
         return std::unexpected(opened.error());
     return store;
@@ -176,66 +271,95 @@ Result<std::unique_ptr<Store>> Store::openWithPath(const QString &dataPath) {
     return openWithPaths(dataPath, QFileInfo(dataPath).dir().filePath(QStringLiteral("niconeon-cache.db")));
 }
 
-Result<std::unique_ptr<Store>> Store::openWithPaths(const QString &dataPath, const QString &cachePath) {
+Result<std::unique_ptr<Store>> Store::openWithPaths(const QString &dataPath, const QString &cachePath,
+                                                    CachePolicy cachePolicy) {
     auto store = std::unique_ptr<Store>(new Store);
-    auto opened = store->open(dataPath, cachePath, false);
+    auto opened = store->open(dataPath, cachePath, false, cachePolicy);
     if (!opened)
         return std::unexpected(opened.error());
     return store;
 }
 
-Result<void> Store::open(const QString &dataPath, const QString &cachePath, bool memory) {
+Result<void> Store::open(const QString &dataPath, const QString &cachePath, bool memory, CachePolicy cachePolicy) {
+    Result<void> cache;
     if (!memory) {
         const QFileInfo dataInfo(dataPath), cacheInfo(cachePath);
         if (dataInfo.absoluteFilePath() == cacheInfo.absoluteFilePath() ||
             (!dataInfo.canonicalFilePath().isEmpty() && dataInfo.canonicalFilePath() == cacheInfo.canonicalFilePath()))
-            return std::unexpected(AppError{QStringLiteral("data and cache databases must use distinct paths")});
-        for (const auto &path : {dataPath, cachePath}) {
-            if (path.isEmpty() || !QDir().mkpath(QFileInfo(path).absolutePath()))
-                return std::unexpected(AppError{QStringLiteral("create directory for %1").arg(path)});
-        }
+            cache = std::unexpected(AppError{QStringLiteral("data and cache databases must use distinct paths")});
     }
-    m_data = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_dataConnectionName);
-    m_cache = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_cacheConnectionName);
-    m_data.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=2000"));
-    m_cache.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=2000"));
-    m_data.setDatabaseName(dataPath);
-    m_cache.setDatabaseName(cachePath);
-    if (!m_data.open())
-        return std::unexpected(AppError{QStringLiteral("open sqlite %1: %2").arg(dataPath, m_data.lastError().text())});
-    if (!m_cache.open())
-        return std::unexpected(
-            AppError{QStringLiteral("open sqlite %1: %2").arg(cachePath, m_cache.lastError().text())});
-    if (!memory) {
-        if (auto result =
-                execute(m_data, QStringLiteral("PRAGMA journal_mode=WAL"), QStringLiteral("set WAL mode for data db"));
-            !result)
-            return result;
-        if (auto result = execute(m_cache, QStringLiteral("PRAGMA journal_mode=WAL"),
-                                  QStringLiteral("set WAL mode for cache db"));
-            !result)
-            return result;
-    }
-    if (auto result = initializeSchema(); !result)
+    if (!cache && cachePolicy == CachePolicy::Required)
+        return cache;
+    if (auto result =
+            openDatabase(m_data, m_dataConnectionName, dataPath, memory, QStringLiteral("set WAL mode for data db"));
+        !result)
         return result;
-    return migrateLegacyCache();
+    if (auto result = initializeDataSchema(); !result)
+        return result;
+
+    if (cache)
+        cache = initializeCache(cachePath, memory);
+    if (!cache) {
+        if (cachePolicy == CachePolicy::Required)
+            return cache;
+        m_cache.close();
+        m_cacheError = std::move(cache.error());
+    }
+    return {};
 }
 
-Result<void> Store::initializeSchema() {
-    const QStringList dataStatements{
-        QStringLiteral("CREATE TABLE IF NOT EXISTS ng_users (user_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)"),
-        QStringLiteral("CREATE TABLE IF NOT EXISTS regex_filters (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT "
-                       "NOT NULL, created_at TEXT NOT NULL)"),
-        QStringLiteral("CREATE TABLE IF NOT EXISTS video_map (video_path TEXT PRIMARY KEY, video_id TEXT NOT NULL, "
-                       "last_opened_at TEXT NOT NULL)")};
-    for (const auto &statement : dataStatements) {
-        if (auto result = execute(m_data, statement, QStringLiteral("initialize data schema")); !result)
-            return result;
-    }
-    return execute(m_cache,
-                   QStringLiteral("CREATE TABLE IF NOT EXISTS comment_cache (video_id TEXT PRIMARY KEY, fetched_at "
-                                  "TEXT NOT NULL, payload_json TEXT NOT NULL)"),
-                   QStringLiteral("initialize cache schema"));
+Result<void> Store::initializeDataSchema() {
+    const auto schema = readDataSchema(m_data);
+    if (!schema)
+        return std::unexpected(schema.error());
+    if (schema->ready)
+        return {};
+
+    const auto migrate = [this]() -> Result<void> {
+        // A concurrent opener may have finished the migration while we waited for the writer lock.
+        const auto currentSchema = readDataSchema(m_data);
+        if (!currentSchema)
+            return std::unexpected(currentSchema.error());
+        if (currentSchema->ready)
+            return {};
+        const QStringList statements{
+            QStringLiteral("CREATE TABLE IF NOT EXISTS ng_users (user_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, "
+                           "registration_id TEXT)"),
+            QStringLiteral("CREATE TABLE IF NOT EXISTS regex_filters (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern "
+                           "TEXT NOT NULL, created_at TEXT NOT NULL)"),
+            QStringLiteral("CREATE TABLE IF NOT EXISTS video_map (video_path TEXT PRIMARY KEY, video_id TEXT NOT NULL, "
+                           "last_opened_at TEXT NOT NULL)")};
+        for (const auto &statement : statements) {
+            if (auto result = execute(m_data, statement, QStringLiteral("initialize data schema")); !result)
+                return result;
+        }
+        if (currentSchema->needsRegistrationColumn) {
+            // Old rows have no live Undo token. Allow older clients' named-column inserts.
+            if (auto result = execute(m_data, QStringLiteral("ALTER TABLE ng_users ADD COLUMN registration_id TEXT"),
+                                      QStringLiteral("add NG registration ID"));
+                !result)
+                return result;
+        }
+        return execute(m_data,
+                       QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS ng_users_registration_id ON "
+                                      "ng_users(registration_id) WHERE registration_id IS NOT NULL"),
+                       QStringLiteral("index NG registration IDs"));
+    };
+    return inTransaction(m_data, TransactionMode::Write, QStringLiteral("data schema migration"), migrate);
+}
+
+Result<void> Store::initializeCache(const QString &cachePath, bool memory) {
+    if (auto result = openDatabase(m_cache, m_cacheConnectionName, cachePath, memory,
+                                   QStringLiteral("set WAL mode for cache db"));
+        !result)
+        return result;
+    if (auto result = execute(m_cache,
+                              QStringLiteral("CREATE TABLE IF NOT EXISTS comment_cache (video_id TEXT PRIMARY KEY, "
+                                             "fetched_at TEXT NOT NULL, payload_json TEXT NOT NULL)"),
+                              QStringLiteral("initialize cache schema"));
+        !result)
+        return result;
+    return migrateLegacyCache();
 }
 
 Result<void> Store::migrateLegacyCache() {
@@ -300,6 +424,8 @@ Result<void> Store::migrateLegacyCache() {
 Result<std::optional<CommentList>> Store::loadCommentCache(const QString &videoId) {
     if (auto valid = checkThread(); !valid)
         return std::unexpected(valid.error());
+    if (m_cacheError)
+        return std::unexpected(*m_cacheError);
     QSqlQuery sizeQuery(m_cache);
     sizeQuery.prepare(QStringLiteral("SELECT length(CAST(payload_json AS BLOB)) FROM comment_cache WHERE video_id=?"));
     sizeQuery.addBindValue(nonNull(videoId));
@@ -330,6 +456,8 @@ Result<std::optional<CommentList>> Store::loadCommentCache(const QString &videoI
 Result<void> Store::saveCommentCache(const QString &videoId, const CommentList &comments) {
     if (auto valid = checkThread(); !valid)
         return valid;
+    if (m_cacheError)
+        return std::unexpected(*m_cacheError);
     if (auto valid = validateComments(comments); !valid)
         return valid;
     QJsonArray array;
@@ -379,42 +507,87 @@ Result<void> Store::checkFilterCapacity() {
     return {};
 }
 
-Result<bool> Store::addNgUser(const QString &userId) {
-    if (auto valid = checkThread(); !valid)
-        return std::unexpected(valid.error());
-    if (auto valid = validateUserId(userId); !valid)
-        return std::unexpected(valid.error());
-    {
-        QSqlQuery exists(m_data);
-        exists.prepare(QStringLiteral("SELECT 1 FROM ng_users WHERE user_id=?"));
-        exists.addBindValue(nonNull(userId));
-        if (!exists.exec())
-            return std::unexpected(sqlError(QStringLiteral("find ng user"), exists));
-        if (exists.next())
-            return false;
-    }
-    if (auto capacity = checkFilterCapacity(); !capacity)
-        return std::unexpected(capacity.error());
+Result<bool> Store::ngUserExists(const QString &userId) {
     QSqlQuery query(m_data);
-    query.prepare(QStringLiteral("INSERT OR IGNORE INTO ng_users(user_id,created_at) VALUES(?,?)"));
+    if (!query.prepare(QStringLiteral("SELECT 1 FROM ng_users WHERE user_id=?")))
+        return std::unexpected(sqlError(QStringLiteral("prepare NG user lookup"), query));
     query.addBindValue(nonNull(userId));
-    query.addBindValue(timestamp());
     if (!query.exec())
-        return std::unexpected(sqlError(QStringLiteral("save ng user"), query));
-    return query.numRowsAffected() > 0;
+        return std::unexpected(sqlError(QStringLiteral("find ng user"), query));
+    const bool found = query.next();
+    if (query.lastError().isValid())
+        return std::unexpected(sqlError(QStringLiteral("read NG user"), query));
+    return found;
 }
 
-Result<bool> Store::removeNgUser(const QString &userId) {
+Result<std::optional<QString>> Store::addNgUser(const QString &userId) {
+    if (auto valid = checkThread(); !valid)
+        return std::unexpected(valid.error());
+    if (auto valid = validateUserId(userId); !valid)
+        return std::unexpected(valid.error());
+    const auto exists = ngUserExists(userId);
+    if (!exists)
+        return std::unexpected(exists.error());
+    // A duplicate observes the committed row at this read, even if another instance is deleting it.
+    if (*exists)
+        return std::nullopt;
+    const auto insert = [&]() -> Result<std::optional<QString>> {
+        // Another writer may have registered this user while we waited for the lock.
+        const auto current = ngUserExists(userId);
+        if (!current)
+            return std::unexpected(current.error());
+        if (*current)
+            return std::nullopt;
+        if (auto capacity = checkFilterCapacity(); !capacity)
+            return std::unexpected(capacity.error());
+        const auto registrationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QSqlQuery query(m_data);
+        query.prepare(QStringLiteral("INSERT INTO ng_users(user_id,created_at,registration_id) VALUES(?,?,?) "
+                                     "ON CONFLICT(user_id) DO NOTHING"));
+        query.addBindValue(nonNull(userId));
+        query.addBindValue(timestamp());
+        query.addBindValue(registrationId);
+        if (!query.exec())
+            return std::unexpected(sqlError(QStringLiteral("save ng user"), query));
+        if (query.numRowsAffected() == 1)
+            return registrationId;
+        return std::nullopt;
+    };
+    return inTransaction(m_data, TransactionMode::Write, QStringLiteral("add NG user"), insert);
+}
+
+Result<bool> Store::removeNgUser(const QString &userId, const std::optional<QString> &registrationId) {
     if (auto valid = checkThread(); !valid)
         return std::unexpected(valid.error());
     if (auto valid = validateUserId(userId); !valid)
         return std::unexpected(valid.error());
     QSqlQuery query(m_data);
-    query.prepare(QStringLiteral("DELETE FROM ng_users WHERE user_id=?"));
+    query.prepare(registrationId ? QStringLiteral("DELETE FROM ng_users WHERE user_id=? AND registration_id=?")
+                                 : QStringLiteral("DELETE FROM ng_users WHERE user_id=?"));
     query.addBindValue(nonNull(userId));
+    if (registrationId)
+        query.addBindValue(*registrationId);
     if (!query.exec())
         return std::unexpected(sqlError(QStringLiteral("delete ng user"), query));
     return query.numRowsAffected() > 0;
+}
+
+Result<FilterSnapshot> Store::loadFilters() {
+    if (auto valid = checkThread(); !valid)
+        return std::unexpected(valid.error());
+    // Keep the first SELECT's SQLite snapshot until both lists have been read.
+    return inTransaction(m_data, TransactionMode::Read, QStringLiteral("load filter snapshot"),
+                         [this] { return readFilterSnapshot(); });
+}
+
+Result<FilterSnapshot> Store::readFilterSnapshot() {
+    auto users = listNgUsers();
+    if (!users)
+        return std::unexpected(AppError{QStringLiteral("load ng users: %1").arg(users.error().message)});
+    auto regexes = listRegexFilters();
+    if (!regexes)
+        return std::unexpected(AppError{QStringLiteral("load regex filters: %1").arg(regexes.error().message)});
+    return FilterSnapshot{std::move(*users), std::move(*regexes)};
 }
 
 Result<QStringList> Store::listNgUsers() {
@@ -441,21 +614,35 @@ Result<QStringList> Store::listNgUsers() {
     return users;
 }
 
-Result<RegexFilter> Store::insertRegexFilter(const QString &pattern) {
+Result<RegexFilter>
+Store::insertRegexFilter(const QString &pattern,
+                         const std::function<Result<void>(const FilterSnapshot &)> &prepareSnapshot) {
     if (auto valid = checkThread(); !valid)
         return std::unexpected(valid.error());
     if (pattern.size() > MaxPatternBytes || pattern.toUtf8().size() > MaxPatternBytes)
         return std::unexpected(AppError{QStringLiteral("invalid regex: pattern exceeds the 4096-byte safety limit")});
-    if (auto capacity = checkFilterCapacity(); !capacity)
-        return std::unexpected(capacity.error());
-    const auto createdAt = QDateTime::currentDateTimeUtc();
-    QSqlQuery query(m_data);
-    query.prepare(QStringLiteral("INSERT INTO regex_filters(pattern,created_at) VALUES(?,?)"));
-    query.addBindValue(nonNull(pattern));
-    query.addBindValue(createdAt.toString(Qt::ISODateWithMs));
-    if (!query.exec())
-        return std::unexpected(sqlError(QStringLiteral("insert regex filter"), query));
-    return RegexFilter{query.lastInsertId().toLongLong(), pattern, createdAt};
+    const auto insert = [&]() -> Result<RegexFilter> {
+        if (auto capacity = checkFilterCapacity(); !capacity)
+            return std::unexpected(capacity.error());
+        const auto createdAt = QDateTime::currentDateTimeUtc();
+        QSqlQuery query(m_data);
+        query.prepare(QStringLiteral("INSERT INTO regex_filters(pattern,created_at) VALUES(?,?)"));
+        query.addBindValue(nonNull(pattern));
+        query.addBindValue(createdAt.toString(Qt::ISODateWithMs));
+        if (!query.exec())
+            return std::unexpected(sqlError(QStringLiteral("insert regex filter"), query));
+        const auto filterId = query.lastInsertId().toLongLong();
+        if (prepareSnapshot) {
+            query.finish();
+            const auto snapshot = readFilterSnapshot();
+            if (!snapshot)
+                return std::unexpected(snapshot.error());
+            if (auto prepared = prepareSnapshot(*snapshot); !prepared)
+                return std::unexpected(prepared.error());
+        }
+        return RegexFilter{filterId, pattern, createdAt};
+    };
+    return inTransaction(m_data, TransactionMode::Write, QStringLiteral("add regex filter"), insert);
 }
 
 Result<bool> Store::removeRegexFilter(qint64 filterId) {

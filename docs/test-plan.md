@@ -6,13 +6,13 @@ CTest is the test entry point. Current build recipes and sanitizer constraints a
 ## Automated migration coverage
 
 - Domain: filename IDs, Unicode/limits, profile defaults/overrides, bounded synthetic fixtures
-- SQLite: split DB roundtrip, legacy cache migration, raw-row preservation, migration failure rollback, platform paths, corrupt data and restart
-- Filters: NG-first ordering, regex validation, persistence-before-memory, duplicate/new/latest/single-use Undo, DB failure, empty values and limits
+- SQLite: split DB roundtrip, legacy cache migration, concurrent NG schema migration, migrated WAL reads during writes, simultaneous fresh and legacy WAL setup, raw-row preservation, migration failure rollback, platform paths, corrupt data and restart
+- Filters: NG-first ordering, regex validation, persistence-before-memory, duplicate sync under a writer lock, single-snapshot startup during NG/regex replacement, regex insertion with stale local capacity including rollback and Undo retention, duplicate/new/latest/single-use Undo, stale Undo after another instance replaces a row, DB failure, empty values and shared capacity under concurrent NG and regex writes
 - Timeline: zero/exact time, normal/pause/backward/seek15s window, per-tick cap before coalesce, stable ordering, transactional bounds
 - Fetcher: two-stage local mock HTTP, request DTO/headers, response validation, anonymous user, redirects/trust boundary, timeout/cancel/replacement
-- Service: network/cache/none, corrupt cache isolation, queue saturation, latest pending open, stale generation/revision, queued shutdown, repeated start/stop
+- Service: network/cache/none, saved filters during cache startup/migration failures, fail-closed when data DB or filters are unreadable, queue saturation, latest pending open, stale generation/revision, queued shutdown, repeated start/stop
 - Controller: file URLs, speed presets/settings, visibility, runtime profile and shutdown
-- Qt Quick Test: complete Main.qml import/load, Settings/About/Filter open/close, native C++ types and license resources
+- Qt Quick Test: complete Main.qml import/load, Settings/About/Filter open/close, visible and clickable NG Undo toast over the player at scale factors 1, 1.5 and 2, native C++ types and license resources
 - Preserved renderer tests: spatial grid, text width/seek lag, NG rollback, sprite cache
 - Packaging: single application executable, required licenses, AppRun local paths and Unicode/spaced arguments
 

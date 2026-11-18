@@ -13,6 +13,7 @@ class FilterEngine {
     QStringList listNgUsers() const;
     QVector<RegexFilter> listRegexFilters() const;
     FilterSnapshot snapshot() const;
+    bool atCapacity() const;
     bool containsNgUser(const QString &userId) const;
     bool addNgUser(const QString &userId);
     bool removeNgUser(const QString &userId);

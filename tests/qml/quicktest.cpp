@@ -3,11 +3,22 @@
 #include "ui/LicenseProvider.hpp"
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QtMath>
 #include <QtQuickTest/quicktest.h>
 class ViewSetup : public QObject {
     Q_OBJECT
+  public:
+    Q_INVOKABLE QColor windowPixel(QQuickWindow *window, const QPointF &logicalPoint) const {
+        const auto image = window->grabWindow();
+        // Use the full capture size. The software renderer can return physical pixels with DPR metadata of 1.
+        const auto x = qFloor(logicalPoint.x() * image.width() / window->width());
+        const auto y = qFloor(logicalPoint.y() * image.height() / window->height());
+        return image.valid(x, y) ? image.pixelColor(x, y) : QColor{};
+    }
+
   public slots:
     void applicationAvailable() {
         qputenv("NICONEON_DANMAKU_WORKER", "off");
@@ -26,6 +37,7 @@ class ViewSetup : public QObject {
     }
     void qmlEngineAvailable(QQmlEngine *engine) {
         engine->rootContext()->setContextProperty("application", controller.get());
+        engine->rootContext()->setContextProperty("viewTest", this);
     }
     void cleanupTestCase() {
         QSignalSpy stopped(controller.get(), &niconeon::ApplicationController::readyToQuit);

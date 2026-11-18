@@ -55,6 +55,9 @@ QVector<RegexFilter> FilterEngine::listRegexFilters() const {
 FilterSnapshot FilterEngine::snapshot() const {
     return {listNgUsers(), listRegexFilters()};
 }
+bool FilterEngine::atCapacity() const {
+    return m_ngUsers.size() + static_cast<std::size_t>(m_regexFilters.size()) >= MaxFilterEntries;
+}
 bool FilterEngine::containsNgUser(const QString &userId) const {
     return m_ngUsers.contains(userId);
 }
@@ -69,7 +72,7 @@ Result<void> FilterEngine::addRegexFilter(const RegexFilter &filter) {
     auto compiled = compileRegex(filter.pattern);
     if (!compiled)
         return std::unexpected(compiled.error());
-    if (m_ngUsers.size() + static_cast<std::size_t>(m_regexFilters.size()) >= MaxFilterEntries)
+    if (atCapacity())
         return std::unexpected(AppError{QStringLiteral("filter count exceeds the 10000-entry safety limit")});
     m_regexFilters.append({filter, std::move(*compiled)});
     return {};

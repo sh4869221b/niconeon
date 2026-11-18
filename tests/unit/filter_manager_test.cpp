@@ -4,23 +4,36 @@
 #include <QTemporaryDir>
 #include <QUuid>
 #include <QtTest>
+#include <atomic>
+#include <thread>
 
 using namespace niconeon;
 
 namespace {
-bool executeExternal(const QString &path, const QString &statement) {
-    const auto name = QUuid::createUuid().toString();
-    bool success = false;
-    {
-        auto database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
-        database.setDatabaseName(path);
-        if (database.open()) {
-            QSqlQuery query(database);
-            success = query.exec(statement);
-        }
+class ExternalDatabase {
+  public:
+    explicit ExternalDatabase(const QString &path) {
+        db.setDatabaseName(path);
+        db.open();
     }
-    QSqlDatabase::removeDatabase(name);
-    return success;
+    ~ExternalDatabase() {
+        db.close();
+        db = QSqlDatabase();
+        QSqlDatabase::removeDatabase(name);
+    }
+    bool exec(const QString &statement) {
+        QSqlQuery query(db);
+        return query.exec(statement);
+    }
+
+  private:
+    const QString name = QUuid::createUuid().toString();
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+};
+
+bool executeExternal(const QString &path, const QString &statement) {
+    ExternalDatabase database(path);
+    return database.exec(statement);
 }
 } // namespace
 
@@ -105,6 +118,190 @@ class FilterManagerTest : public QObject {
         QCOMPARE(store->listNgUsers().value(), QStringList{QStringLiteral("u1")});
     }
 
+    void sharedDatabaseDuplicateSynchronizesWithoutTakingUndoOwnership() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(second.initialize());
+
+        auto firstAdd = first.addNgUser(QStringLiteral("shared"));
+        QVERIFY(firstAdd && firstAdd->applied && !firstAdd->undoToken.isEmpty());
+        auto secondAdd = second.addNgUser(QStringLiteral("second"));
+        QVERIFY(secondAdd && secondAdd->applied && !secondAdd->undoToken.isEmpty());
+        QVERIFY(!second.engine().containsNgUser(QStringLiteral("shared")));
+
+        auto duplicate = second.addNgUser(QStringLiteral("shared"));
+        QVERIFY(duplicate);
+        auto duplicateUndo = second.undoLastNg(duplicate->undoToken);
+        QVERIFY(duplicateUndo);
+        auto usersAfterDuplicateUndo = (*firstStore)->listNgUsers();
+        QVERIFY(usersAfterDuplicateUndo && usersAfterDuplicateUndo->contains(QStringLiteral("shared")));
+        QVERIFY(!duplicateUndo->restored);
+        QVERIFY(!duplicate->applied);
+        QVERIFY(duplicate->undoToken.isEmpty());
+        QVERIFY(second.engine().containsNgUser(QStringLiteral("shared")));
+        auto previousUndo = second.undoLastNg(secondAdd->undoToken);
+        QVERIFY(previousUndo && previousUndo->restored);
+        QCOMPARE((*firstStore)->listNgUsers().value(), QStringList{QStringLiteral("shared")});
+        auto ownerUndo = first.undoLastNg(firstAdd->undoToken);
+        QVERIFY(ownerUndo && ownerUndo->restored);
+    }
+
+    void staleUndoCannotRemoveAnotherInstancesReplacement() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(second.initialize());
+
+        const auto user = QStringLiteral("shared");
+        auto original = first.addNgUser(user);
+        QVERIFY(original && original->applied && !original->undoToken.isEmpty());
+        auto duplicate = second.addNgUser(user);
+        QVERIFY(duplicate && !duplicate->applied && duplicate->undoToken.isEmpty());
+        QVERIFY(second.engine().containsNgUser(user));
+        auto removed = second.removeNgUser(user);
+        QVERIFY(removed && removed->removed);
+        auto replacement = second.addNgUser(user);
+        QVERIFY(replacement && replacement->applied && !replacement->undoToken.isEmpty());
+        QVERIFY(replacement->undoToken != original->undoToken);
+
+        auto staleUndo = first.undoLastNg(original->undoToken);
+        QVERIFY(staleUndo);
+        QCOMPARE((*secondStore)->listNgUsers().value(), QStringList{user});
+        QVERIFY(!staleUndo->restored);
+        QVERIFY(first.engine().containsNgUser(user));
+        QVERIFY(!first.undoLastNg(original->undoToken)->restored);
+        auto undoReplacement = second.undoLastNg(replacement->undoToken);
+        QVERIFY(undoReplacement && undoReplacement->restored);
+        QVERIFY(!second.engine().containsNgUser(user));
+        QVERIFY((*secondStore)->listNgUsers()->isEmpty());
+    }
+
+    void duplicateSynchronizesWhileAWriterHasTheLock_data() {
+        QTest::addColumn<bool>("deletePending");
+        QTest::newRow("writer holds lock") << false;
+        QTest::newRow("writer has uncommitted delete") << true;
+    }
+
+    void duplicateSynchronizesWhileAWriterHasTheLock() {
+        QFETCH(bool, deletePending);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(second.initialize());
+        const auto user = QStringLiteral("u1");
+        const CommentEvent comment{QStringLiteral("c1"), 0, user, QStringLiteral("text")};
+        QVERIFY(!first.engine().shouldHide(comment).value_or(true));
+        auto registration = second.addNgUser(user);
+        QVERIFY(registration && registration->applied);
+
+        ExternalDatabase writer(path);
+        QVERIFY(writer.exec(QStringLiteral("BEGIN IMMEDIATE")));
+        if (deletePending)
+            QVERIFY(writer.exec(QStringLiteral("DELETE FROM ng_users WHERE user_id='u1'")));
+        // Hold the lock until the duplicate operation returns. The reader still sees committed data.
+        auto duplicate = first.addNgUser(user);
+        QVERIFY2(duplicate, duplicate ? "" : qPrintable(duplicate.error().message));
+        QVERIFY(!duplicate->applied);
+        QVERIFY(duplicate->undoToken.isEmpty());
+        QVERIFY(first.engine().shouldHide(comment).value_or(false));
+        QVERIFY(writer.exec(QStringLiteral("COMMIT")));
+
+        if (deletePending) {
+            QVERIFY((*firstStore)->listNgUsers()->isEmpty());
+            auto replacement = first.addNgUser(user);
+            QVERIFY(replacement && replacement->applied && !replacement->undoToken.isEmpty());
+            QVERIFY(!second.undoLastNg(registration->undoToken)->restored);
+            QVERIFY(first.undoLastNg(replacement->undoToken)->restored);
+        } else {
+            QVERIFY(second.undoLastNg(registration->undoToken)->restored);
+        }
+    }
+
+    void initializationUsesOneSnapshotWhileAWriterReplacesFilters() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto store = Store::openWithPath(path);
+        QVERIFY(store);
+        QVERIFY((*store)->addNgUser(QStringLiteral("protected"))->has_value());
+        const CommentEvent comment{QStringLiteral("c1"), 0, QStringLiteral("protected"), QStringLiteral("hidden")};
+
+        std::atomic<int> swaps = 0;
+        std::atomic<bool> writeFailed = false;
+        std::jthread writer([&](std::stop_token stop) {
+            ExternalDatabase database(path);
+            bool useRegex = true;
+            while (!stop.stop_requested()) {
+                const auto insert = useRegex ? QStringLiteral("INSERT INTO regex_filters(pattern,created_at) "
+                                                              "VALUES('^hidden$','2024-01-01T00:00:00Z')")
+                                             : QStringLiteral("INSERT INTO ng_users(user_id,created_at) "
+                                                              "VALUES('protected','2024-01-01T00:00:00Z')");
+                const auto remove =
+                    useRegex ? QStringLiteral("DELETE FROM ng_users") : QStringLiteral("DELETE FROM regex_filters");
+                if (!database.exec(QStringLiteral("BEGIN IMMEDIATE")) || !database.exec(insert) ||
+                    !database.exec(remove) || !database.exec(QStringLiteral("COMMIT"))) {
+                    writeFailed = true;
+                    return;
+                }
+                useRegex = !useRegex;
+                ++swaps;
+            }
+        });
+        QTRY_VERIFY(swaps > 0 || writeFailed);
+        QVERIFY(!writeFailed);
+        const int initialSwaps = swaps.load();
+        FilterManager manager(**store);
+        for (int attempt = 0; attempt < 2000; ++attempt) {
+            QVERIFY(manager.initialize());
+            QVERIFY(manager.engine().shouldHide(comment).value_or(false));
+            const auto snapshot = manager.snapshot();
+            QCOMPARE(snapshot.ngUsers.size() + snapshot.regexFilters.size(), 1);
+        }
+        writer.request_stop();
+        writer.join();
+        QVERIFY(!writeFailed);
+        QVERIFY(swaps > initialSwaps);
+    }
+
+    void sharedDatabaseNewInsertionGetsUndoWithStaleLocalFilter() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(first.addNgUser(QStringLiteral("shared")));
+        QVERIFY(second.initialize());
+        auto removed = first.removeNgUser(QStringLiteral("shared"));
+        QVERIFY(removed && removed->removed);
+        QVERIFY(second.engine().containsNgUser(QStringLiteral("shared")));
+
+        auto reinserted = second.addNgUser(QStringLiteral("shared"));
+        QVERIFY(reinserted && reinserted->applied && !reinserted->undoToken.isEmpty());
+        auto undone = second.undoLastNg(reinserted->undoToken);
+        QVERIFY(undone && undone->restored);
+        QVERIFY(!second.engine().containsNgUser(QStringLiteral("shared")));
+        QVERIFY((*firstStore)->listNgUsers()->isEmpty());
+    }
+
     void removalClearsMatchingUndoAndListsAreSorted() {
         auto opened = Store::openMemory();
         QVERIFY(opened);
@@ -139,6 +336,90 @@ class FilterManagerTest : public QObject {
         QVERIFY(*manager.removeRegexFilter(*first));
         QVERIFY(!*manager.removeRegexFilter(*first));
         QCOMPARE(manager.snapshot().regexFilters.size(), 1);
+    }
+
+    void regexAdditionReconcilesAFullStaleEngine_data() {
+        QTest::addColumn<bool>("corruptSnapshot");
+        QTest::newRow("valid snapshot") << false;
+        QTest::newRow("invalid snapshot rolls back before retry") << true;
+    }
+
+    void regexAdditionReconcilesAFullStaleEngine() {
+        QFETCH(bool, corruptSnapshot);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.db"));
+        auto firstStore = Store::openWithPath(path);
+        auto secondStore = Store::openWithPath(path);
+        QVERIFY(firstStore && secondStore);
+        QVERIFY(executeExternal(
+            path, QStringLiteral("WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<9996) "
+                                 "INSERT INTO ng_users(user_id,created_at) "
+                                 "SELECT 'seed-'||x,'2024-01-01T00:00:00Z' FROM n")));
+        auto oldRegex = (*firstStore)->insertRegexFilter(QStringLiteral("^old$"));
+        QVERIFY(oldRegex);
+        FilterManager first(**firstStore), second(**secondStore);
+        QVERIFY(first.initialize());
+        QVERIFY(second.initialize());
+        const auto ownNg = first.addNgUser(QStringLiteral("own"));
+        QVERIFY(ownNg && ownNg->applied && !ownNg->undoToken.isEmpty());
+
+        for (int index = 0; index < 2; ++index) {
+            const auto removed = second.removeNgUser(QStringLiteral("seed-%1").arg(index));
+            QVERIFY(removed && removed->removed);
+            const auto user = QStringLiteral("remote-%1").arg(index);
+            const auto added = second.addNgUser(user);
+            QVERIFY(added && added->applied);
+            const auto duplicate = first.addNgUser(user);
+            QVERIFY(duplicate && !duplicate->applied && duplicate->undoToken.isEmpty());
+        }
+        const auto removedRegex = second.removeRegexFilter(oldRegex->filterId);
+        QVERIFY(removedRegex && *removedRegex);
+        const auto remoteRegex = second.addRegexFilter(QStringLiteral("^remote$"));
+        QVERIFY(remoteRegex);
+        const auto stale = first.snapshot();
+        QCOMPARE(stale.ngUsers.size() + stale.regexFilters.size(), MaxFilterEntries + 1);
+        const auto before = (*firstStore)->loadFilters();
+        QVERIFY(before);
+        QCOMPARE(before->ngUsers.size() + before->regexFilters.size(), MaxFilterEntries - 1);
+
+        if (corruptSnapshot) {
+            QVERIFY(executeExternal(path, QStringLiteral("UPDATE regex_filters SET pattern='('")));
+            const auto invalid = first.addRegexFilter(QStringLiteral("^new$"));
+            QVERIFY(!invalid);
+            QVERIFY2(invalid.error().message.contains(QStringLiteral("invalid regex:")),
+                     qPrintable(invalid.error().message));
+            const auto persisted = (*firstStore)->listRegexFilters();
+            QVERIFY(persisted);
+            QCOMPARE(persisted->size(), 1);
+            QCOMPARE(persisted->front().filterId, *remoteRegex);
+            QCOMPARE(persisted->front().pattern, QStringLiteral("("));
+            const auto active = first.snapshot();
+            QCOMPARE(active.ngUsers, stale.ngUsers);
+            QCOMPARE(active.regexFilters, stale.regexFilters);
+            QVERIFY(executeExternal(path, QStringLiteral("UPDATE regex_filters SET pattern='^remote$'")));
+        }
+
+        const auto added = first.addRegexFilter(QStringLiteral("^new$"));
+        QVERIFY2(added, added ? "" : qPrintable(added.error().message));
+        const auto refreshed = first.snapshot();
+        QCOMPARE(refreshed.ngUsers.size() + refreshed.regexFilters.size(), MaxFilterEntries);
+        QVERIFY(!first.engine().containsNgUser(QStringLiteral("seed-0")));
+        QVERIFY(!first.engine().containsNgUser(QStringLiteral("seed-1")));
+        QVERIFY(first.engine().containsNgUser(QStringLiteral("remote-0")));
+        QVERIFY(first.engine().containsNgUser(QStringLiteral("remote-1")));
+        QCOMPARE(refreshed.regexFilters.size(), 2);
+        QCOMPARE(refreshed.regexFilters.front().filterId, *remoteRegex);
+        QCOMPARE(refreshed.regexFilters.back().filterId, *added);
+        QCOMPARE((*firstStore)->listRegexFilters().value(), refreshed.regexFilters);
+        const auto overflow = first.addRegexFilter(QStringLiteral("^overflow$"));
+        QVERIFY(!overflow);
+        QVERIFY(overflow.error().message.contains(QStringLiteral("10000-entry safety limit")));
+        QCOMPARE((*firstStore)->listRegexFilters().value(), refreshed.regexFilters);
+        const auto undo = first.undoLastNg(ownNg->undoToken);
+        QVERIFY(undo && undo->restored);
+        QVERIFY(!first.engine().containsNgUser(QStringLiteral("own")));
+        QVERIFY(!(*secondStore)->listNgUsers()->contains(QStringLiteral("own")));
     }
 
     void failedWritesDoNotChangeMemoryOrUndo() {
