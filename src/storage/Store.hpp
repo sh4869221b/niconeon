@@ -44,7 +44,6 @@ class Store {
     Store();
     Result<void> open(const QString &dataPath, const QString &cachePath, bool memory, CachePolicy cachePolicy);
     Result<void> initializeDataSchema();
-    Result<void> migrateNgRegistrationIds();
     Result<void> initializeCache(const QString &cachePath, bool memory);
     Result<void> migrateLegacyCache();
     Result<void> checkThread() const;

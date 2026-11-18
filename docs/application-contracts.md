@@ -23,6 +23,13 @@ comments if cache persistence fails. HTTP failure uses valid cache, then empty c
 If cache initialization or legacy cache migration fails, the worker warns once and runs
 without the cache. It continues loading and saving filters in the persistent data DB.
 Corrupt cache never stops a local video. SQL errors carry operation context.
+For each persistent DB, the worker checks the journal mode and retries contention during
+WAL setup for up to two seconds. An already migrated data DB in WAL mode opens with
+read-only schema checks. When the schema needs work, the worker checks it again after
+taking the SQLite writer lock.
+NG users and regex filters share a 10,000-row limit. Each insertion checks the limit
+and writes in one SQLite write transaction. A duplicate NG user remains a no-op at
+capacity. The concurrency guarantee requires every writer to use the updated application.
 Only the latest NG registration actually inserted into SQLite by this instance gets a
 single-use Undo token. A duplicate synchronizes the local NG filter and preserves any
 existing token. Removing an NG user in the same instance invalidates its Undo.

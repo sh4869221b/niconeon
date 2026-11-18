@@ -1,5 +1,6 @@
 #include "storage/Store.hpp"
 
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -11,6 +12,7 @@
 #include <QSqlQuery>
 #include <QUuid>
 #include <QVariant>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -21,6 +23,8 @@
 
 namespace niconeon {
 namespace {
+
+constexpr int SqliteBusyTimeoutMs = 2000;
 
 AppError sqlError(const QString &context, const QSqlQuery &query) {
     return {QStringLiteral("%1: %2").arg(context, query.lastError().text())};
@@ -33,6 +37,54 @@ Result<void> execute(QSqlDatabase &database, const QString &statement, const QSt
     return {};
 }
 
+template <typename Operation>
+auto inImmediateTransaction(QSqlDatabase &database, const QString &context, Operation operation)
+    -> decltype(operation()) {
+    if (auto begun = execute(database, QStringLiteral("BEGIN IMMEDIATE"), QStringLiteral("begin %1").arg(context));
+        !begun)
+        return std::unexpected(begun.error());
+    auto result = operation();
+    if (result && !database.commit())
+        result = std::unexpected(AppError{QStringLiteral("commit %1: %2").arg(context, database.lastError().text())});
+    if (!result)
+        database.rollback();
+    return result;
+}
+
+std::expected<QString, QSqlError> journalMode(QSqlDatabase &database, const QString &statement) {
+    QSqlQuery query(database);
+    if (!query.exec(statement) || !query.next())
+        return std::unexpected(query.lastError());
+    return query.value(0).toString();
+}
+
+bool isLockContention(const QSqlError &error) {
+    bool numeric;
+    const int code = error.nativeErrorCode().toInt(&numeric);
+    // Extended SQLite result codes keep SQLITE_BUSY (5) or SQLITE_LOCKED (6) in the low byte.
+    return numeric && ((code & 0xff) == 5 || (code & 0xff) == 6);
+}
+
+Result<void> enableWal(QSqlDatabase &database, const QString &context) {
+    // One deadline covers mode reads and write attempts, even if SQLite skips its busy handler.
+    if (auto result = execute(database, QStringLiteral("PRAGMA busy_timeout=0"), context); !result)
+        return result;
+    const QDeadlineTimer deadline(SqliteBusyTimeoutMs, Qt::PreciseTimer);
+    for (;;) {
+        auto mode = journalMode(database, QStringLiteral("PRAGMA journal_mode"));
+        if (mode && *mode != QStringLiteral("wal"))
+            mode = journalMode(database, QStringLiteral("PRAGMA journal_mode=WAL"));
+        if (mode && *mode == QStringLiteral("wal"))
+            return execute(database, QStringLiteral("PRAGMA busy_timeout=%1").arg(SqliteBusyTimeoutMs), context);
+        if ((!mode && !isLockContention(mode.error())) || deadline.hasExpired()) {
+            const auto detail =
+                mode ? QStringLiteral("SQLite returned journal mode %1").arg(*mode) : mode.error().text();
+            return std::unexpected(AppError{QStringLiteral("%1: %2").arg(context, detail)});
+        }
+        QThread::msleep(static_cast<unsigned long>(std::min<qint64>(25, deadline.remainingTime())));
+    }
+}
+
 Result<void> openDatabase(QSqlDatabase &database, const QString &connectionName, const QString &path, bool memory,
                           const QString &walContext) {
     if (path.isEmpty())
@@ -40,13 +92,34 @@ Result<void> openDatabase(QSqlDatabase &database, const QString &connectionName,
     if (!memory && !QDir().mkpath(QFileInfo(path).absolutePath()))
         return std::unexpected(AppError{QStringLiteral("create directory for %1").arg(path)});
     database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
-    database.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=2000"));
+    database.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=%1").arg(SqliteBusyTimeoutMs));
     database.setDatabaseName(path);
     if (!database.open())
         return std::unexpected(AppError{QStringLiteral("open sqlite %1: %2").arg(path, database.lastError().text())});
     if (memory)
         return {};
-    return execute(database, QStringLiteral("PRAGMA journal_mode=WAL"), walContext);
+    return enableWal(database, walContext);
+}
+
+struct DataSchema {
+    bool ready;
+    bool needsRegistrationColumn;
+};
+
+Result<DataSchema> readDataSchema(QSqlDatabase &database) {
+    QSqlQuery query(database);
+    if (!query.exec(
+            QStringLiteral("SELECT EXISTS(SELECT 1 FROM pragma_table_info('ng_users') WHERE name='registration_id'), "
+                           "EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ng_users'), "
+                           "(SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND "
+                           "name IN ('ng_users','regex_filters','video_map'))=3 AND EXISTS("
+                           "SELECT 1 FROM sqlite_master WHERE type='index' AND name='ng_users_registration_id' "
+                           "AND tbl_name='ng_users')")) ||
+        !query.next())
+        return std::unexpected(sqlError(QStringLiteral("inspect data schema"), query));
+    const bool hasRegistrationColumn = query.value(0).toBool();
+    return DataSchema{hasRegistrationColumn && query.value(2).toBool(),
+                      !hasRegistrationColumn && query.value(1).toBool()};
 }
 
 QString timestamp() {
@@ -234,51 +307,42 @@ Result<void> Store::open(const QString &dataPath, const QString &cachePath, bool
 }
 
 Result<void> Store::initializeDataSchema() {
-    const QStringList dataStatements{
-        QStringLiteral("CREATE TABLE IF NOT EXISTS ng_users (user_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, "
-                       "registration_id TEXT)"),
-        QStringLiteral("CREATE TABLE IF NOT EXISTS regex_filters (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT "
-                       "NOT NULL, created_at TEXT NOT NULL)"),
-        QStringLiteral("CREATE TABLE IF NOT EXISTS video_map (video_path TEXT PRIMARY KEY, video_id TEXT NOT NULL, "
-                       "last_opened_at TEXT NOT NULL)")};
-    for (const auto &statement : dataStatements) {
-        if (auto result = execute(m_data, statement, QStringLiteral("initialize data schema")); !result)
-            return result;
-    }
-    // Lock out other writers before checking the schema so concurrent opens cannot both try to add the column.
-    if (auto result = execute(m_data, QStringLiteral("BEGIN IMMEDIATE"), QStringLiteral("begin NG schema migration"));
-        !result)
-        return result;
-    auto migrated = migrateNgRegistrationIds();
-    if (migrated && !m_data.commit())
-        migrated =
-            std::unexpected(AppError{QStringLiteral("commit NG schema migration: %1").arg(m_data.lastError().text())});
-    if (!migrated)
-        m_data.rollback();
-    return migrated;
-}
+    const auto schema = readDataSchema(m_data);
+    if (!schema)
+        return std::unexpected(schema.error());
+    if (schema->ready)
+        return {};
 
-Result<void> Store::migrateNgRegistrationIds() {
-    bool hasRegistrationId;
-    {
-        QSqlQuery column(m_data);
-        if (!column.exec(QStringLiteral("SELECT 1 FROM pragma_table_info('ng_users') WHERE name='registration_id'")))
-            return std::unexpected(sqlError(QStringLiteral("inspect NG user schema"), column));
-        hasRegistrationId = column.next();
-        if (column.lastError().isValid())
-            return std::unexpected(sqlError(QStringLiteral("read NG user schema"), column));
-    }
-    if (!hasRegistrationId) {
-        // Old rows have no live Undo token. Keep them and allow older clients' named-column inserts.
-        if (auto result = execute(m_data, QStringLiteral("ALTER TABLE ng_users ADD COLUMN registration_id TEXT"),
-                                  QStringLiteral("add NG registration ID"));
-            !result)
-            return result;
-    }
-    return execute(m_data,
-                   QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS ng_users_registration_id ON "
-                                  "ng_users(registration_id) WHERE registration_id IS NOT NULL"),
-                   QStringLiteral("index NG registration IDs"));
+    return inImmediateTransaction(m_data, QStringLiteral("data schema migration"), [this]() -> Result<void> {
+        // A concurrent opener may have finished the migration while we waited for the writer lock.
+        const auto currentSchema = readDataSchema(m_data);
+        if (!currentSchema)
+            return std::unexpected(currentSchema.error());
+        if (currentSchema->ready)
+            return {};
+        const QStringList statements{
+            QStringLiteral("CREATE TABLE IF NOT EXISTS ng_users (user_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, "
+                           "registration_id TEXT)"),
+            QStringLiteral("CREATE TABLE IF NOT EXISTS regex_filters (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern "
+                           "TEXT NOT NULL, created_at TEXT NOT NULL)"),
+            QStringLiteral("CREATE TABLE IF NOT EXISTS video_map (video_path TEXT PRIMARY KEY, video_id TEXT NOT NULL, "
+                           "last_opened_at TEXT NOT NULL)")};
+        for (const auto &statement : statements) {
+            if (auto result = execute(m_data, statement, QStringLiteral("initialize data schema")); !result)
+                return result;
+        }
+        if (currentSchema->needsRegistrationColumn) {
+            // Old rows have no live Undo token. Allow older clients' named-column inserts.
+            if (auto result = execute(m_data, QStringLiteral("ALTER TABLE ng_users ADD COLUMN registration_id TEXT"),
+                                      QStringLiteral("add NG registration ID"));
+                !result)
+                return result;
+        }
+        return execute(m_data,
+                       QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS ng_users_registration_id ON "
+                                      "ng_users(registration_id) WHERE registration_id IS NOT NULL"),
+                       QStringLiteral("index NG registration IDs"));
+    });
 }
 
 Result<void> Store::initializeCache(const QString &cachePath, bool memory) {
@@ -445,29 +509,33 @@ Result<std::optional<QString>> Store::addNgUser(const QString &userId) {
         return std::unexpected(valid.error());
     if (auto valid = validateUserId(userId); !valid)
         return std::unexpected(valid.error());
-    {
-        QSqlQuery exists(m_data);
-        exists.prepare(QStringLiteral("SELECT 1 FROM ng_users WHERE user_id=?"));
-        exists.addBindValue(nonNull(userId));
-        if (!exists.exec())
-            return std::unexpected(sqlError(QStringLiteral("find ng user"), exists));
-        if (exists.next())
-            return std::nullopt;
-    }
-    if (auto capacity = checkFilterCapacity(); !capacity)
-        return std::unexpected(capacity.error());
-    const auto registrationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    QSqlQuery query(m_data);
-    query.prepare(QStringLiteral("INSERT INTO ng_users(user_id,created_at,registration_id) VALUES(?,?,?) "
-                                 "ON CONFLICT(user_id) DO NOTHING"));
-    query.addBindValue(nonNull(userId));
-    query.addBindValue(timestamp());
-    query.addBindValue(registrationId);
-    if (!query.exec())
-        return std::unexpected(sqlError(QStringLiteral("save ng user"), query));
-    if (query.numRowsAffected() == 1)
-        return registrationId;
-    return std::nullopt;
+    return inImmediateTransaction(m_data, QStringLiteral("add NG user"), [&]() -> Result<std::optional<QString>> {
+        {
+            QSqlQuery exists(m_data);
+            exists.prepare(QStringLiteral("SELECT 1 FROM ng_users WHERE user_id=?"));
+            exists.addBindValue(nonNull(userId));
+            if (!exists.exec())
+                return std::unexpected(sqlError(QStringLiteral("find ng user"), exists));
+            if (exists.next())
+                return std::nullopt;
+            if (exists.lastError().isValid())
+                return std::unexpected(sqlError(QStringLiteral("read NG user"), exists));
+        }
+        if (auto capacity = checkFilterCapacity(); !capacity)
+            return std::unexpected(capacity.error());
+        const auto registrationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QSqlQuery query(m_data);
+        query.prepare(QStringLiteral("INSERT INTO ng_users(user_id,created_at,registration_id) VALUES(?,?,?) "
+                                     "ON CONFLICT(user_id) DO NOTHING"));
+        query.addBindValue(nonNull(userId));
+        query.addBindValue(timestamp());
+        query.addBindValue(registrationId);
+        if (!query.exec())
+            return std::unexpected(sqlError(QStringLiteral("save ng user"), query));
+        if (query.numRowsAffected() == 1)
+            return registrationId;
+        return std::nullopt;
+    });
 }
 
 Result<bool> Store::removeNgUser(const QString &userId, const std::optional<QString> &registrationId) {
@@ -515,16 +583,18 @@ Result<RegexFilter> Store::insertRegexFilter(const QString &pattern) {
         return std::unexpected(valid.error());
     if (pattern.size() > MaxPatternBytes || pattern.toUtf8().size() > MaxPatternBytes)
         return std::unexpected(AppError{QStringLiteral("invalid regex: pattern exceeds the 4096-byte safety limit")});
-    if (auto capacity = checkFilterCapacity(); !capacity)
-        return std::unexpected(capacity.error());
-    const auto createdAt = QDateTime::currentDateTimeUtc();
-    QSqlQuery query(m_data);
-    query.prepare(QStringLiteral("INSERT INTO regex_filters(pattern,created_at) VALUES(?,?)"));
-    query.addBindValue(nonNull(pattern));
-    query.addBindValue(createdAt.toString(Qt::ISODateWithMs));
-    if (!query.exec())
-        return std::unexpected(sqlError(QStringLiteral("insert regex filter"), query));
-    return RegexFilter{query.lastInsertId().toLongLong(), pattern, createdAt};
+    return inImmediateTransaction(m_data, QStringLiteral("add regex filter"), [&]() -> Result<RegexFilter> {
+        if (auto capacity = checkFilterCapacity(); !capacity)
+            return std::unexpected(capacity.error());
+        const auto createdAt = QDateTime::currentDateTimeUtc();
+        QSqlQuery query(m_data);
+        query.prepare(QStringLiteral("INSERT INTO regex_filters(pattern,created_at) VALUES(?,?)"));
+        query.addBindValue(nonNull(pattern));
+        query.addBindValue(createdAt.toString(Qt::ISODateWithMs));
+        if (!query.exec())
+            return std::unexpected(sqlError(QStringLiteral("insert regex filter"), query));
+        return RegexFilter{query.lastInsertId().toLongLong(), pattern, createdAt};
+    });
 }
 
 Result<bool> Store::removeRegexFilter(qint64 filterId) {

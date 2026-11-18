@@ -1,4 +1,4 @@
-#include "storage/Store.hpp"
+#include "filters/FilterManager.hpp"
 
 #include <QDir>
 #include <QFileInfo>
@@ -170,6 +170,82 @@ class StoreTest : public QObject {
         QVERIFY(!query.next());
     }
 
+    void migratedWalStoreOpensWhileAnotherConnectionWrites() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto dataPath = directory.filePath(QStringLiteral("data.db"));
+        const auto cachePath = directory.filePath(QStringLiteral("cache.db"));
+        {
+            auto initial = Store::openWithPaths(dataPath, cachePath);
+            QVERIFY(initial);
+            QVERIFY((*initial)->addNgUser(QStringLiteral("committed"))->has_value());
+        }
+        Database writer(dataPath);
+        QVERIFY(writer.opened);
+        QVERIFY(writer.exec(QStringLiteral("BEGIN IMMEDIATE")));
+        QVERIFY(writer.exec(
+            QStringLiteral("INSERT INTO ng_users(user_id,created_at) VALUES('uncommitted','2024-01-01T00:00:00Z')")));
+
+        // Keep the writer lock held throughout open and filter load.
+        auto reader = Store::openWithPaths(dataPath, cachePath);
+        QVERIFY2(reader, reader ? "" : qPrintable(reader.error().message));
+        FilterManager filters(**reader);
+        QVERIFY(filters.initialize());
+        QCOMPARE(filters.snapshot().ngUsers, QStringList{QStringLiteral("committed")});
+        QVERIFY(writer.exec(QStringLiteral("ROLLBACK")));
+    }
+
+    void simultaneousOpensEnableWal_data() {
+        QTest::addColumn<bool>("legacy");
+        QTest::newRow("fresh databases") << false;
+        QTest::newRow("legacy DELETE journal databases") << true;
+    }
+
+    void simultaneousOpensEnableWal() {
+        QFETCH(bool, legacy);
+        constexpr std::size_t clients = 4;
+        for (int round = 0; round < 12; ++round) {
+            QTemporaryDir directory;
+            QVERIFY(directory.isValid());
+            const auto dataPath = directory.filePath(QStringLiteral("data.db"));
+            const auto cachePath = directory.filePath(QStringLiteral("cache.db"));
+            if (legacy) {
+                Database data(dataPath), cache(cachePath);
+                QVERIFY(data.opened && cache.opened);
+                QVERIFY(data.exec(QStringLiteral("PRAGMA journal_mode=DELETE")));
+                QVERIFY(cache.exec(QStringLiteral("PRAGMA journal_mode=DELETE")));
+                QVERIFY(data.exec(
+                    QStringLiteral("CREATE TABLE ng_users(user_id TEXT PRIMARY KEY,created_at TEXT NOT NULL)")));
+                QVERIFY(data.exec(QStringLiteral("INSERT INTO ng_users VALUES('legacy','2024-01-01T00:00:00Z')")));
+                QVERIFY(cache.exec(cacheSchema));
+                QVERIFY(cache.exec(legacyInsert));
+            }
+
+            std::barrier start(clients);
+            std::array<Result<QStringList>, clients> filters;
+            {
+                std::array<std::jthread, clients> workers;
+                for (std::size_t i = 0; i < workers.size(); ++i) {
+                    workers[i] = std::jthread([&, i] {
+                        start.arrive_and_wait();
+                        auto store = Store::openWithPaths(dataPath, cachePath);
+                        filters[i] = store ? (*store)->listNgUsers() : std::unexpected(store.error());
+                    });
+                }
+            }
+            for (const auto &result : filters) {
+                QVERIFY2(result, result ? "" : qPrintable(result.error().message));
+                QCOMPARE(*result, legacy ? QStringList{QStringLiteral("legacy")} : QStringList{});
+            }
+            for (const auto &path : {dataPath, cachePath}) {
+                Database check(path);
+                QSqlQuery mode(check.db);
+                QVERIFY(mode.exec(QStringLiteral("PRAGMA journal_mode")) && mode.next());
+                QCOMPARE(mode.value(0).toString(), QStringLiteral("wal"));
+            }
+        }
+    }
+
     void oversizedLegacyPayloadIsRejectedWithoutDroppingSource() {
         QTemporaryDir directory;
         const auto dataPath = directory.filePath(QStringLiteral("data.db"));
@@ -322,6 +398,73 @@ class StoreTest : public QObject {
         QVERIFY(duplicate && !*duplicate);
         QVERIFY(!(*store)->addNgUser(QStringLiteral("new")));
         QVERIFY(!(*store)->insertRegexFilter(QStringLiteral("new")));
+    }
+
+    void concurrentInsertsShareOneRemainingFilterSlot_data() {
+        QTest::addColumn<bool>("firstRegex");
+        QTest::addColumn<bool>("secondRegex");
+        QTest::newRow("NG and NG") << false << false;
+        QTest::newRow("NG and regex") << false << true;
+        QTest::newRow("regex and regex") << true << true;
+    }
+
+    void concurrentInsertsShareOneRemainingFilterSlot() {
+        QFETCH(bool, firstRegex);
+        QFETCH(bool, secondRegex);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto dataPath = directory.filePath(QStringLiteral("data.db"));
+        const auto cachePath = directory.filePath(QStringLiteral("cache.db"));
+        QVERIFY(Store::openWithPaths(dataPath, cachePath));
+        Database writer(dataPath);
+        QVERIFY(writer.exec(QStringLiteral(
+            "WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<9998) "
+            "INSERT INTO ng_users(user_id,created_at) SELECT 'existing-'||x,'2024-01-01T00:00:00Z' FROM n")));
+
+        std::barrier opened(3), start(3);
+        std::array<Result<bool>, 2> inserted;
+        auto addFilter = [&](std::size_t index, bool regex) {
+            auto store = Store::openWithPaths(dataPath, cachePath);
+            opened.arrive_and_wait();
+            start.arrive_and_wait();
+            if (!store) {
+                inserted[index] = std::unexpected(store.error());
+            } else if (regex) {
+                auto result = (*store)->insertRegexFilter(QStringLiteral("new-%1").arg(index));
+                inserted[index] = result ? Result<bool>{true} : std::unexpected(result.error());
+            } else {
+                auto result = (*store)->addNgUser(QStringLiteral("new-%1").arg(index));
+                inserted[index] = result ? Result<bool>{result->has_value()} : std::unexpected(result.error());
+            }
+        };
+        bool locked, unlocked;
+        {
+            std::jthread first(addFilter, 0, firstRegex), second(addFilter, 1, secondRegex);
+            opened.arrive_and_wait();
+            // Both callers have time to reach the queued write while the last slot is still free.
+            locked = writer.exec(QStringLiteral("BEGIN IMMEDIATE"));
+            start.arrive_and_wait();
+            QTest::qSleep(150);
+            unlocked = writer.exec(QStringLiteral("ROLLBACK"));
+        }
+        QVERIFY(locked && unlocked);
+        int successes = 0;
+        for (const auto &result : inserted) {
+            if (result) {
+                QVERIFY(*result);
+                ++successes;
+            } else {
+                QVERIFY2(result.error().message.contains(QStringLiteral("10000-entry safety limit")),
+                         qPrintable(result.error().message));
+            }
+        }
+        QCOMPARE(successes, 1);
+        auto reopened = Store::openWithPaths(dataPath, cachePath);
+        QVERIFY(reopened);
+        FilterManager filters(**reopened);
+        QVERIFY(filters.initialize());
+        const auto snapshot = filters.snapshot();
+        QCOMPARE(snapshot.ngUsers.size() + snapshot.regexFilters.size(), MaxFilterEntries);
     }
 
     void timestampsAcceptRustPrecisionButRejectMissingZone() {
