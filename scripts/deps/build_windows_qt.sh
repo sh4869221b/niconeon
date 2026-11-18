@@ -2,20 +2,28 @@
 # Rebuild the official UCRT64 recipe, retaining platform patches and features.
 set -Eeuo pipefail
 trap 'status=$?; printf "Windows Qt build failed (exit %s) at line %s: %s\n" "$status" "$LINENO" "$BASH_COMMAND" >&2; exit "$status"' ERR
+qtbase_package=mingw-w64-ucrt-x86_64-qt6-base
+qtbase_version=6.12.0-2
 # Explicit binary markers keep sha256sum --check in binary mode on MSYS.
 [[ ${MSYSTEM:-} == UCRT64 && ${MINGW_PREFIX:-} == /ucrt64 ]] || { echo 'UCRT64 shell required' >&2; exit 1; }
-for package in mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-declarative; do
-  [[ $(pacman -Q "$package") == "$package 6.12.0-1" ]] || {
-    echo "Review Qt recipe/security pins before replacing $package (expected 6.12.0-1)" >&2; exit 1;
-  }
-done
+require_package_version() {
+  local package=$1 expected=$2 installed
+  if ! installed=$(pacman -Q "$package") || [[ $installed != "$package $expected" ]]; then
+    printf 'Review Qt recipe/security pins before replacing %s (expected %s; found: %s)\n' \
+      "$package" "$expected" "${installed:-not installed}" >&2
+    exit 1
+  fi
+}
+require_package_version "$qtbase_package" "$qtbase_version"
+# MSYS2 package revisions are independent across Qt modules.
+require_package_version mingw-w64-ucrt-x86_64-qt6-declarative 6.12.0-1
 here=$(cd "$(dirname "$0")" && pwd)
 work=${NICONEON_WINDOWS_QT_WORK_DIR:-"$here/../../build/windows-qt"}
 mkdir -p "$work"
 work=$(cd "$work" && pwd)
 source_dir="$work/source"
 recipe="$work/recipe"
-commit=86b6d2d5ff436fcc457cd729c398829410d013c0
+commit=e5b096b17adaae570fe4ea69894a86866b0717e0
 inventory=$(pacman -Q | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
 identity=$(cat "$0" "$here/windows-qt-recipe.sha256" "$here/qt-sources.sha256" | sha256sum | cut -d' ' -f1)
 fetch() { curl --fail --location --retry 3 --output "$2" "$1"; }
@@ -83,18 +91,18 @@ PKGBUILD
   (cd "$work" && sha256sum --binary packages/*.pkg.tar.* > packages.sha256)
 fi
 # Always reinstall the verified package, including on a cache hit. No --needed.
-mapfile -t packages < <(find "$work/packages" -maxdepth 1 -name 'mingw-w64-ucrt-x86_64-qt6-base-6.12.0-1-*.pkg.tar.*' ! -name '*.sig' | sort)
+mapfile -t packages < <(find "$work/packages" -maxdepth 1 -name "$qtbase_package-$qtbase_version-*.pkg.tar.*" ! -name '*.sig' | sort)
 [[ ${#packages[@]} == 1 ]] || { echo 'expected exactly one QtBase binary package' >&2; exit 1; }
 pacman --noconfirm -U "${packages[0]}"
-installed=$(pacman -Q mingw-w64-ucrt-x86_64-qt6-base)
-[[ $installed == 'mingw-w64-ucrt-x86_64-qt6-base 6.12.0-1' ]] || {
+installed=$(pacman -Q "$qtbase_package")
+[[ $installed == "$qtbase_package $qtbase_version" ]] || {
   echo "Unexpected installed QtBase package after reinstall: $installed" >&2; exit 1;
 }
 if [[ -f "$work/complete" ]]; then
   (cd /ucrt64 && sha256sum --check "$source_dir/runtime.sha256")
 else
   # Includes Base plugins as well as Qt6Core/Network and other Base DLLs.
-  pacman -Qlq mingw-w64-ucrt-x86_64-qt6-base | grep -E '^/ucrt64/.*\.dll$' | LC_ALL=C sort | while read -r dll; do
+  pacman -Qlq "$qtbase_package" | grep -E '^/ucrt64/.*\.dll$' | LC_ALL=C sort | while read -r dll; do
     (cd /ucrt64 && sha256sum --binary "${dll#/ucrt64/}")
   done > "$source_dir/runtime.sha256"
   for required_dll in Qt6Core.dll Qt6Network.dll; do
@@ -106,7 +114,7 @@ else
   done
   cp "$work/packages.sha256" "$source_dir/"
   cat > "$source_dir/README.txt" <<README
-QtBase 6.12.0-1 UCRT64 rebuilt from MSYS2 recipe $commit.
+QtBase $qtbase_version UCRT64 rebuilt from MSYS2 recipe $commit.
 Official recipe: https://github.com/msys2/MINGW-packages/tree/$commit/mingw-w64-qt6-base
 All upstream MSYS2 patches/features retained. Three official Qt patches fix
 CVE-2026-105924 and CVE-2026-116337. Patches change QtCore CBOR/JSON conversion
