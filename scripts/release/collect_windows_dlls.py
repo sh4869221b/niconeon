@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from time import monotonic
 
 
 def dll_index(directory):
@@ -160,8 +161,14 @@ if __name__ == "__main__":
     if args.sqlite_only:
         retain_sqlite_driver(bundle)
     if args.software_opengl:
+        start = monotonic()
         aliases = deploy_mesa_fallback(bundle, sdk)
         binaries = collect(bundle, sdk, system, bundle / "software-opengl-dependencies.txt",
                            args.objdump, roots=aliases)
+        print(f"WINDOWS_PACKAGE_MESA_PE_MS={round((monotonic() - start) * 1000)}")
+        start = monotonic()
         capture_msys2_notices(bundle, sdk, binaries, aliases)
+        print(f"WINDOWS_PACKAGE_MESA_NOTICES_MS={round((monotonic() - start) * 1000)}")
+    start = monotonic()
     collect(bundle, sdk, system, args.report.resolve(), args.objdump)
+    print(f"WINDOWS_PACKAGE_ALL_PE_MS={round((monotonic() - start) * 1000)}")
