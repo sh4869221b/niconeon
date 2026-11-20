@@ -7,7 +7,10 @@ $ErrorActionPreference = "Stop"
 # A fresh child directory prevents an earlier extraction from satisfying missing
 # dependencies when this verification is repeated against a rebuilt archive.
 $extraction = Join-Path $Destination ([guid]::NewGuid().ToString("N"))
+$extractClock = [System.Diagnostics.Stopwatch]::StartNew()
 Expand-Archive -LiteralPath $Archive -DestinationPath $extraction
+$extractClock.Stop()
+Write-Host "WINDOWS_SMOKE_EXTRACT_MS=$($extractClock.ElapsedMilliseconds)"
 $executables = @(Get-ChildItem -Path $extraction -Filter niconeon.exe -Recurse)
 if ($executables.Count -ne 1) { throw "Expected one packaged niconeon.exe" }
 $executable = $executables[0].FullName
@@ -58,6 +61,7 @@ try {
     $start.Environment["QT_LOGGING_RULES"] = "qt.qpa.gl=true;qt.scenegraph.general=true"
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $start
+    $startupClock = [System.Diagnostics.Stopwatch]::StartNew()
     if (-not $process.Start()) { throw "Could not start packaged application" }
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
@@ -66,6 +70,8 @@ try {
         $process.Kill($true)
         $process.WaitForExit()
     }
+    $startupClock.Stop()
+    Write-Host "WINDOWS_SMOKE_APP_MS=$($startupClock.ElapsedMilliseconds)"
     $exitCode = $process.ExitCode
     $hex = "0x{0:X8}" -f ([long]$exitCode -band 0xffffffffL)
     $text = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()

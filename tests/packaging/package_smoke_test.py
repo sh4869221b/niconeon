@@ -450,6 +450,75 @@ class WindowsDependencyCollectorTests(unittest.TestCase):
                     collector.collect(bundle, sdk, system, root / "report.txt", "objdump")
             self.assertIn("MISSING", (root / "report.txt").read_text())
 
+    def test_index_reuses_plugin_paths_and_tracks_dlls_copied_to_root(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle, sdk, system = (root / name for name in ["bundle", "sdk", "system"])
+            plugins = bundle / "plugins"
+            plugins.mkdir(parents=True)
+            sdk.mkdir()
+            system.mkdir()
+            app = bundle / "niconeon.exe"
+            plugin = plugins / "a.dll"
+            for path in (app, plugin, bundle / "Shared.dll", plugins / "sHared.dll",
+                         plugins / "private.dll", sdk / "copied.dll", system / "KERNEL32.dll"):
+                path.write_bytes(path.name.encode())
+            imports = {
+                app: ["COPIED.DLL", "KERNEL32.dll"],
+                plugin: ["copied.dll", "SHARED.dll", "private.dll"],
+                plugins / "private.dll": [],
+                bundle / "copied.dll": [], bundle / "Shared.dll": [],
+            }
+
+            def inspect(command, **_):
+                return SimpleNamespace(stdout="\n".join(
+                    f"  DLL Name: {name}" for name in imports[Path(command[-1])]))
+
+            report = root / "report.txt"
+            with patch.object(collector.subprocess, "run", side_effect=inspect) as objdump:
+                with patch.object(collector, "dll_index", wraps=collector.dll_index) as index:
+                    collector.collect(bundle, sdk, system, report, "objdump", roots=[app, plugin])
+            rows = [
+                "requiring_file\tdll\tresolution",
+                "niconeon.exe\tCOPIED.DLL\tcopied from UCRT64",
+                "niconeon.exe\tKERNEL32.dll\tWindows system",
+                "plugins/a.dll\tcopied.dll\tbundled",
+                "plugins/a.dll\tSHARED.dll\tbundled",
+                "plugins/a.dll\tprivate.dll\tbundled",
+            ]
+            self.assertEqual(report.read_text(), "\n".join(rows) + "\n")
+            self.assertEqual([call.args[0] for call in index.call_args_list], [bundle, sdk, system, plugins])
+            self.assertEqual([Path(call.args[0][-1]) for call in objdump.call_args_list],
+                             [app, plugin, bundle / "copied.dll", bundle / "Shared.dll", plugins / "private.dll"])
+
+    @unittest.skipIf(os.name == "nt", "Windows symlink privileges are not needed for packaging")
+    def test_dangling_plugin_link_becomes_resolvable_after_sdk_copy(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle, sdk, system = (root / name for name in ["bundle", "sdk", "system"])
+            plugins = bundle / "plugins"
+            plugins.mkdir(parents=True)
+            sdk.mkdir()
+            system.mkdir()
+            first, app, last = plugins / "a.dll", bundle / "niconeon.exe", plugins / "b.dll"
+            (plugins / "alias.dll").symlink_to("../fresh.dll")
+            self.assertFalse((plugins / "alias.dll").is_file())
+            for path in (first, app, last, sdk / "fresh.dll"):
+                path.write_bytes(path.name.encode())
+            imports = {first: "", app: "  DLL Name: fresh.dll\n",
+                       last: "  DLL Name: alias.dll\n", bundle / "fresh.dll": ""}
+            report = root / "report.txt"
+            with patch.object(collector.subprocess, "run", side_effect=lambda command, **_:
+                              SimpleNamespace(stdout=imports[Path(command[-1])])) as objdump:
+                collector.collect(bundle, sdk, system, report, "objdump", roots=[first, app, last])
+            self.assertEqual(report.read_text(), "requiring_file\tdll\tresolution\n"
+                             "niconeon.exe\tfresh.dll\tcopied from UCRT64\n"
+                             "plugins/b.dll\talias.dll\tbundled\n")
+            self.assertEqual([Path(call.args[0][-1]) for call in objdump.call_args_list],
+                             [first, app, last, bundle / "fresh.dll"])
+
 
 @unittest.skipIf(os.name == "nt", "Bash/AppRun packaging layout is a Linux test")
 class PackagingSmoke(unittest.TestCase):
