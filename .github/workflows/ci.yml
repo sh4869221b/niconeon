@@ -156,6 +156,7 @@ jobs:
           rm -rf /tmp/media-source-verification
       - name: Archive verified media SDK
         run: |
+          mkdir -p build
           tar -I 'gzip -1' -cf build/niconeon-linux-media.tar.gz -C /opt niconeon-media
       - uses: actions/upload-artifact@v7.0.2
         with:
