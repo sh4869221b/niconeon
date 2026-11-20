@@ -85,6 +85,10 @@ def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None):
     pending = deque(roots)
     visited = set()
     bundled = dll_index(bundle)
+    # The only writes during this traversal copy SDK DLLs into the bundle
+    # root, updating bundled immediately. A previously dangling symlink can
+    # become resolvable after a copy; keep rescanning directories with DLL links.
+    directory_indexes = {}
     sdk = dll_index(sdk_bin)
     system = dll_index(system_dir)
     rows = ["requiring_file\tdll\tresolution"]
@@ -98,7 +102,16 @@ def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None):
         result = subprocess.run([objdump, "-p", str(binary)], check=True,
                                 text=True, encoding="utf-8", errors="replace", capture_output=True)
         imports = re.findall(r"^\s*DLL Name:\s*(\S+)\s*$", result.stdout, re.MULTILINE)
-        local = dll_index(binary.parent)
+        parent_dir = binary.parent
+        if parent_dir not in directory_indexes:
+            if any(path.suffix.casefold() == ".dll" and path.is_symlink()
+                   for path in parent_dir.iterdir()):
+                directory_indexes[parent_dir] = None
+            else:
+                directory_indexes[parent_dir] = bundled if parent_dir == bundle else dll_index(parent_dir)
+        local = directory_indexes[parent_dir]
+        if local is None:
+            local = dll_index(parent_dir)
         for name in imports:
             name = name.strip()
             normalized = name.casefold()
