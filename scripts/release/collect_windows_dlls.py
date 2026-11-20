@@ -3,6 +3,7 @@
 import argparse
 from collections import deque
 import hashlib
+import os
 from pathlib import Path
 import re
 import shutil
@@ -79,7 +80,7 @@ def capture_msys2_notices(bundle, sdk_bin, binaries, aliases, pacman="pacman"):
     (destination / "inventory.tsv").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
-def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None):
+def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None, profile=None, repeated=()):
     if roots is None:
         roots = sorted(file for file in bundle.rglob("*")
                        if file.is_file() and file.suffix.casefold() in {".exe", ".dll"})
@@ -100,8 +101,15 @@ def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None):
         if key in visited:
             continue
         visited.add(key)
+        timed = profile == "mesa" or (profile is not None and key in repeated)
+        if timed:
+            before = monotonic()
         result = subprocess.run([objdump, "-p", str(binary)], check=True,
                                 text=True, encoding="utf-8", errors="replace", capture_output=True)
+        if timed:
+            elapsed = round((monotonic() - before) * 1000)
+            print(f"MESA_PROBE phase={profile} file={binary.relative_to(bundle).as_posix()!r} "
+                  f"ms={elapsed} bytes={binary.stat().st_size} output_chars={len(result.stdout)}")
         imports = re.findall(r"^\s*DLL Name:\s*(\S+)\s*$", result.stdout, re.MULTILINE)
         parent_dir = binary.parent
         if parent_dir not in directory_indexes:
@@ -129,7 +137,12 @@ def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None):
             elif normalized in sdk:
                 source = sdk[normalized]
                 destination = bundle / source.name
+                if profile == "mesa":
+                    before = monotonic()
                 shutil.copy2(source, destination)
+                if profile == "mesa":
+                    elapsed = round((monotonic() - before) * 1000)
+                    print(f"MESA_PROBE copy={source.name!r} ms={elapsed} bytes={destination.stat().st_size}")
                 bundled[normalized] = destination
                 pending.append(destination)
                 rows.append(f"{parent}\t{name}\tcopied from UCRT64")
@@ -158,17 +171,28 @@ if __name__ == "__main__":
                         help="Deploy Mesa under Qt's fallback name and retain dependency license texts")
     args = parser.parse_args()
     bundle, sdk, system = args.bundle.resolve(), args.sdk_bin.resolve(), args.system_dir.resolve()
+    profiling = os.environ.get("NICONEON_PE_PROFILE") == "1"
+    if profiling:
+        for _ in range(3):
+            start = monotonic()
+            subprocess.run([args.objdump, "--version"], check=True, capture_output=True)
+            print(f"MESA_PROBE process_reference_ms={round((monotonic() - start) * 1000)}")
+    scanned_mesa = set()
     if args.sqlite_only:
         retain_sqlite_driver(bundle)
     if args.software_opengl:
         start = monotonic()
         aliases = deploy_mesa_fallback(bundle, sdk)
+        if profiling:
+            print(f"MESA_PROBE seed_copy_and_index_ms={round((monotonic() - start) * 1000)}")
         binaries = collect(bundle, sdk, system, bundle / "software-opengl-dependencies.txt",
-                           args.objdump, roots=aliases)
+                           args.objdump, roots=aliases, profile="mesa" if profiling else None)
+        scanned_mesa = binaries
         print(f"WINDOWS_PACKAGE_MESA_PE_MS={round((monotonic() - start) * 1000)}")
         start = monotonic()
         capture_msys2_notices(bundle, sdk, binaries, aliases)
         print(f"WINDOWS_PACKAGE_MESA_NOTICES_MS={round((monotonic() - start) * 1000)}")
     start = monotonic()
-    collect(bundle, sdk, system, args.report.resolve(), args.objdump)
+    collect(bundle, sdk, system, args.report.resolve(), args.objdump,
+            profile="repeat" if profiling else None, repeated=scanned_mesa)
     print(f"WINDOWS_PACKAGE_ALL_PE_MS={round((monotonic() - start) * 1000)}")
