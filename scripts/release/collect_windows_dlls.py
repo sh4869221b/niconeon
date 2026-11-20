@@ -11,6 +11,22 @@ import subprocess
 from time import monotonic
 
 
+def timed_probe(timings, phase, operation, *args, **kwargs):
+    if timings is None:
+        return operation(*args, **kwargs)
+    start = monotonic()
+    result = operation(*args, **kwargs)
+    count, elapsed = timings.get(phase, (0, 0.0))
+    timings[phase] = (count + 1, elapsed + monotonic() - start)
+    return result
+
+
+def report_probe(profile, timings):
+    if timings is not None:
+        for phase, (count, elapsed) in timings.items():
+            print(f"MESA_PROBE profile={profile} part={phase} calls={count} ms={round(elapsed * 1000)}")
+
+
 def dll_index(directory):
     return {file.name.casefold(): file for file in directory.iterdir()
             if file.is_file() and file.suffix.casefold() == ".dll"}
@@ -42,9 +58,10 @@ def deploy_mesa_fallback(bundle, sdk_bin):
     return {bundle / destination: sdk[original] for destination, original in names.items()}
 
 
-def capture_msys2_notices(bundle, sdk_bin, binaries, aliases, pacman="pacman"):
+def capture_msys2_notices(bundle, sdk_bin, binaries, aliases, pacman="pacman", profile=False):
     """Retain package versions, source provenance, and supplied license texts."""
-    sdk = dll_index(sdk_bin)
+    timings = {} if profile else None
+    sdk = timed_probe(timings, "sdk_index", dll_index, sdk_bin)
     license_root = sdk_bin.parent / "share/licenses"
     destination = bundle / "licenses/software-opengl"
     destination.mkdir(parents=True, exist_ok=True)
@@ -52,8 +69,9 @@ def capture_msys2_notices(bundle, sdk_bin, binaries, aliases, pacman="pacman"):
     rows = ["bundled_dll\tmsys2_source\tpackage\tsha256"]
 
     def query(*arguments):
-        return subprocess.run([pacman, *arguments], check=True, text=True,
-                              encoding="utf-8", capture_output=True).stdout.strip()
+        part = {"-Qqo": "package_owner", "-Qi": "package_info", "-Qlq": "package_files"}[arguments[0]]
+        return timed_probe(timings, part, subprocess.run, [pacman, *arguments], check=True, text=True,
+                           encoding="utf-8", capture_output=True).stdout.strip()
 
     for binary in sorted(binaries):
         source = aliases.get(binary) or sdk.get(binary.name.casefold())
@@ -63,64 +81,70 @@ def capture_msys2_notices(bundle, sdk_bin, binaries, aliases, pacman="pacman"):
         if not re.fullmatch(r"mingw-w64-ucrt-x86_64-[a-zA-Z0-9_+.\-]+", package):
             raise RuntimeError(f"Unexpected MSYS2 package owner for {binary.name}: {package}")
         packages.add(package)
-        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+        contents = timed_probe(timings, "inventory_read", binary.read_bytes)
+        digest = timed_probe(timings, "inventory_sha256", hashlib.sha256, contents).hexdigest()
         rows.append(f"{binary.relative_to(bundle).as_posix()}\t{source.name}\t{package}\t{digest}")
     for package in sorted(packages):
         (destination / f"{package}.txt").write_text(query("-Qi", package) + "\n", encoding="utf-8")
         copied = 0
         for name in query("-Qlq", package).splitlines():
             source = Path(name)
-            if source.is_file() and source.is_relative_to(license_root):
+            if timed_probe(timings, "license_file_exists", source.is_file) and source.is_relative_to(license_root):
                 target = destination / source.relative_to(license_root)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, target)
+                timed_probe(timings, "license_copy", shutil.copy2, source, target)
                 copied += 1
         if not copied:
             raise RuntimeError(f"No installed license texts found for software OpenGL dependency {package}")
     (destination / "inventory.tsv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    report_probe("notices", timings)
 
 
 def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None, profile=None, repeated=()):
+    timings = {} if profile is not None else None
     if roots is None:
-        roots = sorted(file for file in bundle.rglob("*")
-                       if file.is_file() and file.suffix.casefold() in {".exe", ".dll"})
+        roots = timed_probe(timings, "glob_roots", sorted,
+                            (file for file in bundle.rglob("*")
+                             if file.is_file() and file.suffix.casefold() in {".exe", ".dll"}))
     pending = deque(roots)
     visited = set()
-    bundled = dll_index(bundle)
+    bundled = timed_probe(timings, "bundle_index", dll_index, bundle)
     # The only writes during this traversal copy SDK DLLs into the bundle
     # root, updating bundled immediately. A previously dangling symlink can
     # become resolvable after a copy; keep rescanning directories with DLL links.
     directory_indexes = {}
-    sdk = dll_index(sdk_bin)
-    system = dll_index(system_dir)
+    sdk = timed_probe(timings, "sdk_index", dll_index, sdk_bin)
+    system = timed_probe(timings, "system32_index", dll_index, system_dir)
     rows = ["requiring_file\tdll\tresolution"]
     missing = []
     while pending:
         binary = pending.popleft()
-        key = binary.resolve()
+        key = timed_probe(timings, "resolve", binary.resolve)
         if key in visited:
             continue
         visited.add(key)
         timed = profile == "mesa" or (profile is not None and key in repeated)
         if timed:
             before = monotonic()
-        result = subprocess.run([objdump, "-p", str(binary)], check=True,
-                                text=True, encoding="utf-8", errors="replace", capture_output=True)
+        result = timed_probe(timings, "objdump", subprocess.run, [objdump, "-p", str(binary)],
+                             check=True, text=True, encoding="utf-8", errors="replace", capture_output=True)
         if timed:
             elapsed = round((monotonic() - before) * 1000)
             print(f"MESA_PROBE phase={profile} file={binary.relative_to(bundle).as_posix()!r} "
                   f"ms={elapsed} bytes={binary.stat().st_size} output_chars={len(result.stdout)}")
-        imports = re.findall(r"^\s*DLL Name:\s*(\S+)\s*$", result.stdout, re.MULTILINE)
+        imports = timed_probe(timings, "import_pattern", re.findall,
+                              r"^\s*DLL Name:\s*(\S+)\s*$", result.stdout, re.MULTILINE)
         parent_dir = binary.parent
         if parent_dir not in directory_indexes:
             if any(path.suffix.casefold() == ".dll" and path.is_symlink()
                    for path in parent_dir.iterdir()):
                 directory_indexes[parent_dir] = None
             else:
-                directory_indexes[parent_dir] = bundled if parent_dir == bundle else dll_index(parent_dir)
+                directory_indexes[parent_dir] = (bundled if parent_dir == bundle else
+                                                 timed_probe(timings, "local_index", dll_index, parent_dir))
         local = directory_indexes[parent_dir]
         if local is None:
-            local = dll_index(parent_dir)
+            local = timed_probe(timings, "local_index", dll_index, parent_dir)
         for name in imports:
             name = name.strip()
             normalized = name.casefold()
@@ -154,6 +178,7 @@ def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None, profile=No
     report.write_text("\n".join(rows) + "\n", encoding="utf-8")
     if missing:
         raise RuntimeError("Unresolved Windows DLL imports:\n" + "\n".join(sorted(set(missing))))
+    report_probe(profile, timings)
     print(f"Validated recursive PE imports for {len(visited)} binaries; report: {report}")
     return visited
 
@@ -190,7 +215,7 @@ if __name__ == "__main__":
         scanned_mesa = binaries
         print(f"WINDOWS_PACKAGE_MESA_PE_MS={round((monotonic() - start) * 1000)}")
         start = monotonic()
-        capture_msys2_notices(bundle, sdk, binaries, aliases)
+        capture_msys2_notices(bundle, sdk, binaries, aliases, profile=profiling)
         print(f"WINDOWS_PACKAGE_MESA_NOTICES_MS={round((monotonic() - start) * 1000)}")
     start = monotonic()
     collect(bundle, sdk, system, args.report.resolve(), args.objdump,

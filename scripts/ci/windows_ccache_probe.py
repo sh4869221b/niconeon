@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Exact-build checks for the disposable MSYS2 ccache trial."""
+import ctypes
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -26,15 +28,66 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def pe_timestamp_normalized_digest(data):
-    """Compare a PE allowing only its well-understood COFF timestamp to vary."""
+def pe_metadata(data, checksum_function=None):
+    """Allow only the COFF timestamp and its correctly derived optional checksum."""
     if len(data) < 64 or data[:2] != b"MZ":
         raise ValueError("expected a Windows PE image")
     header = int.from_bytes(data[60:64], "little")
-    if not 64 <= header <= len(data) - 24 or data[header:header + 4] != b"PE\0\0":
+    if not 64 <= header <= len(data) - 92 or data[header:header + 4] != b"PE\0\0":
         raise ValueError("invalid PE header")
     timestamp = header + 8
-    return sha256(data[:timestamp] + b"\0" * 4 + data[timestamp + 4:])
+    optional = header + 24
+    optional_size = int.from_bytes(data[header + 20:header + 22], "little")
+    if (not 68 <= optional_size <= len(data) - optional or
+            data[optional:optional + 2] not in {b"\x0b\x01", b"\x0b\x02"}):
+        raise ValueError("invalid PE optional header")
+    checksum = optional + 64
+    time_value = int.from_bytes(data[timestamp:timestamp + 4], "little")
+    checksum_value = int.from_bytes(data[checksum:checksum + 4], "little")
+    time_normalized = data[:timestamp] + b"\0" * 4 + data[timestamp + 4:]
+    if checksum_function is None:
+        checksum_function = native_pe_checksum
+    original, computed = checksum_function(data)
+    if original != checksum_value:
+        raise ValueError("Win32 disagrees with the PE optional header checksum")
+    both = None
+    if computed == original:
+        both = sha256(time_normalized[:checksum] + b"\0" * 4 + time_normalized[checksum + 4:])
+    return {"time_hash": sha256(time_normalized), "time": time_value,
+            "valid_checksum_hash": both, "checksum": checksum_value, "computed": computed}
+
+
+def native_pe_checksum(data):
+    # Microsoft PE/COFF specification and ImageHlp's checksum over these exact bytes.
+    # https://learn.microsoft.com/windows/win32/api/imagehlp/nf-imagehlp-checksummappedfile
+    from ctypes import wintypes
+    imagehlp = ctypes.WinDLL(str(Path(os.environ["SystemRoot"]) / "System32/imagehlp.dll"),
+                             use_last_error=True)
+    checksum = imagehlp.CheckSumMappedFile
+    checksum.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                         ctypes.POINTER(wintypes.DWORD)]
+    checksum.restype = ctypes.c_void_p
+    buf = ctypes.create_string_buffer(data)
+    original, computed = wintypes.DWORD(), wintypes.DWORD()
+    if not checksum(buf, len(data), ctypes.byref(original), ctypes.byref(computed)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return original.value, computed.value
+
+
+def parity_kind(cold, warm):
+    if cold[0] == warm[0]:
+        return "raw"
+    a, b = cold[1], warm[1]
+    if a is None or b is None or a["time"] == b["time"]:
+        return "different"
+    if (a["time_hash"] == b["time_hash"] and
+            (a["checksum"] == b["checksum"] == 0 or
+             (a["valid_checksum_hash"] and b["valid_checksum_hash"]))):
+        return "timestamp"
+    if (a["valid_checksum_hash"] and a["valid_checksum_hash"] == b["valid_checksum_hash"] and
+            a["checksum"] != b["checksum"]):
+        return "timestamp_and_valid_checksum"
+    return "different"
 
 
 def snapshot(build, out):
@@ -45,7 +98,7 @@ def snapshot(build, out):
             payload = path.read_bytes()
             image = path.suffix in {".exe", ".dll"}
             files[path.relative_to(build).as_posix()] = [
-                sha256(payload), pe_timestamp_normalized_digest(payload) if image else None,
+                sha256(payload), pe_metadata(payload) if image else None,
             ]
     if not any(name.endswith((".obj", ".o")) for name in files) or "niconeon.exe" not in files:
         raise ValueError("missing object or application executable")
@@ -80,18 +133,33 @@ def compare(stock, state):
     warm = json.loads((state / "warm.json").read_text())
     if cold.keys() != warm.keys():
         raise ValueError("cold/warm object, source or binary inventory differs")
-    different = [name for name in cold if cold[name][0] != warm[name][0]]
-    non_pe = [name for name in different if cold[name][1] is None or cold[name][1] != warm[name][1]]
-    print(f"CCACHE_PROBE_PARITY paths={len(cold)} COFF_timestamp_only={len(different) - len(non_pe)} "
-          f"other_mismatches={len(non_pe)}")
-    if non_pe:
-        raise ValueError("cold/warm output differs: " + ", ".join(non_pe[:10]))
+    counts = {"raw": 0, "timestamp": 0, "timestamp_and_valid_checksum": 0, "different": 0}
+    bad = []
+    checksums_logged = 0
+    for name, cold_file in cold.items():
+        warm_file = warm[name]
+        kind = parity_kind(cold_file, warm_file)
+        counts[kind] += 1
+        if kind == "different":
+            bad.append(name)
+        if ((kind == "different" and len(bad) <= 3) or
+                (kind == "timestamp_and_valid_checksum" and checksums_logged == 0)):
+            print(f"CCACHE_PROBE_PE kind={kind} file={name!r} "
+                  f"cold={cold_file!r} warm={warm_file!r}")
+            checksums_logged += int(kind == "timestamp_and_valid_checksum")
+    print(f"CCACHE_PROBE_PARITY paths={len(cold)} " + " ".join(f"{k}={v}" for k, v in counts.items()))
     print("CCACHE_PROBE_APP_SHA256 cold=" + cold["niconeon.exe"][0] + " warm=" + warm["niconeon.exe"][0])
-    if ctests(stock / "tests.xml") != ctests(state / "cold.xml") or ctests(state / "cold.xml") != ctests(state / "warm.xml"):
+    stock_tests, cold_tests, warm_tests = (ctests(stock / "tests.xml"), ctests(state / "cold.xml"),
+                                          ctests(state / "warm.xml"))
+    if not stock_tests == cold_tests == warm_tests:
         raise ValueError("stock/cold/warm CTest coverage differs")
+    print(f"CCACHE_PROBE_MATCHING_CTESTS count={len(stock_tests)}")
     report_stats(state / "cold.stats", "cold")
     if not report_stats(state / "warm.stats", "warm"):
         raise ValueError("warm run produced no compiler cache hits")
+    if bad:
+        raise ValueError("cold/warm output differs: " + ", ".join(bad[:10]))
+
 
 
 if __name__ == "__main__":

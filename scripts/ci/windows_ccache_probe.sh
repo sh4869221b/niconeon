@@ -8,7 +8,14 @@ test -s "$baseline/tests.xml"
 stock_digest=$(sha256sum "$baseline/niconeon.exe")
 build=$(mktemp -d "$PWD/build/windows-ccache-probe.XXXXXX")
 state=$(mktemp -d "$(cygpath -u "$RUNNER_TEMP")/niconeon-ccache.XXXXXX")
-helper="$PWD/scripts/ci/windows_ccache_probe.py"
+helper=$(cygpath -am "$PWD/scripts/ci/windows_ccache_probe.py")
+# Native Python's ctypes invokes the stock system ImageHlp, not an MSYS shim.
+probe() {
+  local action=$1 a=$2 b=$3
+  shift 3
+  MSYS2_ARG_CONV_EXCL='*' /ucrt64/bin/python.exe "$helper" "$action" \
+    "$(cygpath -am "$a")" "$(cygpath -am "$b")" "$@"
+}
 pacman -Q | LC_ALL=C sort > "$state/toolchain.before"
 compiler_digest=$(sha256sum /ucrt64/bin/c++.exe)
 
@@ -21,7 +28,10 @@ test ! -s "$state/toolchain.changed"
 test "$(sha256sum /ucrt64/bin/c++.exe)" = "$compiler_digest"
 cache_tool=/ucrt64/bin/ccache.exe
 tool_native=$(cygpath -am "$cache_tool")
-printf 'CCACHE_PROBE_SOURCE=%s\n' "$(git rev-parse HEAD)"
+git_exe="$(cygpath -u "${ProgramFiles:?}")/Git/bin/git.exe"
+source_commit=$("$git_exe" rev-parse HEAD)
+[[ $source_commit =~ ^[0-9a-f]{40}$ && $source_commit == "${GITHUB_SHA:?}" ]]
+printf 'CCACHE_PROBE_SOURCE=%s\n' "$source_commit"
 pacman -Q mingw-w64-ucrt-x86_64-ccache mingw-w64-ucrt-x86_64-gcc
 "$cache_tool" --version
 printf 'CCACHE_PROBE_COMPILER=%s\n' "$compiler_digest"
@@ -36,7 +46,7 @@ CCACHE_DIR=$(cygpath -am "$state/cold")
 started=$SECONDS
 cmake --preset windows-release -B "$build" "-DCMAKE_CXX_COMPILER_LAUNCHER=$tool_native"
 printf 'CCACHE_PROBE_CONFIGURE_SECONDS=%s\n' "$((SECONDS - started))"
-/usr/bin/python3 "$helper" commands "$baseline" "$build" "$tool_native"
+probe commands "$baseline" "$build" "$tool_native"
 
 measure() {
   local label=$1 started
@@ -51,7 +61,7 @@ measure() {
   printf 'CCACHE_PROBE_BUILD_SECONDS phase=%s seconds=%s\n' "$label" "$((SECONDS - started))"
   "$cache_tool" --show-stats
   "$cache_tool" --print-stats > "$state/$label.stats"
-  /usr/bin/python3 "$helper" snapshot "$build" "$state/$label.json"
+  probe snapshot "$build" "$state/$label.json"
   started=$SECONDS
   ctest --test-dir "$build" --no-tests=error --output-on-failure --output-junit "$state/$label.xml"
   printf 'CCACHE_PROBE_CTEST_SECONDS phase=%s seconds=%s\n' "$label" "$((SECONDS - started))"
@@ -66,8 +76,8 @@ tar -xzf "$state/cache.tar.gz" -C "$state/warm"
 printf 'CCACHE_PROBE_LOCAL_RESTORE_SECONDS=%s\n' "$((SECONDS - started))"
 CCACHE_DIR=$(cygpath -am "$state/warm")
 measure warm
-/usr/bin/python3 "$helper" commands "$baseline" "$build" "$tool_native"
-/usr/bin/python3 "$helper" compare "$baseline" "$state"
+probe commands "$baseline" "$build" "$tool_native"
+probe compare "$baseline" "$state"
 for flavor in stock warm; do
   binary="$baseline/niconeon.exe"
   [[ $flavor == warm ]] && binary="$build/niconeon.exe"
