@@ -124,7 +124,6 @@ system_root="$(cygpath -u "${SYSTEMROOT:-${WINDIR:-C:\Windows}}")"
 # against the Windows drive instead, breaking otherwise valid provenance queries.
 /usr/bin/python3 "${repo_root}/scripts/release/collect_windows_dlls.py" \
   --bundle "${staging}/${base}" --sqlite-only --software-opengl \
-  --jobs "${NICONEON_PE_JOBS:-1}" \
   --sdk-bin /ucrt64/bin \
   --system-dir "${system_root}/System32" \
   --report "${out_dir}/${base}-dependency-report.txt"

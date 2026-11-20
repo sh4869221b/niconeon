@@ -2,8 +2,6 @@
 """Resolve every declared PE DLL import; never silently ignore an unresolved DLL."""
 import argparse
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
 import hashlib
 from pathlib import Path
 import re
@@ -80,35 +78,7 @@ def capture_msys2_notices(bundle, sdk_bin, binaries, aliases, pacman="pacman"):
     (destination / "inventory.tsv").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
-def inspect_imports(objdump, binary):
-    result = subprocess.run([objdump, "-p", str(binary)], check=True,
-                            text=True, encoding="utf-8", errors="replace", capture_output=True)
-    return re.findall(r"^\s*DLL Name:\s*(\S+)\s*$", result.stdout, re.MULTILINE)
-
-
-def inspect_queue(pending, visited, objdump, jobs):
-    # Prefetch reads of already-enqueued files only. Resolution, overlay writes
-    # and error/report ordering remain single-threaded in the original BFS.
-    with (ThreadPoolExecutor(max_workers=jobs) if jobs > 1 else nullcontext()) as pool:
-        ready = {}
-        while pending:
-            if pool is not None:
-                for candidate in pending:
-                    if len(ready) == jobs:
-                        break
-                    key = candidate.resolve()
-                    if key not in visited and key not in ready:
-                        ready[key] = pool.submit(inspect_imports, objdump, candidate)
-            binary = pending.popleft()
-            key = binary.resolve()
-            if key in visited:
-                continue
-            visited.add(key)
-            imports = ready.pop(key).result() if pool is not None else inspect_imports(objdump, binary)
-            yield binary, imports
-
-
-def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None, jobs=1):
+def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None):
     if roots is None:
         roots = sorted(file for file in bundle.rglob("*")
                        if file.is_file() and file.suffix.casefold() in {".exe", ".dll"})
@@ -123,7 +93,15 @@ def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None, jobs=1):
     system = dll_index(system_dir)
     rows = ["requiring_file\tdll\tresolution"]
     missing = []
-    for binary, imports in inspect_queue(pending, visited, objdump, jobs):
+    while pending:
+        binary = pending.popleft()
+        key = binary.resolve()
+        if key in visited:
+            continue
+        visited.add(key)
+        result = subprocess.run([objdump, "-p", str(binary)], check=True,
+                                text=True, encoding="utf-8", errors="replace", capture_output=True)
+        imports = re.findall(r"^\s*DLL Name:\s*(\S+)\s*$", result.stdout, re.MULTILINE)
         parent_dir = binary.parent
         if parent_dir not in directory_indexes:
             if any(path.suffix.casefold() == ".dll" and path.is_symlink()
@@ -173,8 +151,6 @@ if __name__ == "__main__":
     parser.add_argument("--system-dir", required=True, type=Path)
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--objdump", default="objdump")
-    parser.add_argument("--jobs", type=int, choices=range(1, 5), default=1,
-                        help="Parallel read-only objdump probes; keep import resolution ordered")
     parser.add_argument("--sqlite-only", action="store_true",
                         help="Keep only qsqlite in the staging bundle before checking imports")
     parser.add_argument("--software-opengl", action="store_true",
@@ -186,6 +162,6 @@ if __name__ == "__main__":
     if args.software_opengl:
         aliases = deploy_mesa_fallback(bundle, sdk)
         binaries = collect(bundle, sdk, system, bundle / "software-opengl-dependencies.txt",
-                           args.objdump, roots=aliases, jobs=args.jobs)
+                           args.objdump, roots=aliases)
         capture_msys2_notices(bundle, sdk, binaries, aliases)
-    collect(bundle, sdk, system, args.report.resolve(), args.objdump, jobs=args.jobs)
+    collect(bundle, sdk, system, args.report.resolve(), args.objdump)
