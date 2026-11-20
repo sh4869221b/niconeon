@@ -360,7 +360,6 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-base
             mingw-w64-ucrt-x86_64-qt6-declarative
             mingw-w64-ucrt-x86_64-qt6-tools
-            mingw-w64-ucrt-x86_64-mpv
             mingw-w64-ucrt-x86_64-mesa
             mingw-w64-ucrt-x86_64-meson
             mingw-w64-ucrt-x86_64-cppwinrt
@@ -411,7 +410,12 @@ jobs:
           NICONEON_WINDOWS_QT_WORK_DIR: /c/nqt
           CMAKE_BUILD_PARALLEL_LEVEL: '3'
           MAKEFLAGS: '-j3'
-        run: scripts/deps/build_windows_qt.sh
+          QT_CACHE_HIT: ${{ steps.windows-qt-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          scripts/deps/build_windows_qt.sh
+          if [[ "$QT_CACHE_HIT" == true ]]; then mode='verified cache hit'; else mode='source rebuild'; fi
+          printf 'Windows QtBase: %s (%ss, including install and verification)\n' "$mode" "$SECONDS" >> "$GITHUB_STEP_SUMMARY"
       - name: Retain failed Qt build diagnostics
         if: failure()
         uses: actions/upload-artifact@v7.0.2
@@ -435,6 +439,11 @@ jobs:
             C:/nqt/packages.sha256
             C:/nqt/complete
           key: windows-ucrt64-qt-v1-${{ steps.qt-build-env.outputs.inventory }}-${{ hashFiles('scripts/deps/build_windows_qt.sh', 'scripts/deps/windows-qt-recipe.sha256', 'scripts/deps/qt-sources.sha256') }}
+      # Keep mpv's codec dependencies out of the actual Qt build environment.
+      # Use the same synced package DB, without refreshing or upgrading Qt.
+      - name: Install Windows media dependencies
+        shell: msys2 {0}
+        run: pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-mpv
       - name: Build libmpv 0.42.0 (includes upstream scaler fix)
         shell: msys2 {0}
         run: scripts/deps/build_mpv.sh /ucrt64

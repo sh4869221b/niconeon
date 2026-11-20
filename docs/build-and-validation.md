@@ -349,6 +349,12 @@ the resulting SDK.
 The build cache contains verified binary packages and corresponding source, and
 is keyed by the recipe/scripts and complete installed package inventory. Cached
 packages are reinstalled and DLL hashes verified rather than blindly accepted.
+Windows CI installs the MSYS2 mpv package **after** verifying and caching Qt,
+using the same package database without another refresh. A revision to a codec
+needed only by mpv no longer changes the Qt build environment. Packages shared
+with Qt still count in the fingerprint. The Windows job summary distinguishes
+a verified cache hit from a source rebuild and reports the time for that step;
+a first run or a changed Qt input still requires a full build.
 A later Qt package version requires a deliberate recipe/security review; the
 script refuses to downgrade it. App packaging verifies pristine QtBase DLLs and
 retains its source bundle before `windeployqt` can adjust deployment paths.
