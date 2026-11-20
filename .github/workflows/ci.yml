@@ -538,6 +538,7 @@ jobs:
           NICONEON_RELEASE_BASENAME: niconeon-windows-x86_64
           NICONEON_BUILD_DIR: build/windows-release
           NICONEON_MPV_SOURCE_DIR: /ucrt64/share/niconeon/libmpv-source
+          NICONEON_PE_PROFILE: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'ci/windows-ccache-mesa-diagnostics' && '1' || '0' }}
         run: |
           scripts/release/package_windows_msys2.sh ci
           scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-windows-x86_64-binaries.zip
@@ -569,3 +570,7 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+      - name: Benchmark ephemeral ccache on the same Windows toolchain
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'ci/windows-ccache-mesa-diagnostics'
+        shell: msys2 {0}
+        run: bash scripts/ci/windows_ccache_probe.sh
