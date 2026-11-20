@@ -28,7 +28,10 @@ test ! -s "$state/toolchain.changed"
 test "$(sha256sum /ucrt64/bin/c++.exe)" = "$compiler_digest"
 cache_tool=/ucrt64/bin/ccache.exe
 tool_native=$(cygpath -am "$cache_tool")
-git_exe="$(cygpath -u "${ProgramFiles:?}")/Git/bin/git.exe"
+# actions/checkout resolves this exact Git binary on GitHub's Windows image.
+# Its mixed-case Windows ProgramFiles variable is not exported to this shell.
+git_exe='/c/Program Files/Git/bin/git.exe'
+test -x "$git_exe" || { echo "Hosted Git not found at $git_exe" >&2; exit 1; }
 source_commit=$("$git_exe" rev-parse HEAD)
 [[ $source_commit =~ ^[0-9a-f]{40}$ && $source_commit == "${GITHUB_SHA:?}" ]]
 printf 'CCACHE_PROBE_SOURCE=%s\n' "$source_commit"

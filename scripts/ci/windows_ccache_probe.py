@@ -3,7 +3,6 @@
 import ctypes
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import sys
@@ -61,7 +60,8 @@ def native_pe_checksum(data):
     # Microsoft PE/COFF specification and ImageHlp's checksum over these exact bytes.
     # https://learn.microsoft.com/windows/win32/api/imagehlp/nf-imagehlp-checksummappedfile
     from ctypes import wintypes
-    imagehlp = ctypes.WinDLL(str(Path(os.environ["SystemRoot"]) / "System32/imagehlp.dll"),
+    load_library_search_system32 = 0x00000800
+    imagehlp = ctypes.WinDLL("imagehlp.dll", winmode=load_library_search_system32,
                              use_last_error=True)
     checksum = imagehlp.CheckSumMappedFile
     checksum.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
