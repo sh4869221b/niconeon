@@ -241,7 +241,9 @@ jobs:
         run: cmake --preset ${{ matrix.preset }} -DNICONEON_BUILD_UI_E2E=ON
       - name: Build
         id: build
-        run: cmake --build --preset ${{ matrix.preset }} --parallel 2
+        # Standard public runners have four CPUs. Leave an extra slot for the
+        # larger sanitizer compiler processes instead of scaling without bounds.
+        run: cmake --build --preset ${{ matrix.preset }} --parallel ${{ matrix.preset == 'asan-ubsan' && 3 || 4 }}
       - name: Unit and QML tests
         run: ctest --preset ${{ matrix.preset }} -LE opengl --output-junit tests.xml
       - name: Strict OpenGL integration with default scaling
@@ -289,6 +291,7 @@ jobs:
           name: release-linux-binaries
           path: dist/niconeon-linux-x86_64-binaries.zip
           if-no-files-found: error
+          compression-level: 0
           retention-days: 14
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() && (success() || failure()) && matrix.preset == 'release' && hashFiles('dist/niconeon-linux-x86_64.AppImage') != '' }}
@@ -296,6 +299,7 @@ jobs:
           name: release-linux-appimage
           path: dist/niconeon-linux-x86_64.AppImage
           if-no-files-found: error
+          compression-level: 0
           retention-days: 14
 
   static-analysis:
@@ -359,7 +363,7 @@ jobs:
       - name: Check C++ formatting
         run: cmake --build build/tidy --target format-check
       - name: Analyze project compilation
-        run: cmake --build --preset tidy --parallel 2
+        run: cmake --build --preset tidy --parallel 3
 
   windows-ucrt64:
     runs-on: windows-latest
@@ -515,7 +519,7 @@ jobs:
         shell: msys2 {0}
         run: |
           cmake --preset windows-release
-          cmake --build --preset windows-release --parallel 2
+          cmake --build --preset windows-release --parallel 4
           ctest --preset windows-release --output-junit tests.xml
       - name: Package Windows application and native dependencies
         shell: msys2 {0}
@@ -552,4 +556,5 @@ jobs:
           name: release-windows-binaries
           path: dist/niconeon-windows-x86_64-binaries.zip
           if-no-files-found: error
+          compression-level: 0
           retention-days: 14
