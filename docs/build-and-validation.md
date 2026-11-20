@@ -308,6 +308,12 @@ Build in this order, with the prefix's `lib/pkgconfig` in `PKG_CONFIG_PATH` and
 `build_ffmpeg.sh`, then `build_mpv.sh` (all under `scripts/deps/`). Each takes the
 same absolute prefix. The media SDK is shared by all Linux application jobs and
 static analysis. Source-keyed caches are verified before publishing artifacts.
+The Linux Qt and media SDK producers run in parallel. On an exact media cache
+hit, the media producer only installs the tools needed to verify the retained
+source and runtime evidence; full Debian build dependencies are needed only on
+a miss. The independent cold build installs the same pinned CMake, Ninja and
+Meson archives without fetching the LLVM analysis tools. A rebuild from an
+existing release tag keeps the tagged tool installer and previous cache key.
 
 The FFmpeg builder records the distribution's GPL-enabled configure arguments,
 updates removed OMX/glslang configuration switches, and compares the advertised
@@ -358,3 +364,14 @@ a first run or a changed Qt input still requires a full build.
 A later Qt package version requires a deliberate recipe/security review; the
 script refuses to downgrade it. App packaging verifies pristine QtBase DLLs and
 retains its source bundle before `windeployqt` can adjust deployment paths.
+
+After the media dependency install, Windows CI separately fingerprints the full
+pacman inventory, native SDK path and pinned recipes for libmpv. Only main push
+CI writes this exact cache. It contains the freshly built DLL, import library,
+public headers, pkg-config file and corresponding-source/license bundle, not
+the UCRT64 prefix. Restores check the key, file list and hashes, upstream
+archive, upstream headers/Copyright, local patch/recipe and DLL-to-source
+record before touching the SDK. A miss or invalid payload rebuilds from source;
+an immutable invalid entry is not overwritten. Release Rebuild always builds
+libmpv from the selected tag. Application tests, package validation and clean
+startup remain mandatory on a hit.
