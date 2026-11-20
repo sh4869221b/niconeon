@@ -298,6 +298,29 @@ class WindowsDependencyCollectorTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
+    def test_dll_index_selects_only_dll_files_case_insensitively(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "KERNEL32.DlL").write_bytes(b"real file")
+            (root / "directory.dll").mkdir()
+            (root / ".dll").write_bytes(b"basename without an extension")
+            (root / "application.exe").write_bytes(b"not a DLL")
+            (root / "document.txt").write_bytes(b"not a DLL")
+            self.assertEqual(collector.dll_index(root), {"kernel32.dll": root / "KERNEL32.DlL"})
+
+    @unittest.skipIf(os.name == "nt", "Windows symlink privileges are not needed for packaging")
+    def test_dll_index_follows_only_links_to_real_files(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "real-file").write_bytes(b"DLL payload")
+            (root / "real-directory").mkdir()
+            (root / "alias.DLL").symlink_to("real-file")
+            (root / "directory-alias.dll").symlink_to("real-directory", target_is_directory=True)
+            (root / "dangling.dll").symlink_to("missing")
+            self.assertEqual(collector.dll_index(root), {"alias.dll": root / "alias.DLL"})
+
     def test_mesa_fallback_keeps_hardware_loader_and_collects_its_own_closure(self):
         collector = self.collector()
         with tempfile.TemporaryDirectory() as directory:

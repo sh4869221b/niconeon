@@ -3,6 +3,7 @@
 import argparse
 from collections import deque
 import hashlib
+import os
 from pathlib import Path
 import re
 import shutil
@@ -11,8 +12,22 @@ from time import monotonic
 
 
 def dll_index(directory):
-    return {file.name.casefold(): file for file in directory.iterdir()
-            if file.is_file() and file.suffix.casefold() == ".dll"}
+    result = {}
+    # Inspect the extension before looking up filesystem metadata. DirEntry
+    # can reuse metadata from enumeration instead of issuing one stat per file.
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if Path(entry.name).suffix.casefold() != ".dll":
+                continue
+            path = directory / entry.name
+            try:
+                is_file = entry.is_file(follow_symlinks=True)
+            except OSError:
+                # Match this Python's previous Path.is_file error behavior.
+                is_file = path.is_file()
+            if is_file:
+                result[entry.name.casefold()] = path
+    return result
 
 
 def retain_sqlite_driver(bundle):
@@ -91,7 +106,9 @@ def collect(bundle, sdk_bin, system_dir, report, objdump, roots=None):
     # become resolvable after a copy; keep rescanning directories with DLL links.
     directory_indexes = {}
     sdk = dll_index(sdk_bin)
+    start = monotonic()
     system = dll_index(system_dir)
+    print(f"WINDOWS_PACKAGE_SYSTEM32_INDEX_MS={round((monotonic() - start) * 1000)}")
     rows = ["requiring_file\tdll\tresolution"]
     missing = []
     while pending:
