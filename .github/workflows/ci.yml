@@ -538,6 +538,7 @@ jobs:
           NICONEON_RELEASE_BASENAME: niconeon-windows-x86_64
           NICONEON_BUILD_DIR: build/windows-release
           NICONEON_MPV_SOURCE_DIR: /ucrt64/share/niconeon/libmpv-source
+          NICONEON_PE_JOBS: '4'
         run: |
           scripts/release/package_windows_msys2.sh ci
           scripts/release/verify_binary_artifact_licenses.sh dist/niconeon-windows-x86_64-binaries.zip

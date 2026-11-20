@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import tarfile
+import threading
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -298,6 +299,64 @@ class WindowsDependencyCollectorTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
+    def test_parallel_pe_probes_keep_order_report_and_unique_closure(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sdk, system = root / "sdk", root / "system"
+            sdk.mkdir()
+            system.mkdir()
+            (sdk / "added.dll").write_bytes(b"added")
+            (system / "KERNEL32.dll").touch()
+            results = []
+            for jobs in (1, 2):
+                bundle = root / f"bundle-{jobs}"
+                plugins = bundle / "plugins"
+                plugins.mkdir(parents=True)
+                app, plugin, shared = bundle / "niconeon.exe", plugins / "plugin.dll", bundle / "ShArEd.dll"
+                for path in (app, plugin, shared):
+                    path.touch()
+                barrier = threading.Barrier(2)
+                calls = []
+                imports = {app: ["added.dll"], plugin: ["ADDED.DLL", "shared.dll"],
+                           shared: ["KERNEL32.dll"], bundle / "added.dll": []}
+
+                def inspect(command, **_):
+                    self.assertEqual(command[:2], ["objdump", "-p"])
+                    binary = Path(command[-1])
+                    calls.append(binary)
+                    if jobs == 2 and binary in (app, plugin):
+                        barrier.wait(timeout=5)  # Prove the two initial reads overlap.
+                    return SimpleNamespace(stdout="\n".join(
+                        f"  DLL Name: {name}" for name in imports[binary]))
+
+                report = root / f"report-{jobs}.txt"
+                with patch.object(collector.subprocess, "run", side_effect=inspect):
+                    found = collector.collect(bundle, sdk, system, report, "objdump",
+                                              roots=[app, plugin, shared], jobs=jobs)
+                visited = {path.relative_to(bundle).as_posix() for path in found}
+                self.assertEqual(visited, set(path.relative_to(bundle).as_posix() for path in calls))
+                self.assertEqual(len(calls), len(visited))
+                self.assertEqual((bundle / "added.dll").read_bytes(), b"added")
+                results.append((report.read_bytes(), visited))
+            self.assertEqual(*results)
+
+    def test_parallel_probe_failure_is_reported_in_queue_order(self):
+        collector = self.collector()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = [root / name for name in ("a.dll", "b.dll")]
+            for path in paths:
+                path.touch()
+
+            def inspect(command, **_):
+                raise subprocess.CalledProcessError(1, command)
+
+            with patch.object(collector.subprocess, "run", side_effect=inspect):
+                with self.assertRaises(subprocess.CalledProcessError) as failure:
+                    list(collector.inspect_queue(collector.deque(paths), set(), "objdump", 2))
+            self.assertEqual(Path(failure.exception.cmd[-1]), paths[0])
+
     def test_mesa_fallback_keeps_hardware_loader_and_collects_its_own_closure(self):
         collector = self.collector()
         with tempfile.TemporaryDirectory() as directory:
@@ -512,12 +571,12 @@ class WindowsDependencyCollectorTests(unittest.TestCase):
             report = root / "report.txt"
             with patch.object(collector.subprocess, "run", side_effect=lambda command, **_:
                               SimpleNamespace(stdout=imports[Path(command[-1])])) as objdump:
-                collector.collect(bundle, sdk, system, report, "objdump", roots=[first, app, last])
+                collector.collect(bundle, sdk, system, report, "objdump", roots=[first, app, last], jobs=2)
             self.assertEqual(report.read_text(), "requiring_file\tdll\tresolution\n"
                              "niconeon.exe\tfresh.dll\tcopied from UCRT64\n"
                              "plugins/b.dll\talias.dll\tbundled\n")
-            self.assertEqual([Path(call.args[0][-1]) for call in objdump.call_args_list],
-                             [first, app, last, bundle / "fresh.dll"])
+            self.assertCountEqual([Path(call.args[0][-1]) for call in objdump.call_args_list],
+                                  [first, app, last, bundle / "fresh.dll"])
 
 
 @unittest.skipIf(os.name == "nt", "Bash/AppRun packaging layout is a Linux test")
