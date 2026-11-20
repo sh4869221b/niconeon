@@ -314,6 +314,10 @@ source and runtime evidence; full Debian build dependencies are needed only on
 a miss. The independent cold build installs the same pinned CMake, Ninja and
 Meson archives without fetching the LLVM analysis tools. A rebuild from an
 existing release tag keeps the tagged tool installer and previous cache key.
+On an exact Qt SDK hit in regular CI, its producer installs the runtime needed
+for `qmake -query` instead of the full compiler and development dependencies.
+It still checks the complete retained source and runtime manifests. Internal
+Qt SDK artifacts remain gzip-compatible, with two compression workers.
 
 The FFmpeg builder records the distribution's GPL-enabled configure arguments,
 updates removed OMX/glslang configuration switches, and compares the advertised

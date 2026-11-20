@@ -28,9 +28,29 @@ jobs:
     container: debian:trixie
     timeout-minutes: 180
     steps:
-      - name: Install Qt source-build dependencies
+      - name: Install Qt SDK checkout and archive tools
         run: |
           apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git pigz
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+      - name: Restore matching Linux SDK
+        id: sdk-cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: /opt/niconeon-sdk
+          key: linux-trixie-x86_64-sdk-v1-${{ hashFiles('scripts/deps/build_qt.sh', 'scripts/deps/qt-sources.sha256', 'scripts/deps/install_build_tools.sh') }}
+      - name: Install Qt SDK verification runtime
+        if: inputs.source_ref == '' && steps.sdk-cache.outputs.cache-hit == 'true'
+        run: |
+          # The producer verifies hashes and executes qmake, not the Qt GUI.
+          apt-get install -y --no-install-recommends \
+            libstdc++6 libgcc-s1 libatomic1 libgomp1 libicu76 libglib2.0-0t64 \
+            libpcre2-16-0 libssl3t64 libb2-1 libzstd1 zlib1g
+      - name: Install Qt source-build dependencies
+        if: steps.sdk-cache.outputs.cache-hit != 'true' || inputs.source_ref != ''
+        run: |
           apt-get install -y --no-install-recommends \
             ca-certificates git build-essential pkgconf curl patch xz-utils unzip python3 perl \
             libgl-dev libegl-dev libopengl-dev libvulkan-dev libx11-dev libx11-xcb-dev \
@@ -42,15 +62,6 @@ jobs:
             libharfbuzz-dev libssl-dev libsqlite3-dev libdbus-1-dev libglib2.0-dev \
             libicu-dev libpng-dev libjpeg-dev libpcre2-dev zlib1g-dev libzstd-dev libb2-dev \
             libwayland-dev wayland-protocols
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ inputs.source_ref || github.ref }}
-      - name: Restore matching Linux SDK
-        id: sdk-cache
-        uses: actions/cache@v6.1.0
-        with:
-          path: /opt/niconeon-sdk
-          key: linux-trixie-x86_64-sdk-v1-${{ hashFiles('scripts/deps/build_qt.sh', 'scripts/deps/qt-sources.sha256', 'scripts/deps/install_build_tools.sh') }}
       - name: Install verified current build tools
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
@@ -71,7 +82,7 @@ jobs:
       - name: Archive tested SDK inputs
         run: |
           mkdir -p build
-          tar -I 'gzip -1' -cf build/niconeon-linux-sdk.tar.gz -C /opt niconeon-sdk
+          tar -I 'pigz -1 -p 2' -cf build/niconeon-linux-sdk.tar.gz -C /opt niconeon-sdk
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: linux-qt-sdk
